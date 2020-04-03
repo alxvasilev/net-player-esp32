@@ -30,8 +30,7 @@
 #include "utils.hpp"
 
 extern void *pxCurrentTCB;
-static const char* kOutputTypeI2s = "i2s";
-static const char* kOutputTypeA2dp = "a2dp";
+typedef enum { kOutputTypeI2s = 1, kOutputTypeA2dp } OutputType;
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 
 static const char *TAG = "netplay";
@@ -52,6 +51,7 @@ void startWebserver(bool isAp=false);
 
 audio_element_handle_t
     http_stream_reader, decompressor, equalizer, streamOut;
+OutputType outputType;
 audio_pipeline_handle_t pipeline;
 esp_periph_set_handle_t periphSet;
 
@@ -71,7 +71,7 @@ audio_element_handle_t createOutputI2s()
     i2s_stream_cfg_t i2s_cfg = myI2S_STREAM_INTERNAL_DAC_CFG_DEFAULT;
     i2s_cfg.type = AUDIO_STREAM_WRITER;
     audio_element_handle_t elem = i2s_stream_init(&i2s_cfg);
-//    ESP_ERROR_CHECK(audio_element_setdata(elem, (void*)kOutputTypeI2s));
+    outputType = kOutputTypeI2s;
     return elem;
 }
 audio_element_handle_t createOutputA2dp()
@@ -86,7 +86,7 @@ audio_element_handle_t createOutputA2dp()
 
     ESP_LOGI(TAG, "\tCreating bluetooth sink element");
     audio_element_handle_t elem = bluetooth_service_create_stream();
-    ESP_ERROR_CHECK(audio_element_setdata(elem, (void*)kOutputTypeA2dp));
+    outputType = kOutputTypeA2dp;
 
     const uint8_t* addr = esp_bt_dev_get_address();
     char strAddr[13];
@@ -104,6 +104,9 @@ void configGpios()
     gpio_set_direction(kPinButton, GPIO_MODE_INPUT);
     gpio_pullup_en(kPinButton);
 }
+
+StdoutRedirector stdoutRedirector(false);
+
 extern "C" void app_main(void)
 {
     esp_log_level_set("*", ESP_LOG_INFO);
@@ -124,7 +127,19 @@ extern "C" void app_main(void)
         startWebserver(true);
         return;
     }
+//== WIFI
+    esp_periph_config_t periph_cfg = DEFAULT_ESP_PERIPH_SET_CONFIG();
+    periphSet = esp_periph_set_init(&periph_cfg);
 
+    ESP_LOGI(TAG, "Start and wait for Wi-Fi network");
+    periph_wifi_cfg_t wifi_cfg;
+    memset(&wifi_cfg, 0, sizeof(wifi_cfg));
+    wifi_cfg.ssid = "mynetwork1";
+    wifi_cfg.password = CONFIG_WIFI_PASSWORD;
+    esp_periph_handle_t wifi_handle = periph_wifi_init(&wifi_cfg);
+    esp_periph_start(periphSet, wifi_handle);
+    periph_wifi_wait_for_connected(wifi_handle, portMAX_DELAY);
+//====
     ESP_LOGI(TAG, "[2.0] Create audio pipeline for playback");
     audio_pipeline_cfg_t pipeline_cfg = DEFAULT_AUDIO_PIPELINE_CONFIG();
     pipeline = audio_pipeline_init(&pipeline_cfg);
@@ -133,7 +148,7 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "[2.1] Create http stream to read data");
     http_stream_cfg_t http_cfg = myHTTP_STREAM_CFG_DEFAULT;
 //  http_cfg.multi_out_num = 1;
-//  http_cfg.enable_playlist_parser = 1;
+    http_cfg.enable_playlist_parser = 1;
     http_cfg.event_handle = httpEventHandler;
     http_stream_reader = http_stream_init(&http_cfg);
 
@@ -167,19 +182,6 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "[2.6] Set http stream uri to '%s'", url);
     audio_element_set_uri(http_stream_reader, url);
 
-    esp_periph_config_t periph_cfg = DEFAULT_ESP_PERIPH_SET_CONFIG();
-    periphSet = esp_periph_set_init(&periph_cfg);
-
-    ESP_LOGI(TAG, "Start and wait for Wi-Fi network");
-    periph_wifi_cfg_t wifi_cfg;
-    memset(&wifi_cfg, 0, sizeof(wifi_cfg));
-    wifi_cfg.ssid = CONFIG_WIFI_SSID;
-    wifi_cfg.password = CONFIG_WIFI_PASSWORD;
-    esp_periph_handle_t wifi_handle = periph_wifi_init(&wifi_cfg);
-    esp_periph_start(periphSet, wifi_handle);
-    periph_wifi_wait_for_connected(wifi_handle, portMAX_DELAY);
-
-
     ESP_LOGI(TAG, "[ 5 ] Set up  event listener");
     audio_event_iface_cfg_t evt_cfg = AUDIO_EVENT_IFACE_DEFAULT_CFG();
     audio_event_iface_handle_t evt = audio_event_iface_init(&evt_cfg);
@@ -200,10 +202,8 @@ extern "C" void app_main(void)
             ESP_LOGE(TAG, "[ * ] Event interface error : %d", ret);
             continue;
         }
-        printf("source_type = %d (%d), source: %p (%p), cmd: %d (%d)\n",
-               msg.source_type, AUDIO_ELEMENT_TYPE_ELEMENT,
-                msg.source, (void *) decompressor,
-                msg.cmd, AEL_MSG_CMD_REPORT_MUSIC_INFO);
+//        ESP_LOGI("source_type = %d, source: %p, cmd: %d\n",
+//            msg.source_type, msg.source, msg.cmd);
 
         if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT
             && msg.source == (void *) decompressor
@@ -216,9 +216,9 @@ extern "C" void app_main(void)
                      music_info.sample_rates, music_info.bits, music_info.channels);
 
             audio_element_setinfo(streamOut, &music_info);
-//            if (audio_element_getdata(streamOut) == kOutputTypeI2s) {
+            if (outputType == kOutputTypeI2s) {
                 i2s_stream_set_clk(streamOut, music_info.sample_rates, music_info.bits, music_info.channels);
-//            }
+            }
             continue;
         }
 
@@ -236,7 +236,7 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "[ 7 ] Stop pipelines");
     audio_pipeline_terminate(pipeline);
     audio_pipeline_unregister_more(pipeline, http_stream_reader,
-                                   decompressor, equalizer, streamOut, NULL);
+        decompressor, equalizer, streamOut, NULL);
     audio_pipeline_remove_listener(pipeline);
 
     /* Stop all peripherals before removing the listener */
@@ -254,6 +254,7 @@ extern "C" void app_main(void)
     audio_element_deinit(equalizer);
     esp_periph_set_destroy(periphSet);
 }
+
 void changeStreamUrl(const char* url)
 {
     ESP_LOGW("STREAM", "Changing stream URL to '%s'", url);
@@ -320,7 +321,7 @@ static const httpd_uri_t play = {
 
 int httpEventHandler(http_stream_event_msg_t *msg)
 {
-    ESP_LOGW("STREAM", "http stream event %d, heap free: %d", msg->event_id, xPortGetFreeHeapSize());
+    ESP_LOGI("STREAM", "http stream event %d, heap free: %d", msg->event_id, xPortGetFreeHeapSize());
     if (msg->event_id == HTTP_STREAM_RESOLVE_ALL_TRACKS) {
         return ESP_OK;
     }

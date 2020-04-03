@@ -12,7 +12,6 @@ esp_err_t OTA_update_post_handler(httpd_req_t *req)
     char otaBuf[1024];
     int contentLen = req->content_len;
     const auto update_partition = esp_ota_get_next_update_partition(NULL);
-
     esp_ota_handle_t ota_handle;
     esp_err_t err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
     if (err != ESP_OK) {
@@ -24,6 +23,8 @@ esp_err_t OTA_update_post_handler(httpd_req_t *req)
             update_partition->label, update_partition->subtype, update_partition->address);
     }
 
+    uint64_t tsStart = esp_timer_get_time();
+    int displayCtr = 0;
     for (int remain = contentLen; remain > 0; )
     {
         /* Read the data for the request */
@@ -40,7 +41,11 @@ esp_err_t OTA_update_post_handler(httpd_req_t *req)
             return ESP_FAIL;
         }
         remain -= recvLen;
-        printf("OTA recv: %d of %d\r", contentLen - remain, contentLen);
+        displayCtr += recvLen;
+        if (displayCtr > 10240) {
+            displayCtr = 0;
+            printf("OTA: Recv %d of %d bytes\r", contentLen - remain, contentLen);
+        }
         esp_ota_write(ota_handle, otaBuf, recvLen);
     }
 
@@ -58,8 +63,10 @@ esp_err_t OTA_update_post_handler(httpd_req_t *req)
     }
 
     const auto bootPartition = esp_ota_get_boot_partition();
-    httpd_resp_sendstr(req, "OTA update successful\n");
-    ESP_LOGI("OTA", "OTA update successful, will boot from partition '%s', subtype %d at offset 0x%x",
+    httpd_resp_sendstr(req, "OTA update successful");
+    ESP_LOGI("OTA", "OTA update successful (%.1f sec)",
+        (((double)esp_timer_get_time() - tsStart) / 1000000));
+    ESP_LOGI("OTA", "Will boot from partition '%s', subtype %d at offset 0x%x",
         bootPartition->label, bootPartition->subtype, bootPartition->address);
 
     // Reboot asynchronously, after we return the http response

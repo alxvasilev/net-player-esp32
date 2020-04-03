@@ -3,6 +3,11 @@
 
 #include <esp_http_server.h>
 #include <vector>
+#include <stdarg.h>
+#include <audio_element.h>
+#include <http_stream.h>
+#include <i2s_stream.h>
+#include <esp_log.h>
 
 template<typename T>
 struct BufPtr
@@ -37,56 +42,10 @@ public:
         return ret;
     }
 };
-uint8_t hexDigitVal(char digit) {
-    if (digit >= '0' && digit <= '9') {
-        return digit - '0';
-    } else if (digit >= 'a' && digit <= 'f') {
-        return 10 + (digit - 'a');
-    } else if (digit >= 'A' && digit <= 'F') {
-        return 10 + (digit - 'A');
-    } else {
-        return 0xff;
-    }
-}
-void binToHex(const uint8_t* data, size_t len, char* str) {
-    static const char* digits = "01234567890abcdef";
-    auto end = data + len;
-    while (data < end) {
-        *(str++) = digits[*data >> 4];
-        *(str++) = digits[*data & 0x0f];
-        data++;
-    }
-    *str = 0;
-}
+void binToHex(const uint8_t* data, size_t len, char* str);
+bool unescapeUrlParam(char* str, size_t len);
 
-bool unescapeUrlParam(char* str, size_t len)
-{
-    const char* rptr = str;
-    char* wptr = str;
-    const char* end = str + len;
-    bool ok = true;
-    for (; rptr < end; rptr++, wptr++) {
-        char ch = *rptr;
-        if (ch != '%') {
-            if (rptr != wptr) {
-                *wptr = ch;
-            }
-        } else {
-            rptr++;
-            auto highNibble = hexDigitVal(*(rptr++));
-            auto lowNibble = hexDigitVal(*rptr);
-            if (highNibble > 15 || lowNibble > 15) {
-                *wptr = '?';
-                ok = false;
-            }
-            *wptr = (highNibble << 4) | lowNibble;
-        }
-    }
-    if (wptr < rptr) {
-        *wptr = 0;
-    }
-    return ok;
-}
+uint8_t hexDigitVal(char digit);
 class UrlParams: public BufPtr<char>
 {
 public:
@@ -176,6 +135,47 @@ public:
         char* endptr;
         auto val = strtol(str, &endptr, 10);
         return (endptr == str + strVal.len) ? val : defVal;
+    }
+};
+
+class StdoutRedirector
+{
+protected:
+    FILE* mOrigStdout = nullptr;
+    FILE* mNewStdout = nullptr;
+    bool mDisableDefault;
+    static StdoutRedirector* gInstance;
+    void(*mOutputFunc)(const char* data, int len) = nullptr;
+    static void defaultOutputFunc(const char* data, int len)
+    {
+        // just write to stdout
+        fwrite(data, 1, len, gInstance->mOrigStdout);
+    }
+    static int espVprintf(const char * format, va_list args)
+    {
+        return vfprintf(gInstance->mNewStdout, format, args);
+    }
+    static int logFdWriteFunc(void* cookie, const char* data, int size)
+    {
+        if (!gInstance->mDisableDefault) {
+            defaultOutputFunc(data, size);
+        }
+        if (gInstance->mOutputFunc) {
+            gInstance->mOutputFunc(data, size);
+        }
+        return size;
+    }
+public:
+    StdoutRedirector(bool disableDefault)
+    {
+        if (gInstance) {
+            abort();
+        }
+        gInstance = this;
+        mDisableDefault = disableDefault;
+        mOrigStdout = stdout;
+        mNewStdout = stdout = funopen(nullptr, nullptr, &logFdWriteFunc, nullptr, nullptr);
+        esp_log_set_vprintf(&espVprintf);
     }
 };
 
