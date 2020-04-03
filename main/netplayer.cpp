@@ -71,7 +71,7 @@ audio_element_handle_t createOutputI2s()
     i2s_stream_cfg_t i2s_cfg = myI2S_STREAM_INTERNAL_DAC_CFG_DEFAULT;
     i2s_cfg.type = AUDIO_STREAM_WRITER;
     audio_element_handle_t elem = i2s_stream_init(&i2s_cfg);
-    ESP_ERROR_CHECK(audio_element_setdata(elem, (void*)kOutputTypeI2s));
+//    ESP_ERROR_CHECK(audio_element_setdata(elem, (void*)kOutputTypeI2s));
     return elem;
 }
 audio_element_handle_t createOutputA2dp()
@@ -109,8 +109,6 @@ extern "C" void app_main(void)
     esp_log_level_set("*", ESP_LOG_INFO);
     esp_log_level_set(TAG, ESP_LOG_DEBUG);
 
-    printf("OTA UPDATED APP3\n");
-
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
         // NVS partition was truncated and needs to be erased
@@ -120,27 +118,8 @@ extern "C" void app_main(void)
     }
     configGpios();
     tcpip_adapter_init();
-    if (true) { //!gpio_get_level(kPinButton)) {
+    if (!gpio_get_level(kPinButton)) {
         ESP_LOGW(TAG, "Button pressed at boot, start as access point for configuration");
-        startWifiSoftAp();
-        startWebserver(true);
-        return;
-    }
-    esp_periph_config_t periph_cfg = DEFAULT_ESP_PERIPH_SET_CONFIG();
-    periphSet = esp_periph_set_init(&periph_cfg);
-
-    ESP_LOGI(TAG, "Start and wait for Wi-Fi network");
-    periph_wifi_cfg_t wifi_cfg;
-    memset(&wifi_cfg, 0, sizeof(wifi_cfg));
-    wifi_cfg.ssid = CONFIG_WIFI_SSID;
-    wifi_cfg.password = CONFIG_WIFI_PASSWORD;
-    esp_periph_handle_t wifi_handle = periph_wifi_init(&wifi_cfg);
-    esp_periph_start(periphSet, wifi_handle);
-    err = periph_wifi_wait_for_connected(wifi_handle, 60*1000/portTICK_RATE_MS);
-    if (err == ESP_FAIL) {
-        ESP_LOGW(TAG, "Timed out waiting for WiFi to connect, starting AP");
-        esp_periph_set_destroy(periphSet);
-        vTaskDelay(1*1000/portTICK_RATE_MS);
         startWifiSoftAp();
         startWebserver(true);
         return;
@@ -153,8 +132,8 @@ extern "C" void app_main(void)
 
     ESP_LOGI(TAG, "[2.1] Create http stream to read data");
     http_stream_cfg_t http_cfg = myHTTP_STREAM_CFG_DEFAULT;
-    http_cfg.multi_out_num = 1;
-    http_cfg.enable_playlist_parser = 1;
+//  http_cfg.multi_out_num = 1;
+//  http_cfg.enable_playlist_parser = 1;
     http_cfg.event_handle = httpEventHandler;
     http_stream_reader = http_stream_init(&http_cfg);
 
@@ -177,9 +156,9 @@ extern "C" void app_main(void)
 
     ESP_LOGI(TAG, "[2.4] Register all elements to audio pipeline");
     audio_pipeline_register(pipeline, http_stream_reader, "http");
-    audio_pipeline_register(pipeline, decompressor,        "decomp");
-    audio_pipeline_register(pipeline, equalizer,          "eq");
-    audio_pipeline_register(pipeline, streamOut,  "out");
+    audio_pipeline_register(pipeline, decompressor, "decomp");
+    audio_pipeline_register(pipeline, equalizer, "eq");
+    audio_pipeline_register(pipeline, streamOut, "out");
 
     ESP_LOGI(TAG, "[2.5] Link elements together http_stream-->mp3_decoder-->equalizer-->i2s_stream-->[codec_chip]");
     const char* order[] = {"http", "decomp", "eq", "out"};
@@ -187,6 +166,19 @@ extern "C" void app_main(void)
     const char* url = getNextStreamUrl();
     ESP_LOGI(TAG, "[2.6] Set http stream uri to '%s'", url);
     audio_element_set_uri(http_stream_reader, url);
+
+    esp_periph_config_t periph_cfg = DEFAULT_ESP_PERIPH_SET_CONFIG();
+    periphSet = esp_periph_set_init(&periph_cfg);
+
+    ESP_LOGI(TAG, "Start and wait for Wi-Fi network");
+    periph_wifi_cfg_t wifi_cfg;
+    memset(&wifi_cfg, 0, sizeof(wifi_cfg));
+    wifi_cfg.ssid = CONFIG_WIFI_SSID;
+    wifi_cfg.password = CONFIG_WIFI_PASSWORD;
+    esp_periph_handle_t wifi_handle = periph_wifi_init(&wifi_cfg);
+    esp_periph_start(periphSet, wifi_handle);
+    periph_wifi_wait_for_connected(wifi_handle, portMAX_DELAY);
+
 
     ESP_LOGI(TAG, "[ 5 ] Set up  event listener");
     audio_event_iface_cfg_t evt_cfg = AUDIO_EVENT_IFACE_DEFAULT_CFG();
@@ -208,6 +200,10 @@ extern "C" void app_main(void)
             ESP_LOGE(TAG, "[ * ] Event interface error : %d", ret);
             continue;
         }
+        printf("source_type = %d (%d), source: %p (%p), cmd: %d (%d)\n",
+               msg.source_type, AUDIO_ELEMENT_TYPE_ELEMENT,
+                msg.source, (void *) decompressor,
+                msg.cmd, AEL_MSG_CMD_REPORT_MUSIC_INFO);
 
         if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT
             && msg.source == (void *) decompressor
@@ -220,9 +216,9 @@ extern "C" void app_main(void)
                      music_info.sample_rates, music_info.bits, music_info.channels);
 
             audio_element_setinfo(streamOut, &music_info);
-            if (audio_element_getdata(streamOut) == kOutputTypeI2s) {
+//            if (audio_element_getdata(streamOut) == kOutputTypeI2s) {
                 i2s_stream_set_clk(streamOut, music_info.sample_rates, music_info.bits, music_info.channels);
-            }
+//            }
             continue;
         }
 
