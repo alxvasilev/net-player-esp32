@@ -134,7 +134,7 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "Start and wait for Wi-Fi network");
     periph_wifi_cfg_t wifi_cfg;
     memset(&wifi_cfg, 0, sizeof(wifi_cfg));
-    wifi_cfg.ssid = "mynetwork1";
+    wifi_cfg.ssid = CONFIG_WIFI_SSID;
     wifi_cfg.password = CONFIG_WIFI_PASSWORD;
     esp_periph_handle_t wifi_handle = periph_wifi_init(&wifi_cfg);
     esp_periph_start(periphSet, wifi_handle);
