@@ -2,6 +2,7 @@
 #include <esp_system.h>
 #include <esp_http_server.h>
 #include <esp_ota_ops.h>
+#include "utils.hpp"
 
 template <class T>
 T min(T a, T b) { return (a < b) ? a : b; }
@@ -9,6 +10,7 @@ T min(T a, T b) { return (a < b) ? a : b; }
 /* Receive .Bin file */
 esp_err_t OTA_update_post_handler(httpd_req_t *req)
 {
+    ESP_LOGI("OTA", "OTA request received (%p)", currentTaskHandle());
     char otaBuf[1024];
     int contentLen = req->content_len;
     const auto update_partition = esp_ota_get_next_update_partition(NULL);
@@ -63,7 +65,8 @@ esp_err_t OTA_update_post_handler(httpd_req_t *req)
     }
 
     const auto bootPartition = esp_ota_get_boot_partition();
-    httpd_resp_sendstr(req, "OTA update successful");
+    const char msg[] = "OTA update successful";
+    httpd_resp_send(req, msg, sizeof(msg));
     ESP_LOGI("OTA", "OTA update successful (%.1f sec)",
         (((double)esp_timer_get_time() - tsStart) / 1000000));
     ESP_LOGI("OTA", "Will boot from partition '%s', subtype %d at offset 0x%x",

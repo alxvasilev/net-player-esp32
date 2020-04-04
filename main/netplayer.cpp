@@ -266,6 +266,8 @@ void changeStreamUrl(const char* url)
 
 static esp_err_t indexUrlHandler(httpd_req_t *req)
 {
+    ESP_LOGI(TAG, "Current task id: %p\n", currentTaskHandle());
+
     static const char indexHtml[] =
             "<html><head /><body><h>NetPlayer HTTP server</h><br/>Free heap memory: ";
     httpd_resp_send_chunk(req, indexHtml, sizeof(indexHtml));
@@ -275,8 +277,6 @@ static esp_err_t indexUrlHandler(httpd_req_t *req)
     static const char indexHtmlEnd[] = "</body></html>";
     httpd_resp_send_chunk(req, indexHtmlEnd, sizeof(indexHtmlEnd));
     httpd_resp_send_chunk(req, nullptr, 0);
-    printf("Current task id: %p\n", pxCurrentTCB);
-
     return ESP_OK;
 }
 static const httpd_uri_t indexUrl = {
@@ -348,6 +348,7 @@ void stopWebserver() {
     if (!gHttpServer) {
         return;
     }
+    stdoutRedirector.unregisterWithHttpServer("/log");
     httpd_stop(gHttpServer);
     gHttpServer = nullptr;
 }
@@ -368,6 +369,7 @@ void startWebserver(bool isAp)
     ESP_LOGI(TAG, "Registering URI handlers");
     httpd_register_uri_handler(gHttpServer, &ota);
     httpd_register_uri_handler(gHttpServer, &indexUrl);
+    stdoutRedirector.registerWithHttpServer(gHttpServer, "/log");
     if (!isAp) {
         httpd_register_uri_handler(gHttpServer, &play);
     }
