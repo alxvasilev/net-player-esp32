@@ -201,7 +201,6 @@ protected:
         // need this only to access self from session ctx free func, which takes
         // just a single pointer
         Self* self = nullptr;
-        uint8_t flags = 0;
         LogConn(int aSockFd, Self* aSelf): sockfd(aSockFd), self(aSelf) {}
     };
 
@@ -250,16 +249,13 @@ protected:
         }
         int sockfd = httpd_req_to_sockfd(req);
         auto conn = new LogConn(sockfd, self);
-        if (isBrowser) {
-            conn->flags |= LogConn::kFlagHtml;
-        }
         MutexLocker lock(self->mListMutex);
         // detect when socket is closed
         httpd_sess_set_ctx(req->handle, sockfd, conn, &Self::connCloseFunc);
         self->mConnections.push_back(conn);
         return ESP_OK;
     }
-    esp_err_t sendChunkToFd(int fd, const char* data, size_t len)
+    esp_err_t httpSendChunk(int fd, const char* data, size_t len)
     {
         char strBuf[10];
         auto numChars = snprintf(strBuf, sizeof(strBuf), "%x\r\n", len);
@@ -273,7 +269,7 @@ protected:
         MutexLocker lock(self.mListMutex);
         for (auto it = self.mConnections.begin(); it != self.mConnections.end();) {
             int sockfd = (*it)->sockfd;
-            if (!self.sendChunkToFd(sockfd, data, len)) {
+            if (!self.httpSendChunk(sockfd, data, len)) {
                 it++;
                 httpd_sess_trigger_close(self.mHttpServer, sockfd);
             } else {

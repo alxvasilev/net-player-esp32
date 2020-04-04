@@ -6,12 +6,13 @@
 
 template <class T>
 T min(T a, T b) { return (a < b) ? a : b; }
+enum: int16_t { kOtaBufSize = 1024 };
 
 /* Receive .Bin file */
 esp_err_t OTA_update_post_handler(httpd_req_t *req)
 {
     ESP_LOGI("OTA", "OTA request received (%p)", currentTaskHandle());
-    char otaBuf[1024];
+    char* otaBuf = new char[kOtaBufSize]; // no need to free it, we will reboot
     int contentLen = req->content_len;
     const auto update_partition = esp_ota_get_next_update_partition(NULL);
     esp_ota_handle_t ota_handle;
@@ -32,7 +33,7 @@ esp_err_t OTA_update_post_handler(httpd_req_t *req)
         /* Read the data for the request */
         int recvLen;
         for (int numWaits = 0; numWaits < 4; numWaits++) {
-            recvLen = httpd_req_recv(req, otaBuf, ::min((size_t)remain, sizeof(otaBuf)));
+            recvLen = httpd_req_recv(req, otaBuf, ::min(remain, (int)kOtaBufSize));
             if (recvLen != HTTPD_SOCK_ERR_TIMEOUT) {
                 break;
             }
