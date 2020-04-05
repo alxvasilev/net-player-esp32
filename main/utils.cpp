@@ -1,6 +1,6 @@
 #include "utils.hpp"
 
-const char* _utils_hexDigits = "01234567890abcdef";
+const char* _utils_hexDigits = "0123456789abcdef";
 
 char* binToHex(const uint8_t* data, size_t len, char* str)
 {

@@ -111,3 +111,54 @@ extern const httpd_uri_t otaUrlHandler = {
     .handler   = OTA_update_post_handler,
     .user_ctx  = NULL
 };
+
+static constexpr const char* RBK = "RBK";
+void rollbackConfirmAppIsWorking()
+{
+    if (!rollbackIsPendingVerify()) {
+        return;
+    }
+    ESP_LOGW(RBK, "App appears to be working properly, confirming boot partition...");
+    esp_ota_mark_app_valid_cancel_rollback();
+}
+
+#define ENUM_NAME_CASE(name) case name: return #name
+
+const char* otaPartitionStateToStr(esp_ota_img_states_t state)
+{
+    switch (state) {
+        ENUM_NAME_CASE(ESP_OTA_IMG_NEW);
+        ENUM_NAME_CASE(ESP_OTA_IMG_PENDING_VERIFY);
+        ENUM_NAME_CASE(ESP_OTA_IMG_VALID);
+        ENUM_NAME_CASE(ESP_OTA_IMG_INVALID);
+        ENUM_NAME_CASE(ESP_OTA_IMG_ABORTED);
+        ENUM_NAME_CASE(ESP_OTA_IMG_UNDEFINED);
+        default: return "(UNKNOWN)";
+    }
+}
+
+bool setOtherPartitionBootableAndRestart()
+{
+    if (rollbackIsPendingVerify()) {
+        esp_ota_mark_app_invalid_rollback_and_reboot();
+    }
+
+    ESP_LOGW(RBK, "Could not cancel current OTA, manually switching boot partition");
+    auto otherPartition = esp_ota_get_next_update_partition(NULL);
+    if (!otherPartition) {
+        ESP_LOGE(RBK, "There is no second OTA partition");
+        return false;
+    }
+    esp_ota_img_states_t state;
+    auto err = esp_ota_get_state_partition(otherPartition, &state);
+    if (err != ESP_OK) {
+        ESP_LOGW(RBK, "Error getting state of other partition: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(RBK, "Other partition has state %s", otaPartitionStateToStr(state));
+    }
+    ESP_ERROR_CHECK(esp_ota_set_boot_partition(otherPartition));
+
+    esp_restart();
+    return true;
+}
+

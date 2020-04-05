@@ -11,25 +11,37 @@
 extern "C" int httpd_default_send(httpd_handle_t hd, int sockfd, const char *buf, size_t buf_len, int flags);
 NetLogger* NetLogger::gInstance = nullptr;
 
-int NetLogger::espVprintf(const char * format, va_list args)
+int NetLogger::vprintf(const char * format, va_list args)
 {
-    return vfprintf(gInstance->mNewStdout, format, args);
-}
-int NetLogger::logFdWriteFunc(void* cookie, const char* data, int size)
-{
+    MutexLocker lock(gInstance->mMutex);
+    auto& buf = gInstance->mBuf;
+    int num;
+    for (;;) {
+        num = ::vsnprintf(buf.data(), buf.size(), format, args);
+        if (num < 0) {
+            return num;
+        } else if (num < buf.size()) {
+            break;
+        } else {
+            buf.resize(num + 32);
+        }
+    }
     if (!gInstance->mDisableDefault) {
-        fwrite(data, 1, size, gInstance->mOrigStdout);
+        fwrite(buf.data(), 1, num, stdout);
+        fflush(stdout);
     }
     if (gInstance->mSinkFunc) {
-        gInstance->mSinkFunc(data, size, gInstance->mSinkFuncUserp);
+        gInstance->mSinkFunc(buf.data(), num, gInstance->mSinkFuncUserp);
     }
-    return size;
+    return num;
 }
 
 void NetLogger::connCloseFunc(void* ctx)
 {
     auto conn = static_cast<LogConn*>(ctx);
     assert(conn);
+    auto self = conn->self;
+    MutexLocker locker(self->mListMutex);
     auto& conns = conn->self->mConnections;
     for (auto it = conns.begin(); it != conns.end(); it++) {
         if (*it == conn) {
@@ -68,37 +80,38 @@ esp_err_t NetLogger::logRequestHandler(httpd_req_t* req)
     }
     int sockfd = httpd_req_to_sockfd(req);
     auto conn = new LogConn(sockfd, self);
-    MutexLocker lock(self->mListMutex);
     // detect when socket is closed
     httpd_sess_set_ctx(req->handle, sockfd, conn, &Self::connCloseFunc);
+
+    MutexLocker lock(self->mListMutex);
     self->mConnections.push_back(conn);
     return ESP_OK;
 }
+
 esp_err_t NetLogger::httpSendChunk(int fd, const char* data, uint16_t len)
 {
     char strBuf[10];
     auto end = numToHex(len, strBuf);
     *(end++) = '\r';
     *(end++) = '\n';
-    *end = 0;
     return ((httpd_default_send(mHttpServer, fd, strBuf, end-strBuf, 0) >= 0) &&
             (httpd_default_send(mHttpServer, fd, data, len, 0) >= 0) &&
             (httpd_default_send(mHttpServer, fd, "\r\n", 2, 0) >=0));
 }
+
 void NetLogger::logSink(const char* data, int len, void* userp)
 {
     auto& self = *static_cast<Self*>(userp);
     MutexLocker lock(self.mListMutex);
-    for (auto it = self.mConnections.begin(); it != self.mConnections.end();) {
+    for (auto it = self.mConnections.begin(); it != self.mConnections.end(); it++) {
         int sockfd = (*it)->sockfd;
         if (!self.httpSendChunk(sockfd, data, len)) {
-            it++;
+            it--;
             httpd_sess_trigger_close(self.mHttpServer, sockfd);
-        } else {
-            it++;
         }
     }
 }
+
 NetLogger::NetLogger(bool disableDefault)
 {
     if (gInstance) {
@@ -106,24 +119,26 @@ NetLogger::NetLogger(bool disableDefault)
     }
     gInstance = this;
     mDisableDefault = disableDefault;
-    mOrigStdout = stdout;
-    mNewStdout = stdout = funopen(nullptr, nullptr, &logFdWriteFunc, nullptr, nullptr);
-    setvbuf(mNewStdout, NULL, _IONBF, 0);
-    esp_log_set_vprintf(&espVprintf);
+    mBuf.resize(kInitialBufSize);
+    esp_log_set_vprintf(&NetLogger::vprintf);
 }
+
 void NetLogger::setSinkFunc(SinkFunc sinkFunc, void* userp)
 {
+    MutexLocker lock(mMutex);
     mSinkFunc = sinkFunc;
     mSinkFuncUserp = userp;
 }
-int NetLogger::printfOri(const char* fmt, ...)
+
+int NetLogger::printf(const char* fmt, ...)
 {
     va_list valist;
     va_start(valist, fmt);
-    int n = vfprintf(mOrigStdout, fmt, valist);
+    int n = NetLogger::vprintf(fmt, valist);
     va_end(valist);
     return n;
 }
+
 void NetLogger::registerWithHttpServer(httpd_handle_t server, const char* path)
 {
     httpd_uri_t cfg = {

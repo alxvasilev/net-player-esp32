@@ -8,17 +8,16 @@
 class NetLogger
 {
 protected:
+    enum: uint16_t { kInitialBufSize = 128 };
     typedef NetLogger Self;
     typedef void(*SinkFunc)(const char* data, int len, void* userp);
 
-    FILE* mOrigStdout = nullptr;
-    FILE* mNewStdout = nullptr;
+    Mutex mMutex;
     bool mDisableDefault;
+    std::vector<char> mBuf;
     static NetLogger* gInstance;
     SinkFunc mSinkFunc = nullptr;
     void* mSinkFuncUserp = nullptr;
-    static int espVprintf(const char * format, va_list args);
-    static int logFdWriteFunc(void* cookie, const char* data, int size);
     // log server stuff
     struct LogConn
     {
@@ -42,7 +41,8 @@ public:
     NetLogger(bool disableDefault);
     bool hasRemoteSink() const { return !mConnections.empty(); }
     void setSinkFunc(SinkFunc sinkFunc, void* userp);
-    int printfOri(const char* fmt, ...);
+    static int vprintf(const char * format, va_list args);
+    static int printf(const char* fmt, ...);
     void registerWithHttpServer(httpd_handle_t server, const char* path);
     void unregisterWithHttpServer(const char* path);
 };

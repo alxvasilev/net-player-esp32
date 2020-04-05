@@ -45,12 +45,12 @@ public:
 };
 char* binToHex(const uint8_t* data, size_t len, char* str);
 
-extern const char* _utils_hexDigits;;
+extern const char* _utils_hexDigits;
 template <typename T>
 char* numToHex(T val, char* str)
 {
-    const char* start = (const char*) &val;
-    const char* data = start + sizeof(T) - 1;
+    const uint8_t* start = (const uint8_t*) &val;
+    const uint8_t* data = start + sizeof(T) - 1;
     while (data >= start) {
         *(str++) = _utils_hexDigits[*data >> 4];
         *(str++) = _utils_hexDigits[*data & 0x0f];
