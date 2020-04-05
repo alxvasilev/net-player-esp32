@@ -1,16 +1,19 @@
 #include "utils.hpp"
-StdoutRedirector* StdoutRedirector::gInstance = nullptr;
-void binToHex(const uint8_t* data, size_t len, char* str)
+
+const char* _utils_hexDigits = "01234567890abcdef";
+
+char* binToHex(const uint8_t* data, size_t len, char* str)
 {
-    static const char* digits = "01234567890abcdef";
     auto end = data + len;
     while (data < end) {
-        *(str++) = digits[*data >> 4];
-        *(str++) = digits[*data & 0x0f];
+        *(str++) = _utils_hexDigits[*data >> 4];
+        *(str++) = _utils_hexDigits[*data & 0x0f];
         data++;
     }
     *str = 0;
+    return str;
 }
+
 uint8_t hexDigitVal(char digit) {
     if (digit >= '0' && digit <= '9') {
         return digit - '0';
@@ -50,4 +53,88 @@ bool unescapeUrlParam(char* str, size_t len)
         *wptr = 0;
     }
     return ok;
+}
+
+bool UrlParams::parse()
+{
+    auto end = mPtr + mSize - 1;
+    char* pch = mPtr;
+    for (;;) {
+        auto start = pch;
+        for (; (pch < end) && (*pch != '='); pch++);
+        if (pch >= end) { // unexpected end
+            return false;
+        }
+        *pch = 0; // null-terminate the key
+        mKeyVals.emplace_back();
+        KeyVal& keyval = mKeyVals.back();
+        auto& key = keyval.key;
+        key.str = start;
+        key.len = pch - start;
+
+        start = ++pch;
+        for (; (pch < end) && (*pch != '&'); pch++);
+        auto& val = keyval.val;
+        auto len = pch - start;
+        if (!unescapeUrlParam(start, len)) {
+            return false;
+        }
+        val.str = start;
+        val.len = len;
+        if (pch >= end) {
+            assert(pch == end);
+            assert(*pch == 0);
+            return true;
+        }
+        *(pch++) = 0; // null-terminate the value
+    }
+}
+UrlParams::UrlParams(httpd_req_t* req)
+{
+    mSize = httpd_req_get_url_query_len(req) + 1;
+    if (mSize <= 1) {
+        mSize = 0;
+        mPtr = nullptr;
+        return;
+    }
+    mPtr = (char*)malloc(mSize);
+    if (httpd_req_get_url_query_str(req, mPtr, mSize) != ESP_OK) {
+        free();
+        return;
+    }
+    parse();
+}
+
+UrlParams::Substring UrlParams::strParam(const char* name)
+{
+    for (auto& keyval: mKeyVals) {
+        if (strcmp(name, keyval.key.str) == 0) {
+            return keyval.val;
+        }
+    }
+    return Substring(nullptr, 0);
+}
+long UrlParams::intParam(const char* name, long defVal)
+{
+    auto strVal = strParam(name);
+    auto str = strVal.str;
+    if (!str) {
+        return defVal;
+    }
+    char* endptr;
+    auto val = strtol(str, &endptr, 10);
+    return (endptr == str + strVal.len) ? val : defVal;
+}
+
+const char* getUrlFile(const char* url)
+{
+    const char* lastSlashPos = nullptr;
+    for (;;url++) {
+        if (*url == 0) {
+            break;
+        } else if (*url == '/') {
+            lastSlashPos = url;
+        }
+    }
+    return lastSlashPos + 1;
 }

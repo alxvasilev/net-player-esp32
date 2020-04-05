@@ -36,7 +36,7 @@ protected:
     static void connCloseFunc(void* ctx);
     // called by the http connection task
     static esp_err_t logRequestHandler(httpd_req_t* req);
-    esp_err_t httpSendChunk(int fd, const char* data, size_t len);
+    esp_err_t httpSendChunk(int fd, const char* data, uint16_t len);
     static void logSink(const char* data, int len, void* userp);
 public:
     NetLogger(bool disableDefault);

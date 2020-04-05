@@ -9,6 +9,7 @@
 #include "utils.hpp"
 
 extern "C" int httpd_default_send(httpd_handle_t hd, int sockfd, const char *buf, size_t buf_len, int flags);
+NetLogger* NetLogger::gInstance = nullptr;
 
 int NetLogger::espVprintf(const char * format, va_list args)
 {
@@ -73,11 +74,14 @@ esp_err_t NetLogger::logRequestHandler(httpd_req_t* req)
     self->mConnections.push_back(conn);
     return ESP_OK;
 }
-esp_err_t NetLogger::httpSendChunk(int fd, const char* data, size_t len)
+esp_err_t NetLogger::httpSendChunk(int fd, const char* data, uint16_t len)
 {
     char strBuf[10];
-    auto numChars = snprintf(strBuf, sizeof(strBuf), "%x\r\n", len);
-    return ((httpd_default_send(mHttpServer, fd, strBuf, numChars, 0) >= 0) &&
+    auto end = numToHex(len, strBuf);
+    *(end++) = '\r';
+    *(end++) = '\n';
+    *end = 0;
+    return ((httpd_default_send(mHttpServer, fd, strBuf, end-strBuf, 0) >= 0) &&
             (httpd_default_send(mHttpServer, fd, data, len, 0) >= 0) &&
             (httpd_default_send(mHttpServer, fd, "\r\n", 2, 0) >=0));
 }

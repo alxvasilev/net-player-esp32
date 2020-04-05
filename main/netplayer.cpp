@@ -1,4 +1,3 @@
-
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -18,18 +17,21 @@
 #include "esp_peripherals.h"
 #include "periph_wifi.h"
 #include "bluetooth_service.h"
-
+#include <esp_ota_ops.h>
 #include "board.h"
 #include <esp_event_loop.h>
 #include <esp_log.h>
 #include <esp_system.h>
 #include <esp_http_server.h>
 #include <esp_bt_device.h>
+#include <esp_spiffs.h>
 #include <sys/param.h>
 #include <string>
+#include <memory>
 #include "utils.hpp"
+#include "netLogger.hpp"
+#include "httpFile.hpp"
 
-extern void *pxCurrentTCB;
 typedef enum { kOutputTypeI2s = 1, kOutputTypeA2dp } OutputType;
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 
@@ -105,8 +107,55 @@ void configGpios()
     gpio_pullup_en(kPinButton);
 }
 
-StdoutRedirector stdoutRedirector(false);
+NetLogger netLogger(false);
 
+void rollbackConfirmAppIsWorking()
+{
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t otaState;
+    if (esp_ota_get_state_partition(running, &otaState) != ESP_OK) {
+        return;
+    }
+    if (otaState != ESP_OTA_IMG_PENDING_VERIFY) {
+        return;
+    }
+    ESP_LOGW(TAG, "App appears to be working properly, confirming boot partition...");
+    esp_ota_mark_app_valid_cancel_rollback();
+};
+void testSpiffs()
+{
+    ESP_LOGI(TAG, "Initializing SPIFFS");
+
+     esp_vfs_spiffs_conf_t conf = {
+       .base_path = "/spiffs",
+       .partition_label = "storage",
+       .max_files = 5,
+       .format_if_mount_failed = true
+     };
+
+     // Use settings defined above to initialize and mount SPIFFS filesystem.
+     // Note: esp_vfs_spiffs_register is an all-in-one convenience function.
+     esp_err_t ret = esp_vfs_spiffs_register(&conf);
+
+     if (ret != ESP_OK) {
+         if (ret == ESP_FAIL) {
+             ESP_LOGE(TAG, "Failed to mount or format filesystem");
+         } else if (ret == ESP_ERR_NOT_FOUND) {
+             ESP_LOGE(TAG, "Failed to find SPIFFS partition");
+         } else {
+             ESP_LOGE(TAG, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
+         }
+         return;
+     }
+
+     size_t total = 0, used = 0;
+     ret = esp_spiffs_info(conf.partition_label, &total, &used);
+     if (ret != ESP_OK) {
+         ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
+     } else {
+         ESP_LOGW(TAG, "Partition size: total: %d, used: %d", total, used);
+     }
+}
 extern "C" void app_main(void)
 {
     esp_log_level_set("*", ESP_LOG_INFO);
@@ -114,13 +163,14 @@ extern "C" void app_main(void)
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
-        // NVS partition was truncated and needs to be erased
-        // Retry nvs_flash_init
         ESP_ERROR_CHECK(nvs_flash_erase());
         err = nvs_flash_init();
     }
     configGpios();
+
+    testSpiffs();
     tcpip_adapter_init();
+    rollbackConfirmAppIsWorking();
     if (!gpio_get_level(kPinButton)) {
         ESP_LOGW(TAG, "Button pressed at boot, start as access point for configuration");
         startWifiSoftAp();
@@ -153,6 +203,7 @@ extern "C" void app_main(void)
     http_stream_reader = http_stream_init(&http_cfg);
 
     streamOut = createOutputI2s();
+//  streamOut = createOutputA2dp();
 
     ESP_LOGI(TAG, "[2.3] Create decompressor to decode mp3/aac/etc");
     mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
@@ -266,8 +317,6 @@ void changeStreamUrl(const char* url)
 
 static esp_err_t indexUrlHandler(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "Current task id: %p\n", currentTaskHandle());
-
     static const char indexHtml[] =
             "<html><head /><body><h>NetPlayer HTTP server</h><br/>Free heap memory: ";
     httpd_resp_send_chunk(req, indexHtml, sizeof(indexHtml));
@@ -348,7 +397,7 @@ void stopWebserver() {
     if (!gHttpServer) {
         return;
     }
-    stdoutRedirector.unregisterWithHttpServer("/log");
+    netLogger.unregisterWithHttpServer("/log");
     httpd_stop(gHttpServer);
     gHttpServer = nullptr;
 }
@@ -360,6 +409,7 @@ void startWebserver(bool isAp)
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.uri_match_fn = httpd_uri_match_wildcard;
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
     if (httpd_start(&gHttpServer, &config) != ESP_OK) {
         ESP_LOGI(TAG, "Error starting server!");
@@ -367,9 +417,12 @@ void startWebserver(bool isAp)
     }
     // Set URI handlers
     ESP_LOGI(TAG, "Registering URI handlers");
+    netLogger.registerWithHttpServer(gHttpServer, "/log");
     httpd_register_uri_handler(gHttpServer, &ota);
     httpd_register_uri_handler(gHttpServer, &indexUrl);
-    stdoutRedirector.registerWithHttpServer(gHttpServer, "/log");
+    httpd_register_uri_handler(gHttpServer, &httpFsPut);
+    httpd_register_uri_handler(gHttpServer, &httpFsGet);
+
     if (!isAp) {
         httpd_register_uri_handler(gHttpServer, &play);
     }
@@ -436,16 +489,6 @@ void startWifiSoftAp()
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
     ESP_ERROR_CHECK(esp_wifi_start());
     printf("ESP WiFi started in AP mode \n");
-
-    /*
-     *
-     *  Spin up a task to show who connected or disconected
-     *
-     **/
-    //xTaskCreate(&print_sta_info, "print_sta_info", 4096, NULL, 1, NULL);
-
-    // https://demo-dijiudu.readthedocs.io/en/latest/api-reference/wifi/esp_wifi.html#_CPPv225esp_wifi_set_max_tx_power6int8_t
-    // This can only be placed after esp_wifi_start();
     ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(20));
 }
 
