@@ -24,6 +24,10 @@
 #include <esp_system.h>
 #include <esp_http_server.h>
 #include <esp_bt_device.h>
+#include <esp_bt.h>
+#include <esp_bt_main.h>
+#include <esp_gap_bt_api.h>
+#include <a2dp_stream.h>
 #include <esp_spiffs.h>
 #include <sys/param.h>
 #include <string>
@@ -31,9 +35,13 @@
 #include "utils.hpp"
 #include "netLogger.hpp"
 #include "httpFile.hpp"
+#include "ota.hpp"
 
 typedef enum { kOutputTypeI2s = 1, kOutputTypeA2dp } OutputType;
+typedef enum { kInputTypeHttp = 1, kInputTypeA2dp } InputType;
+
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
+static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
 
 static const char *TAG = "netplay";
 static const char* kStreamUrls[] = {
@@ -51,8 +59,12 @@ void reconfigDhcpServer();
 void startWifiSoftAp();
 void startWebserver(bool isAp=false);
 
-audio_element_handle_t
-    http_stream_reader, decompressor, equalizer, streamOut;
+audio_element_handle_t streamIn = nullptr;
+audio_element_handle_t decompressor = nullptr;
+audio_element_handle_t equalizer = nullptr;
+audio_element_handle_t streamOut = nullptr;
+
+InputType inputType;
 OutputType outputType;
 audio_pipeline_handle_t pipeline;
 esp_periph_set_handle_t periphSet;
@@ -65,6 +77,51 @@ const char* getNextStreamUrl() {
         currStreamIdx = 0;
     }
     return kStreamUrls[currStreamIdx];
+}
+
+audio_element_handle_t createInputHttp()
+{
+    static constexpr const char* ELEM = "HTTP";
+    ESP_LOGI(ELEM, "Create http stream reader");
+    inputType = kInputTypeHttp;
+    http_stream_cfg_t http_cfg = myHTTP_STREAM_CFG_DEFAULT;
+//  http_cfg.multi_out_num = 1;
+    http_cfg.enable_playlist_parser = 1;
+    http_cfg.event_handle = httpEventHandler;
+    return http_stream_init(&http_cfg);
+}
+
+audio_element_handle_t createInputA2dp()
+{
+    static constexpr const char* BT = "BT";
+    ESP_LOGI(BT, "Init Bluetooth");
+    inputType = kInputTypeA2dp;
+    ESP_LOGW(BT, "Free memory before releasing BLE memory: %d", xPortGetFreeHeapSize());
+    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
+    ESP_LOGW(BT, "Free memory after releasing BLE memory: %d", xPortGetFreeHeapSize());
+
+    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_bt_controller_init(&bt_cfg));
+    ESP_ERROR_CHECK(esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT));
+    ESP_ERROR_CHECK(esp_bluedroid_init());
+    ESP_ERROR_CHECK(esp_bluedroid_enable());
+    ESP_LOGW(BT, "Free memory after enable bluedroid: %d", xPortGetFreeHeapSize());
+
+    esp_bt_dev_set_device_name("NetPlayer");
+
+    esp_bt_gap_set_scan_mode(ESP_BT_SCAN_MODE_CONNECTABLE_DISCOVERABLE);
+    ESP_LOGI(BT, "Get Bluetooth stream");
+    a2dp_stream_config_t a2dp_config = {
+        .type = AUDIO_STREAM_READER,
+        .user_callback = {}
+    };
+
+    auto btStreamReader = a2dp_stream_init(&a2dp_config);
+
+    ESP_LOGI(BT, "Create and start Bluetooth peripheral");
+    auto bt_periph = bt_create_periph();
+    esp_periph_start(periphSet, bt_periph);
+    return btStreamReader;
 }
 
 audio_element_handle_t createOutputI2s()
@@ -105,24 +162,75 @@ void configGpios()
     gpio_pad_select_gpio(kPinButton);
     gpio_set_direction(kPinButton, GPIO_MODE_INPUT);
     gpio_pullup_en(kPinButton);
+    gpio_pad_select_gpio(kPinRollbackButton);
+    gpio_set_direction(kPinRollbackButton, GPIO_MODE_INPUT);
+    gpio_pullup_en(kPinRollbackButton);
 }
 
 NetLogger netLogger(false);
 
 void rollbackConfirmAppIsWorking()
 {
-    const esp_partition_t *running = esp_ota_get_running_partition();
-    esp_ota_img_states_t otaState;
-    if (esp_ota_get_state_partition(running, &otaState) != ESP_OK) {
-        return;
-    }
-    if (otaState != ESP_OTA_IMG_PENDING_VERIFY) {
+    if (!rollbackIsPendingVerify()) {
         return;
     }
     ESP_LOGW(TAG, "App appears to be working properly, confirming boot partition...");
     esp_ota_mark_app_valid_cancel_rollback();
-};
-void testSpiffs()
+}
+
+#define ENUM_NAME_CASE(name) case name: return #name
+
+const char* partitionStateToStr(esp_ota_img_states_t state)
+{
+    switch (state) {
+        ENUM_NAME_CASE(ESP_OTA_IMG_NEW);
+        ENUM_NAME_CASE(ESP_OTA_IMG_PENDING_VERIFY);
+        ENUM_NAME_CASE(ESP_OTA_IMG_VALID);
+        ENUM_NAME_CASE(ESP_OTA_IMG_INVALID);
+        ENUM_NAME_CASE(ESP_OTA_IMG_ABORTED);
+        ENUM_NAME_CASE(ESP_OTA_IMG_UNDEFINED);
+        default: return "(UNKNOWN)";
+    }
+}
+
+bool rollbackCheckUserForced()
+{
+    if (gpio_get_level(kPinRollbackButton)) {
+        return true;
+    }
+    static constexpr const char* RB = "ROLLBACK";
+    ESP_LOGW(RB, "Rollback button press detected, waiting for 4 second to confirm...");
+    vTaskDelay(10000 / portTICK_PERIOD_MS);
+    if (gpio_get_level(kPinRollbackButton)) {
+        ESP_LOGW(RB, "Rollback not pressed after 1 second, rollback canceled");
+        return true;
+    }
+
+    ESP_LOGW(RB, "App rollback requested by user button, rolling back and rebooting...");
+    if (rollbackIsPendingVerify()) {
+        esp_ota_mark_app_invalid_rollback_and_reboot();
+    }
+
+    ESP_LOGW(RB, "Could not cancel current OTA, manually switching boot partition");
+    auto otherPartition = esp_ota_get_next_update_partition(NULL);
+    if (!otherPartition) {
+        ESP_LOGE(RB, "There is no second OTA partition");
+        return false;
+    }
+    esp_ota_img_states_t state;
+    auto err = esp_ota_get_state_partition(otherPartition, &state);
+    if (err != ESP_OK) {
+        ESP_LOGW(RB, "Error getting state of other partition: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(RB, "Other partition has state %s", partitionStateToStr(state));
+    }
+    ESP_ERROR_CHECK(esp_ota_set_boot_partition(otherPartition));
+
+    esp_restart();
+    return true;
+}
+
+void mountSpiffs()
 {
     ESP_LOGI(TAG, "Initializing SPIFFS");
 
@@ -161,6 +269,7 @@ extern "C" void app_main(void)
     esp_log_level_set("*", ESP_LOG_INFO);
     esp_log_level_set(TAG, ESP_LOG_DEBUG);
 
+    ESP_LOGW(TAG, "APP VERSION 4");
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -168,8 +277,9 @@ extern "C" void app_main(void)
     }
     configGpios();
 
-    testSpiffs();
+    mountSpiffs();
     tcpip_adapter_init();
+    rollbackCheckUserForced();
     rollbackConfirmAppIsWorking();
     if (!gpio_get_level(kPinButton)) {
         ESP_LOGW(TAG, "Button pressed at boot, start as access point for configuration");
@@ -190,28 +300,32 @@ extern "C" void app_main(void)
     esp_periph_start(periphSet, wifi_handle);
     periph_wifi_wait_for_connected(wifi_handle, portMAX_DELAY);
 //====
+
+    startWebserver();
+    while (!netLogger.hasRemoteSink()) {
+        printf("Waiting for log conn\n");
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+    }
+
+
     ESP_LOGI(TAG, "[2.0] Create audio pipeline for playback");
     audio_pipeline_cfg_t pipeline_cfg = DEFAULT_AUDIO_PIPELINE_CONFIG();
     pipeline = audio_pipeline_init(&pipeline_cfg);
     mem_assert(pipeline);
 
-    ESP_LOGI(TAG, "[2.1] Create http stream to read data");
-    http_stream_cfg_t http_cfg = myHTTP_STREAM_CFG_DEFAULT;
-//  http_cfg.multi_out_num = 1;
-    http_cfg.enable_playlist_parser = 1;
-    http_cfg.event_handle = httpEventHandler;
-    http_stream_reader = http_stream_init(&http_cfg);
-
+    streamIn = createInputA2dp();
     streamOut = createOutputI2s();
-//  streamOut = createOutputA2dp();
 
-    ESP_LOGI(TAG, "[2.3] Create decompressor to decode mp3/aac/etc");
-    mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
-    decompressor = mp3_decoder_init(&mp3_cfg);
+    if (inputType == kInputTypeHttp) {
+        ESP_LOGI(TAG, "[2.3] Create decompressor to decode mp3/aac/etc");
+        mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
+        decompressor = mp3_decoder_init(&mp3_cfg);
 
-//    aac_decoder_cfg_t aac_cfg = DEFAULT_AAC_DECODER_CONFIG();
-//    decompressor = aac_decoder_init(&aac_cfg);
-
+        //    aac_decoder_cfg_t aac_cfg = DEFAULT_AAC_DECODER_CONFIG();
+        //    decompressor = aac_decoder_init(&aac_cfg);
+    } else {
+        decompressor = nullptr;
+    }
     equalizer_cfg_t eq_cfg = DEFAULT_EQUALIZER_CONFIG();
     int gainTable[] = { 10, 10, 8, 4, 2, 0, 0, 2, 4, 6,
                        10, 10, 8, 4, 2, 0, 0, 2, 4, 6};
@@ -221,18 +335,23 @@ extern "C" void app_main(void)
     equalizer = equalizer_init(&eq_cfg);
 
     ESP_LOGI(TAG, "[2.4] Register all elements to audio pipeline");
-    audio_pipeline_register(pipeline, http_stream_reader, "http");
-    audio_pipeline_register(pipeline, decompressor, "decomp");
-    audio_pipeline_register(pipeline, equalizer, "eq");
+    audio_pipeline_register(pipeline, streamIn, "in");
+    if (decompressor) {
+        audio_pipeline_register(pipeline, decompressor, "decomp");
+    }
+    if (equalizer) {
+        audio_pipeline_register(pipeline, equalizer, "eq");
+    }
     audio_pipeline_register(pipeline, streamOut, "out");
 
     ESP_LOGI(TAG, "[2.5] Link elements together http_stream-->mp3_decoder-->equalizer-->i2s_stream-->[codec_chip]");
-    const char* order[] = {"http", "decomp", "eq", "out"};
-    audio_pipeline_link(pipeline, order, 4);
-    const char* url = getNextStreamUrl();
-    ESP_LOGI(TAG, "[2.6] Set http stream uri to '%s'", url);
-    audio_element_set_uri(http_stream_reader, url);
-
+    const char* order[] = {"in", "eq", "out"};
+    audio_pipeline_link(pipeline, order, 3);
+    if (inputType == kInputTypeHttp) {
+        const char* url = getNextStreamUrl();
+        ESP_LOGI(TAG, "[2.6] Set http stream uri to '%s'", url);
+        audio_element_set_uri(streamIn, url);
+    }
     ESP_LOGI(TAG, "[ 5 ] Set up  event listener");
     audio_event_iface_cfg_t evt_cfg = AUDIO_EVENT_IFACE_DEFAULT_CFG();
     audio_event_iface_handle_t evt = audio_event_iface_init(&evt_cfg);
@@ -245,7 +364,6 @@ extern "C" void app_main(void)
 
     ESP_LOGI(TAG, "[ 6 ] Start pipeline");
     audio_pipeline_run(pipeline);
-    startWebserver();
     while (1) {
         audio_event_iface_msg_t msg;
         esp_err_t ret = audio_event_iface_listen(evt, &msg, portMAX_DELAY);
@@ -257,7 +375,7 @@ extern "C" void app_main(void)
 //            msg.source_type, msg.source, msg.cmd);
 
         if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT
-            && msg.source == (void *) decompressor
+            && msg.source == (void *) decompressor && decompressor
             && msg.cmd == AEL_MSG_CMD_REPORT_MUSIC_INFO) {
             audio_element_info_t music_info;
             memset(&music_info, 0, sizeof(music_info));
@@ -272,7 +390,21 @@ extern "C" void app_main(void)
             }
             continue;
         }
+        if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT
+                && msg.source == (void *) streamIn && inputType == kInputTypeA2dp
+                && msg.cmd == AEL_MSG_CMD_REPORT_MUSIC_INFO) {
+            audio_element_info_t music_info;
+            memset(&music_info, 0, sizeof(music_info));
+            audio_element_getinfo(streamIn, &music_info);
+            ESP_LOGI(TAG, "[ * ] Receive music info from a2dp input, sample_rates=%d, bits=%d, ch=%d",
+                     music_info.sample_rates, music_info.bits, music_info.channels);
 
+            audio_element_setinfo(streamOut, &music_info);
+            if (outputType == kOutputTypeI2s) {
+                i2s_stream_set_clk(streamOut, music_info.sample_rates, music_info.bits, music_info.channels);
+            }
+            continue;
+        }
         /* Stop when the last pipeline element (i2s_stream_writer in this case) receives stop event */
         if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT &&
             msg.source == (void*) streamOut &&
@@ -286,8 +418,14 @@ extern "C" void app_main(void)
 
     ESP_LOGI(TAG, "[ 7 ] Stop pipelines");
     audio_pipeline_terminate(pipeline);
-    audio_pipeline_unregister_more(pipeline, http_stream_reader,
-        decompressor, equalizer, streamOut, NULL);
+    audio_pipeline_unregister(pipeline, streamIn);
+    if (decompressor) {
+        audio_pipeline_unregister(pipeline, decompressor);
+    }
+    if (equalizer) {
+        audio_pipeline_unregister(pipeline, equalizer);
+    }
+    audio_pipeline_unregister(pipeline, streamOut);
     audio_pipeline_remove_listener(pipeline);
 
     /* Stop all peripherals before removing the listener */
@@ -299,10 +437,14 @@ extern "C" void app_main(void)
 
     /* Release all resources */
     audio_pipeline_deinit(pipeline);
-    audio_element_deinit(http_stream_reader);
+    audio_element_deinit(streamIn);
     audio_element_deinit(streamOut);
-    audio_element_deinit(decompressor);
-    audio_element_deinit(equalizer);
+    if (decompressor) {
+        audio_element_deinit(decompressor);
+    }
+    if (equalizer) {
+        audio_element_deinit(equalizer);
+    }
     esp_periph_set_destroy(periphSet);
 }
 
@@ -311,7 +453,7 @@ void changeStreamUrl(const char* url)
     ESP_LOGW("STREAM", "Changing stream URL to '%s'", url);
     audio_pipeline_stop(pipeline);
     audio_pipeline_wait_for_stop(pipeline);
-    audio_element_set_uri(http_stream_reader, url);
+    audio_element_set_uri(streamIn, url);
     audio_pipeline_resume(pipeline);
 }
 
@@ -384,14 +526,6 @@ int httpEventHandler(http_stream_event_msg_t *msg)
     return ESP_OK;
 }
 
-esp_err_t OTA_update_post_handler(httpd_req_t *req);
-static const httpd_uri_t ota = {
-    .uri       = "/ota",
-    .method    = HTTP_POST,
-    .handler   = OTA_update_post_handler,
-    .user_ctx  = NULL
-};
-
 void stopWebserver() {
     /* Stop the web server */
     if (!gHttpServer) {
@@ -418,7 +552,7 @@ void startWebserver(bool isAp)
     // Set URI handlers
     ESP_LOGI(TAG, "Registering URI handlers");
     netLogger.registerWithHttpServer(gHttpServer, "/log");
-    httpd_register_uri_handler(gHttpServer, &ota);
+    httpd_register_uri_handler(gHttpServer, &otaUrlHandler);
     httpd_register_uri_handler(gHttpServer, &indexUrl);
     httpd_register_uri_handler(gHttpServer, &httpFsPut);
     httpd_register_uri_handler(gHttpServer, &httpFsGet);

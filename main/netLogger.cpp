@@ -108,6 +108,7 @@ NetLogger::NetLogger(bool disableDefault)
     mDisableDefault = disableDefault;
     mOrigStdout = stdout;
     mNewStdout = stdout = funopen(nullptr, nullptr, &logFdWriteFunc, nullptr, nullptr);
+    setvbuf(mNewStdout, NULL, _IONBF, 0);
     esp_log_set_vprintf(&espVprintf);
 }
 void NetLogger::setSinkFunc(SinkFunc sinkFunc, void* userp)

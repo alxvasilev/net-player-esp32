@@ -40,6 +40,7 @@ protected:
     static void logSink(const char* data, int len, void* userp);
 public:
     NetLogger(bool disableDefault);
+    bool hasRemoteSink() const { return !mConnections.empty(); }
     void setSinkFunc(SinkFunc sinkFunc, void* userp);
     int printfOri(const char* fmt, ...);
     void registerWithHttpServer(httpd_handle_t server, const char* path);
