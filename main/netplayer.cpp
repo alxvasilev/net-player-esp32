@@ -5,15 +5,6 @@
 #include <esp_log.h>
 #include <esp_wifi.h>
 #include <nvs_flash.h>
-#include "audio_element.h"
-#include "audio_pipeline.h"
-#include "audio_event_iface.h"
-#include "audio_common.h"
-#include "http_stream.h"
-#include "equalizer.h"
-#include "i2s_stream.h"
-#include "mp3_decoder.h"
-#include "aac_decoder.h"
 #include "esp_peripherals.h"
 #include "periph_wifi.h"
 #include "bluetooth_service.h"
@@ -27,7 +18,6 @@
 #include <esp_bt.h>
 #include <esp_bt_main.h>
 #include <esp_gap_bt_api.h>
-#include <a2dp_stream.h>
 #include <esp_spiffs.h>
 #include <sys/param.h>
 #include <string>
@@ -36,9 +26,7 @@
 #include "netLogger.hpp"
 #include "httpFile.hpp"
 #include "ota.hpp"
-
-typedef enum { kOutputTypeI2s = 1, kOutputTypeA2dp } OutputType;
-typedef enum { kInputTypeHttp = 1, kInputTypeA2dp } InputType;
+#include "audioPlayer.hpp"
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
@@ -56,21 +44,14 @@ static const char* kStreamUrls[] = {
         // BBC m4a "http://a.files.bbci.co.uk/media/live/manifesto/audio/simulcast/hls/nonuk/sbr_low/llnw/bbc_radio_one.m3u8"
 
 httpd_handle_t gHttpServer = nullptr;
+AudioPlayer player(AudioPlayer::kOutputI2s);
+
 void reconfigDhcpServer();
 void startWifiSoftAp();
 void startWebserver(bool isAp=false);
 
-audio_element_handle_t streamIn = nullptr;
-audio_element_handle_t decompressor = nullptr;
-audio_element_handle_t equalizer = nullptr;
-audio_element_handle_t streamOut = nullptr;
-
-InputType inputType;
-OutputType outputType;
-audio_pipeline_handle_t pipeline;
 esp_periph_set_handle_t periphSet;
 
-int httpEventHandler(http_stream_event_msg_t *msg);
 const char* getNextStreamUrl() {
     static int currStreamIdx = -1;
     currStreamIdx++;
@@ -80,93 +61,6 @@ const char* getNextStreamUrl() {
     return kStreamUrls[currStreamIdx];
 }
 
-audio_element_handle_t createInputHttp()
-{
-    static constexpr const char* ELEM = "HTTP";
-    ESP_LOGI(ELEM, "Create http stream reader");
-    inputType = kInputTypeHttp;
-    http_stream_cfg_t http_cfg = myHTTP_STREAM_CFG_DEFAULT;
-//  http_cfg.multi_out_num = 1;
-    http_cfg.enable_playlist_parser = 1;
-    http_cfg.event_handle = httpEventHandler;
-    return http_stream_init(&http_cfg);
-}
-
-audio_element_handle_t createInputA2dp()
-{
-    static constexpr const char* BT = "BT";
-    ESP_LOGI(BT, "Init Bluetooth");
-    inputType = kInputTypeA2dp;
-    ESP_LOGW(BT, "Free memory before releasing BLE memory: %d", xPortGetFreeHeapSize());
-    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
-    ESP_LOGW(BT, "Free memory after releasing BLE memory: %d", xPortGetFreeHeapSize());
-
-    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_bt_controller_init(&bt_cfg));
-    ESP_ERROR_CHECK(esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT));
-    ESP_ERROR_CHECK(esp_bluedroid_init());
-    ESP_ERROR_CHECK(esp_bluedroid_enable());
-    ESP_LOGW(BT, "Free memory after enable bluedroid: %d", xPortGetFreeHeapSize());
-
-    esp_bt_dev_set_device_name("NetPlayer");
-
-    esp_bt_gap_set_scan_mode(ESP_BT_SCAN_MODE_CONNECTABLE_DISCOVERABLE);
-    ESP_LOGI(BT, "Get Bluetooth stream");
-    a2dp_stream_config_t a2dp_config = {
-        .type = AUDIO_STREAM_READER,
-        .user_callback = {
-            .user_a2d_cb = [](esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param) {
-                ESP_LOGI(BT, "A2DP stream event %d", event);
-            },
-            .user_a2d_sink_data_cb = [](const uint8_t *buf, uint32_t len) {
-                static uint8_t ctr = 0;
-                gpio_set_level(kPinLed, (++ctr) & 1);
-            },
-            nullptr
-        }
-    };
-
-    auto btStreamReader = a2dp_stream_init(&a2dp_config);
-
-    ESP_LOGI(BT, "Create and start Bluetooth peripheral");
-    auto bt_periph = bt_create_periph();
-    esp_periph_start(periphSet, bt_periph);
-    return btStreamReader;
-}
-
-audio_element_handle_t createOutputI2s()
-{
-    ESP_LOGI(TAG, "Creating i2s output to write data to codec chip");
-    i2s_stream_cfg_t i2s_cfg = myI2S_STREAM_INTERNAL_DAC_CFG_DEFAULT;
-    i2s_cfg.type = AUDIO_STREAM_WRITER;
-    audio_element_handle_t elem = i2s_stream_init(&i2s_cfg);
-    outputType = kOutputTypeI2s;
-    return elem;
-}
-audio_element_handle_t createOutputA2dp()
-{
-    ESP_LOGI(TAG, "Creating a2dp output source");
-    ESP_LOGI(TAG, "\tCreating Bluetooth service");
-    bluetooth_service_cfg_t cfg;
-    cfg.device_name = "ESP-ADF-SOURCE";
-    cfg.mode = BLUETOOTH_A2DP_SOURCE;
-    cfg.remote_name = "DL-LINK";
-    bluetooth_service_start(&cfg);
-
-    ESP_LOGI(TAG, "\tCreating bluetooth sink element");
-    audio_element_handle_t elem = bluetooth_service_create_stream();
-    outputType = kOutputTypeA2dp;
-
-    const uint8_t* addr = esp_bt_dev_get_address();
-    char strAddr[13];
-    binToHex(addr, 6, strAddr);
-    ESP_LOGW("BT", "Own BT MAC: '%s'", strAddr);
-// Move this to execute only once
-    ESP_LOGI(TAG, "\tCreating and starting Bluetooth peripheral");
-    esp_periph_handle_t btPeriph = bluetooth_service_create_periph();
-    esp_periph_start(periphSet, btPeriph);
-    return elem;
-}
 void configGpios()
 {
     gpio_pad_select_gpio(kPinButton);
@@ -239,7 +133,7 @@ extern "C" void app_main(void)
 {
     esp_log_level_set("*", ESP_LOG_INFO);
     esp_log_level_set(TAG, ESP_LOG_DEBUG);
-
+    player.setLogLevel(ESP_LOG_DEBUG);
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -272,166 +166,18 @@ extern "C" void app_main(void)
 //====
 
     startWebserver();
+    netLogger.waitForLogConnection();
+    ESP_LOGI(TAG, "Log connection accepted, continuing");
+    player.setSourceUrl(getNextStreamUrl(), AudioPlayer::kCodecMp3);
+    player.play();
 
-    ESP_LOGI(TAG, "[2.0] Create audio pipeline for playback");
-    audio_pipeline_cfg_t pipeline_cfg = DEFAULT_AUDIO_PIPELINE_CONFIG();
-    pipeline = audio_pipeline_init(&pipeline_cfg);
-    mem_assert(pipeline);
-
-    streamIn = createInputA2dp();
-    streamOut = createOutputI2s();
-
-    if (inputType == kInputTypeHttp) {
-        ESP_LOGI(TAG, "[2.3] Create decompressor to decode mp3/aac/etc");
-        mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
-        decompressor = mp3_decoder_init(&mp3_cfg);
-
-        //    aac_decoder_cfg_t aac_cfg = DEFAULT_AAC_DECODER_CONFIG();
-        //    decompressor = aac_decoder_init(&aac_cfg);
-    } else {
-        decompressor = nullptr;
-    }
-    ESP_LOGW(TAG, "Free memory before create eq: %d", xPortGetFreeHeapSize());
-
-    equalizer_cfg_t eq_cfg = DEFAULT_EQUALIZER_CONFIG();
-    int gainTable[] = { 10, 10, 8, 4, 2, 0, 0, 2, 4, 6,
-                       10, 10, 8, 4, 2, 0, 0, 2, 4, 6};
-    // The size of gain array should be the multiplication of NUMBER_BAND
-    // and number channels of audio stream data. The minimum of gain is -13 dB.
-    eq_cfg.set_gain = gainTable;
-    equalizer = equalizer_init(&eq_cfg);
-
-    ESP_LOGI(TAG, "[2.4] Register all elements to audio pipeline");
-    audio_pipeline_register(pipeline, streamIn, "in");
-    if (decompressor) {
-        audio_pipeline_register(pipeline, decompressor, "decomp");
-    }
-    if (equalizer) {
-        audio_pipeline_register(pipeline, equalizer, "eq");
-    }
-    audio_pipeline_register(pipeline, streamOut, "out");
-
-    ESP_LOGI(TAG, "[2.5] Link elements together http_stream-->mp3_decoder-->equalizer-->i2s_stream-->[codec_chip]");
-    const char* order[] = {"in", "eq", "out"};
-    audio_pipeline_link(pipeline, order, 3);
-    if (inputType == kInputTypeHttp) {
-        const char* url = getNextStreamUrl();
-        ESP_LOGI(TAG, "[2.6] Set http stream uri to '%s'", url);
-        audio_element_set_uri(streamIn, url);
-    }
-    ESP_LOGI(TAG, "[ 5 ] Set up  event listener");
-    audio_event_iface_cfg_t evt_cfg = AUDIO_EVENT_IFACE_DEFAULT_CFG();
-    audio_event_iface_handle_t evt = audio_event_iface_init(&evt_cfg);
-
-    ESP_LOGI(TAG, "[5.1] Listening event from all elements of audio pipeline");
-    audio_pipeline_set_listener(pipeline, evt);
-
-    ESP_LOGI(TAG, "[5.2] Listening event from peripherals");
-    audio_event_iface_set_listener(esp_periph_set_get_event_iface(periphSet), evt);
-
-    ESP_LOGW(TAG, "Free memory before pipeline start: %d", xPortGetFreeHeapSize());
-
-    ESP_LOGI(TAG, "[ 6 ] Start pipeline");
-    audio_pipeline_run(pipeline);
-    ESP_LOGW(TAG, "Free memory after pipeline start: %d", xPortGetFreeHeapSize());
-
-    while (1) {
-        audio_event_iface_msg_t msg;
-        esp_err_t ret = audio_event_iface_listen(evt, &msg, portMAX_DELAY);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "[ * ] Event interface error : %d", ret);
-            continue;
-        }
-//        ESP_LOGI("source_type = %d, source: %p, cmd: %d\n",
-//            msg.source_type, msg.source, msg.cmd);
-
-        if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT
-            && msg.source == (void *) decompressor && decompressor
-            && msg.cmd == AEL_MSG_CMD_REPORT_MUSIC_INFO) {
-            audio_element_info_t music_info;
-            memset(&music_info, 0, sizeof(music_info));
-            audio_element_getinfo(decompressor, &music_info);
-
-            ESP_LOGI(TAG, "[ * ] Receive music info from mp3 decoder, sample_rates=%d, bits=%d, ch=%d",
-                     music_info.sample_rates, music_info.bits, music_info.channels);
-
-            audio_element_setinfo(streamOut, &music_info);
-            if (outputType == kOutputTypeI2s) {
-                i2s_stream_set_clk(streamOut, music_info.sample_rates, music_info.bits, music_info.channels);
-            }
-            continue;
-        }
-        if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT
-                && msg.source == (void *) streamIn && inputType == kInputTypeA2dp
-                && msg.cmd == AEL_MSG_CMD_REPORT_MUSIC_INFO) {
-            audio_element_info_t music_info;
-            memset(&music_info, 0, sizeof(music_info));
-            audio_element_getinfo(streamIn, &music_info);
-            ESP_LOGI(TAG, "[ * ] Receive music info from a2dp input, sample_rates=%d, bits=%d, ch=%d",
-                     music_info.sample_rates, music_info.bits, music_info.channels);
-
-            audio_element_setinfo(streamOut, &music_info);
-            if (outputType == kOutputTypeI2s) {
-                i2s_stream_set_clk(streamOut, music_info.sample_rates, music_info.bits, music_info.channels);
-            }
-            continue;
-        }
-        /* Stop when the last pipeline element (i2s_stream_writer in this case) receives stop event */
-        if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT &&
-            msg.source == (void*) streamOut &&
-            msg.cmd == AEL_MSG_CMD_REPORT_STATUS &&
-            (((int)msg.data == AEL_STATUS_STATE_STOPPED) || ((int)msg.data == AEL_STATUS_STATE_FINISHED))) {
-            ESP_LOGW(TAG, "[ * ] Stop event received");
-        } else if (msg.source_type == PERIPH_ID_BLUETOOTH && msg.source == (void*)streamOut) {
-            ESP_LOGW("myBT", "Bluetooth event cmd = %d", msg.cmd);
-        }
-    }
-
-    ESP_LOGI(TAG, "[ 7 ] Stop pipelines");
-    audio_pipeline_terminate(pipeline);
-    audio_pipeline_unregister(pipeline, streamIn);
-    if (decompressor) {
-        audio_pipeline_unregister(pipeline, decompressor);
-    }
-    if (equalizer) {
-        audio_pipeline_unregister(pipeline, equalizer);
-    }
-    audio_pipeline_unregister(pipeline, streamOut);
-    audio_pipeline_remove_listener(pipeline);
-
-    /* Stop all peripherals before removing the listener */
-    esp_periph_set_stop_all(periphSet);
-    audio_event_iface_remove_listener(esp_periph_set_get_event_iface(periphSet), evt);
-
-    /* Make sure audio_pipeline_remove_listener & audio_event_iface_remove_listener are called before destroying event_iface */
-    audio_event_iface_destroy(evt);
-
-    /* Release all resources */
-    audio_pipeline_deinit(pipeline);
-    audio_element_deinit(streamIn);
-    audio_element_deinit(streamOut);
-    if (decompressor) {
-        audio_element_deinit(decompressor);
-    }
-    if (equalizer) {
-        audio_element_deinit(equalizer);
-    }
-    esp_periph_set_destroy(periphSet);
-}
-
-void changeStreamUrl(const char* url)
-{
-    ESP_LOGW("STREAM", "Changing stream URL to '%s'", url);
-    audio_pipeline_stop(pipeline);
-    audio_pipeline_wait_for_stop(pipeline);
-    audio_element_set_uri(streamIn, url);
-    audio_pipeline_resume(pipeline);
+//  esp_periph_set_destroy(periphSet);
 }
 
 static esp_err_t indexUrlHandler(httpd_req_t *req)
 {
     static const char indexHtml[] =
-            "<html><head /><body><h>NetPlayer HTTP server</h><br/>Free heap memory: ";
+        "<html><head /><body><h>NetPlayer HTTP server</h><br/>Free heap memory: ";
     httpd_resp_send_chunk(req, indexHtml, sizeof(indexHtml));
     char buf[32];
     snprintf(buf, sizeof(buf)-1, "%d", xPortGetFreeHeapSize());
@@ -465,7 +211,7 @@ static esp_err_t playUrlHandler(httpd_req_t *req)
     }
     ESP_LOGW("HTTP", "Http req url: %s", url.str);
     auto strUrl = getNextStreamUrl();
-    changeStreamUrl(strUrl);
+    player.setSourceUrl(strUrl, AudioPlayer::kCodecMp3);
     std::string msg("Changing stream url to '");
     msg.append(strUrl).append("'");
     httpd_resp_send(req, msg.c_str(), msg.size());
@@ -480,22 +226,6 @@ static const httpd_uri_t play = {
      * context to demonstrate it's usage */
     .user_ctx  = nullptr
 };
-
-int httpEventHandler(http_stream_event_msg_t *msg)
-{
-    ESP_LOGI("STREAM", "http stream event %d, heap free: %d", msg->event_id, xPortGetFreeHeapSize());
-    if (msg->event_id == HTTP_STREAM_RESOLVE_ALL_TRACKS) {
-        return ESP_OK;
-    }
-
-    if (msg->event_id == HTTP_STREAM_FINISH_TRACK) {
-        return http_stream_next_track(msg->el);
-    }
-    if (msg->event_id == HTTP_STREAM_FINISH_PLAYLIST) {
-        return http_stream_fetch_again(msg->el);
-    }
-    return ESP_OK;
-}
 
 void stopWebserver() {
     /* Stop the web server */

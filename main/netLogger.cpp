@@ -155,3 +155,22 @@ void NetLogger::unregisterWithHttpServer(const char* path)
     setSinkFunc(nullptr, nullptr);
     httpd_unregister_uri(mHttpServer, path);
 }
+
+bool NetLogger::waitForLogConnection(int sec)
+{
+    for (;;) {
+        {
+            MutexLocker locker(mListMutex);
+            if (!mConnections.empty()) {
+                return true;
+            }
+        }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        if (sec >= 0) {
+            sec -= 1;
+            if (sec <= 0) {
+                return false; // timeout
+            }
+        }
+    }
+}

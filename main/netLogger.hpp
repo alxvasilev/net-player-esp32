@@ -45,6 +45,7 @@ public:
     static int printf(const char* fmt, ...);
     void registerWithHttpServer(httpd_handle_t server, const char* path);
     void unregisterWithHttpServer(const char* path);
+    bool waitForLogConnection(int sec=-1);
 };
 
 #endif
