@@ -43,6 +43,41 @@ public:
         return ret;
     }
 };
+
+class DynBuffer: public std::vector<char>
+{
+public:
+    DynBuffer(size_t allocSize) { reserve(allocSize); }
+    int vprintf(const char *fmt, va_list args)
+    {
+        size_t avail = capacity() - size();
+        if (avail < 2) {
+            reserve(capacity() + 64);
+            avail = capacity() - size();
+        }
+        auto oldSize = size();
+        resize(capacity());
+        for (;;) {
+            int num = ::vsnprintf(data() + oldSize, avail, fmt, args);
+            if (num < 0) {
+                ESP_LOGE("DynBuffer", "printf: vsnprintf() returned error");
+                return num;
+            } else if (num < size()) {
+                resize(oldSize + num + 1);
+                return num;
+            }
+        }
+    }
+    int printf(const char *fmt, ...)
+    {
+        va_list args;
+        va_start(args, fmt);
+        int ret = vprintf(fmt, args);
+        va_end(args);
+        return ret;
+    }
+};
+
 char* binToHex(const uint8_t* data, size_t len, char* str);
 
 extern const char* _utils_hexDigits;

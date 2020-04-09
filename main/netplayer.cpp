@@ -34,6 +34,8 @@ static constexpr gpio_num_t kPinLed = GPIO_NUM_2;
 
 static const char *TAG = "netplay";
 static const char* kStreamUrls[] = {
+    "http://streams.greenhost.nl:8080/live",
+    "http://78.129.150.144/stream.mp3?ipport=78.129.150.144_5064",
     "http://stream01048.westreamradio.com:80/wsm-am-mp3",
     "http://94.23.252.14:8067/player"
 };
@@ -76,6 +78,28 @@ void configGpios()
 }
 
 NetLogger netLogger(false);
+void blinkLed(int dur, int periodMs, uint8_t duty10=5)
+{
+    int ticksOn = (periodMs * duty10 / 10) / portTICK_PERIOD_MS;
+    int ticksOff = (periodMs * (10 - duty10) / 10) / portTICK_PERIOD_MS;
+    for(int i = dur / periodMs; i > 0; i--) {
+        gpio_set_level(kPinLed, 1);
+        vTaskDelay(ticksOn);
+        gpio_set_level(kPinLed, 0);
+        vTaskDelay(ticksOff);
+    }
+}
+
+void blinkLedProgress(int dur, int periodMs)
+{
+    int count = dur / periodMs;
+    for(int i = 0; i < count; i++) {
+        gpio_set_level(kPinLed, 1);
+        vTaskDelay((periodMs * i / count) / portTICK_PERIOD_MS);
+        gpio_set_level(kPinLed, 0);
+        vTaskDelay((periodMs * (count - i) / count) / portTICK_PERIOD_MS);
+    }
+}
 
 void mountSpiffs()
 {
@@ -119,7 +143,7 @@ bool rollbackCheckUserForced()
 
     static constexpr const char* RB = "ROLLBACK";
     ESP_LOGW("RB", "Rollback button press detected, waiting for 4 second to confirm...");
-    vTaskDelay(4000 / portTICK_PERIOD_MS);
+    blinkLedProgress(4000, 200);
     if (gpio_get_level(kPinRollbackButton)) {
         ESP_LOGW("RB", "Rollback not pressed after 1 second, rollback canceled");
         return false;
@@ -141,7 +165,7 @@ extern "C" void app_main(void)
     }
     configGpios();
 
-    mountSpiffs();
+//    mountSpiffs();
     tcpip_adapter_init();
     rollbackCheckUserForced();
     rollbackConfirmAppIsWorking();
@@ -168,6 +192,16 @@ extern "C" void app_main(void)
     startWebserver();
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
+
+    ESP_LOGW("BT", "Free memory before releasing BLE memory: %d", xPortGetFreeHeapSize());
+    esp_bluedroid_disable();
+    esp_bluedroid_deinit();
+    esp_bt_controller_disable();
+    esp_bt_controller_deinit();
+    esp_bt_mem_release(ESP_BT_MODE_BTDM);
+    ESP_LOGW("BT", "Free memory after releasing BLE memory: %d", xPortGetFreeHeapSize());
+
+
     player.setSourceUrl(getNextStreamUrl(), AudioPlayer::kCodecMp3);
     player.play();
 
@@ -176,14 +210,28 @@ extern "C" void app_main(void)
 
 static esp_err_t indexUrlHandler(httpd_req_t *req)
 {
-    static const char indexHtml[] =
-        "<html><head /><body><h>NetPlayer HTTP server</h><br/>Free heap memory: ";
-    httpd_resp_send_chunk(req, indexHtml, sizeof(indexHtml));
-    char buf[32];
-    snprintf(buf, sizeof(buf)-1, "%d", xPortGetFreeHeapSize());
-    httpd_resp_send_chunk(req, buf, strlen(buf));
-    static const char indexHtmlEnd[] = "</body></html>";
-    httpd_resp_send_chunk(req, indexHtmlEnd, sizeof(indexHtmlEnd));
+    static const char startHtml[] =
+        "<html><head /><body><h1 align='center'>NetPlayer HTTP server</h1><pre>Free heap memory: ";
+    httpd_resp_send_chunk(req, startHtml, sizeof(startHtml));
+    DynBuffer buf(128);
+    /* Print chip information */
+    esp_chip_info_t chip_info;
+    esp_chip_info(&chip_info);
+    buf.printf("%d\nchip type: %s\nnum cores: %d\nsilicon revision: %d\n",
+        xPortGetFreeHeapSize(), CONFIG_IDF_TARGET,
+        chip_info.cores, chip_info.revision
+    );
+    httpd_resp_send_chunk(req, buf.data(), buf.size());
+    buf.clear();
+
+    buf.printf("radio: WiFi%s%s\nflash size: %dMB\nflash type: %s</pre></body></html>",
+        (chip_info.features & CHIP_FEATURE_BT) ? "/BT" : "",
+        (chip_info.features & CHIP_FEATURE_BLE) ? "/BLE" : "",
+        spi_flash_get_chip_size() / (1024 * 1024),
+        (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external"
+    );
+    httpd_resp_send_chunk(req, buf.data(), buf.size());
+    buf.clear();
     httpd_resp_send_chunk(req, nullptr, 0);
     return ESP_OK;
 }
@@ -227,6 +275,27 @@ static const httpd_uri_t play = {
     .user_ctx  = nullptr
 };
 
+static esp_err_t pauseUrlHandler(httpd_req_t *req)
+{
+    if (player.state() == AudioPlayer::kStatePlaying) {
+        player.pause();
+        httpd_resp_sendstr(req, "Pause");
+    } else {
+        player.resume();
+        httpd_resp_sendstr(req, "Play");
+    }
+    return ESP_OK;
+}
+
+static const httpd_uri_t pauseUrl = {
+    .uri       = "/pause",
+    .method    = HTTP_GET,
+    .handler   = pauseUrlHandler,
+    /* Let's pass response string in user
+     * context to demonstrate it's usage */
+    .user_ctx  = nullptr
+};
+
 void stopWebserver() {
     /* Stop the web server */
     if (!gHttpServer) {
@@ -260,6 +329,7 @@ void startWebserver(bool isAp)
 
     if (!isAp) {
         httpd_register_uri_handler(gHttpServer, &play);
+        httpd_register_uri_handler(gHttpServer, &pauseUrl);
     }
 }
 

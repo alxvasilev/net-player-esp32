@@ -20,12 +20,12 @@ bool rollbackIsPendingVerify()
 /* Receive .Bin file */
 static esp_err_t OTA_update_post_handler(httpd_req_t *req)
 {
-    ESP_LOGI("OTA", "OTA request received (%p)", currentTaskHandle());
-    char* otaBuf = new char[kOtaBufSize]; // no need to free it, we will reboot
     int contentLen = req->content_len;
+    ESP_LOGI("OTA", "OTA request received, image size: %d",contentLen);
+    char* otaBuf = new char[kOtaBufSize]; // no need to free it, we will reboot
     const auto update_partition = esp_ota_get_next_update_partition(NULL);
     esp_ota_handle_t ota_handle;
-    esp_err_t err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
+    esp_err_t err = esp_ota_begin(update_partition, contentLen, &ota_handle);
     if (err == ESP_ERR_OTA_ROLLBACK_INVALID_STATE) {
         ESP_LOGW("OTA", "Invalid OTA state of running app, trying to set it");
         esp_ota_mark_app_valid_cancel_rollback();
@@ -37,7 +37,9 @@ static esp_err_t OTA_update_post_handler(httpd_req_t *req)
         }
     } else if (err != ESP_OK) {
         ESP_LOGE("OTA", "esp_ota_begin returned error %s, aborting OTA", esp_err_to_name(err));
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "esp_ota_begin error");
+        char msg[64];
+        snprintf(msg, 64, "esp_ota_begin() error %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, msg);
         return ESP_FAIL;
     }
 
@@ -73,6 +75,7 @@ static esp_err_t OTA_update_post_handler(httpd_req_t *req)
     err = esp_ota_end(ota_handle);
     if (err != ESP_OK) {
         ESP_LOGE("OTA", "esp_ota_end error: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "esp_ota_end error");
         return ESP_FAIL;
     }
 
@@ -80,6 +83,7 @@ static esp_err_t OTA_update_post_handler(httpd_req_t *req)
     err = esp_ota_set_boot_partition(update_partition);
     if (err != ESP_OK) {
         ESP_LOGE("OTA", "esp_ota_set_boot_partition error %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "esp_ota_set_boot_partition error");
         return ESP_FAIL;
     }
 

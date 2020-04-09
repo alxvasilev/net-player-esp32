@@ -32,10 +32,13 @@ protected:
     audio_element_handle_t mStreamOut = nullptr;
     audio_element_handle_t mSamplerateSource = nullptr;
     audio_pipeline_handle_t mPipeline = nullptr;
-    audio_event_iface_handle_t mEventListener = nullptr;
     static const int mEqualizerDefaultGainTable[];
 
     static int httpEventHandler(http_stream_event_msg_t *msg);
+    static esp_err_t inputFormatEventCb(audio_element_handle_t el,
+        audio_event_iface_msg_t *event, void *ctx);
+    static const char* codecTypeToStr(CodecType type);
+
     void createInputHttp();
     void createInputA2dp();
 
@@ -54,18 +57,17 @@ protected:
     void destroyInputSide();
 
     void linkPipeline();
-    void createEventListener();
 public:
     static constexpr const char* const TAG = "AudioPlayer";
     void setLogLevel(esp_log_level_t level) { esp_log_level_set(TAG, level); }
     AudioPlayer(OutputType outType, bool useEq=true);
     ~AudioPlayer();
     void setSourceUrl(const char* url, CodecType codecType);
+    PlayerState state() const { return mState; }
     void play();
     void pause();
     void resume();
     void stop();
-    bool pollForEvents(int msWait=0);
 };
 
 #endif

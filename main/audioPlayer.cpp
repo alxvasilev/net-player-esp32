@@ -33,6 +33,7 @@ void AudioPlayer::createInputHttp()
     //  http_cfg.multi_out_num = 1;
     cfg.enable_playlist_parser = 1;
     cfg.event_handle = httpEventHandler;
+//  cfg.out_rb_size = 30 * 1024;
     mInputType = kInputHttp;
     mStreamIn = http_stream_init(&cfg);
     assert(mStreamIn);
@@ -144,6 +145,7 @@ void AudioPlayer::createDecoderByType(CodecType type)
     switch (type) {
     case kCodecMp3: {
         mp3_decoder_cfg_t cfg = DEFAULT_MP3_DECODER_CONFIG();
+        cfg.task_core = 1;
         mDecoder = mp3_decoder_init(&cfg);
         break;
     }
@@ -155,8 +157,30 @@ void AudioPlayer::createDecoderByType(CodecType type)
     default:
         mDecoder = nullptr;
         mDecoderType = kCodecNone;
-        break;
+        assert(false);
+        return;
     }
+}
+esp_err_t AudioPlayer::inputFormatEventCb(audio_element_handle_t el,
+    audio_event_iface_msg_t* msg, void* ctx)
+{
+    assert(ctx);
+    auto self = static_cast<AudioPlayer*>(ctx);
+    ESP_LOGI(TAG, "=======================inputFormatEventCb");
+    if (msg->cmd == AEL_MSG_CMD_REPORT_MUSIC_INFO) {
+        audio_element_info_t info;
+        memset(&info, 0, sizeof(info));
+        audio_element_getinfo(el, &info);
+
+        ESP_LOGI(TAG, "Received music info from samplerate source:\n"
+            "samplerate: %d, bits: %d, ch: %d, bps: %d, codec: %d",
+            info.sample_rates, info.bits, info.channels, info.bps, info.codec_fmt);
+        audio_element_setinfo(self->mStreamOut, &info);
+        if (self->mOutputType == kOutputI2s) {
+            i2s_stream_set_clk(self->mStreamOut, info.sample_rates, info.bits, info.channels);
+        }
+    }
+    return ESP_OK;
 }
 
 void AudioPlayer::createEqualizer()
@@ -183,7 +207,6 @@ void AudioPlayer::destroyEqualizer()
 AudioPlayer::AudioPlayer(OutputType outType, bool useEq)
 :mFlags(useEq ? kFlagUseEqualizer : (Flags)0)
 {
-    createEventListener();
     createOutputSide(outType);
 }
 
@@ -200,7 +223,7 @@ void AudioPlayer::createOutputSide(OutputType outType)
     }
     createOutputElement(outType);
 }
-// const char* url = getNextStreamUrl();
+
 void AudioPlayer::setSourceUrl(const char* url, CodecType codecType)
 {
     if (mInputType == kInputNone) {
@@ -209,8 +232,16 @@ void AudioPlayer::setSourceUrl(const char* url, CodecType codecType)
     } else {
         assert(mInputType == kInputHttp);
     }
-    ESP_LOGI(TAG, "Set http stream uri to '%s'", url);
+    ESP_LOGI(TAG, "Set http stream uri to '%s', format: %s", url, codecTypeToStr(codecType));
+    ESP_LOGI(TAG, "setSourceUrl: current state is %d", mState);
+    bool wasPlaying = (mState == kStatePlaying);
+    if (wasPlaying) {
+        stop();
+    }
     ESP_ERROR_CHECK(audio_element_set_uri(mStreamIn, url));
+    if (wasPlaying) {
+        play();
+    }
 }
 
 void AudioPlayer::createInputSide(InputType inType, CodecType codecType)
@@ -223,9 +254,11 @@ void AudioPlayer::createInputSide(InputType inType, CodecType codecType)
         createInputHttp();
         createDecoderByType(codecType);
         assert(mDecoderType == codecType);
+        audio_element_set_event_callback(mDecoder, inputFormatEventCb, this);
     } else if (inType == kInputA2dp) {
         createInputA2dp();
         mDecoder = nullptr;
+        audio_element_set_event_callback(mStreamIn, inputFormatEventCb, this);
     }
     assert(mInputType == inType);
 }
@@ -252,16 +285,7 @@ void AudioPlayer::linkPipeline()
     ESP_ERROR_CHECK(audio_pipeline_register(mPipeline, mStreamOut, order.back()));
 
     ESP_ERROR_CHECK(audio_pipeline_link(mPipeline, order.data(), order.size()));
-
-}
-
-void AudioPlayer::createEventListener()
-{
-    ESP_LOGI(TAG, "Set up event listener");
-    audio_event_iface_cfg_t cfg = AUDIO_EVENT_IFACE_DEFAULT_CFG();
-    mEventListener = audio_event_iface_init(&cfg);
-    // Listen for events from peripherals
-//  audio_event_iface_set_listener(esp_periph_set_get_event_iface(mPeriphSet), mEventListener);
+    ESP_LOGI(TAG, "Connecting event listener");
 }
 
 void AudioPlayer::play()
@@ -271,14 +295,15 @@ void AudioPlayer::play()
     }
     // Listening event from all elements of audio pipeline
     // NOTE: This must be re-applied after pipeline change
-    audio_pipeline_set_listener(mPipeline, mEventListener);
     ESP_LOGI(TAG, "Starting pipeline");
     audio_pipeline_run(mPipeline);
+/*
     if (mState == kStatePaused) {
         resume();
     } else {
+*/
         mState = kStatePlaying;
-    }
+//  }
 }
 
 void AudioPlayer::pause()
@@ -295,52 +320,19 @@ void AudioPlayer::resume()
     mState = kStatePlaying;
 }
 
-bool AudioPlayer::pollForEvents(int msWait)
-{
-    audio_event_iface_msg_t msg;
-    esp_err_t ret = audio_event_iface_listen(mEventListener, &msg, msWait / portTICK_PERIOD_MS);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "[ * ] Event interface error : %d", ret);
-        return false;
-    }
-//   ESP_LOGI("srctype: %d, src: %p, cmd: %d\n", msg.source_type, msg.source, msg.cmd);
-
-    if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT) {
-        if (msg.source == mSamplerateSource) {
-            if (msg.cmd == AEL_MSG_CMD_REPORT_MUSIC_INFO) {
-                audio_element_info_t info;
-                memset(&info, 0, sizeof(info));
-                audio_element_getinfo(mSamplerateSource, &info);
-
-                ESP_LOGI(TAG, "Received music info from samplerate source:\n"
-                              "samplerate: %d, bits: %d, ch: %d, bps: %d",
-                         info.sample_rates, info.bits, info.channels, info.bps);
-                audio_element_setinfo(mStreamOut, &info);
-                if (mOutputType == kOutputI2s) {
-                    i2s_stream_set_clk(mStreamOut, info.sample_rates, info.bits, info.channels);
-                }
-                return true;
-            }
-        }
-        else if (msg.source == (void*)mStreamOut) {
-            if (msg.cmd == AEL_MSG_CMD_REPORT_STATUS &&
-                (((int)msg.data == AEL_STATUS_STATE_STOPPED)
-              || ((int)msg.data == AEL_STATUS_STATE_FINISHED))) {
-                /* Stop when the last pipeline element (i2s_stream_writer in this case) receives stop event */
-                ESP_LOGW(TAG, "Stop event received");
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
 void AudioPlayer::stop()
 {
-    ESP_LOGI(TAG, "Stop pipeline");
+    if (mState == kStateStopped) {
+        ESP_LOGW(TAG, "stop: already stopped");
+        return;
+    }
+    ESP_LOGI(TAG, "Stopping pipeline");
     ESP_ERROR_CHECK(audio_pipeline_stop(mPipeline));
     ESP_ERROR_CHECK(audio_pipeline_wait_for_stop(mPipeline));
+    mState = kStateStopped;
+    ESP_LOGI(TAG, "Pipeline stopped");
 }
+
 void AudioPlayer::destroyInputSide()
 {
     assert(mState == kStateStopped);
@@ -378,10 +370,6 @@ void AudioPlayer::destroyOutputSide()
 AudioPlayer::~AudioPlayer()
 {
     assert(mState == kStateStopped);
-// uncomment if we listen for peripheral events
-//  audio_event_iface_remove_listener(esp_periph_set_get_event_iface(mPeriphSet), mEventListener);
-    audio_event_iface_destroy(mEventListener);
-
     ESP_ERROR_CHECK(audio_pipeline_terminate(mPipeline));
     if (mInputType != kInputNone) {
         destroyInputSide();
@@ -393,7 +381,7 @@ AudioPlayer::~AudioPlayer()
 
 int AudioPlayer::httpEventHandler(http_stream_event_msg_t *msg)
 {
-    ESP_LOGI("STREAM", "http stream event %d, heap free: %d", msg->event_id, xPortGetFreeHeapSize());
+//    ESP_LOGI("STREAM", "http stream event %d, heap free: %d", msg->event_id, xPortGetFreeHeapSize());
     if (msg->event_id == HTTP_STREAM_RESOLVE_ALL_TRACKS) {
         return ESP_OK;
     }
@@ -405,4 +393,13 @@ int AudioPlayer::httpEventHandler(http_stream_event_msg_t *msg)
         return http_stream_fetch_again(msg->el);
     }
     return ESP_OK;
+}
+const char* AudioPlayer::codecTypeToStr(CodecType type)
+{
+    switch (type) {
+        case kCodecMp3: return "mp3";
+        case kCodecAac: return "aac";
+        case kCodecNone: return "none";
+        default: return "(unknown)";
+    }
 }
