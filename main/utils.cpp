@@ -1,4 +1,5 @@
 #include "utils.hpp"
+#include <soc/rtc.h>
 
 const char* _utils_hexDigits = "0123456789abcdef";
 
@@ -137,4 +138,10 @@ const char* getUrlFile(const char* url)
         }
     }
     return lastSlashPos + 1;
+}
+
+int16_t currentCpuFreq() {
+    rtc_cpu_freq_config_t conf;
+    rtc_clk_cpu_freq_get_config(&conf);
+    return conf.freq_mhz;
 }

@@ -3,6 +3,7 @@
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 #include <esp_log.h>
+#include <driver/gpio.h>
 #include <esp_wifi.h>
 #include <nvs_flash.h>
 #include "esp_peripherals.h"
@@ -34,6 +35,7 @@ static constexpr gpio_num_t kPinLed = GPIO_NUM_2;
 
 static const char *TAG = "netplay";
 static const char* kStreamUrls[] = {
+    "https://mediaserv38.live-streams.nl:18030/stream",
     "http://streams.greenhost.nl:8080/live",
     "http://78.129.150.144/stream.mp3?ipport=78.129.150.144_5064",
     "http://stream01048.westreamradio.com:80/wsm-am-mp3",
@@ -214,12 +216,13 @@ static esp_err_t indexUrlHandler(httpd_req_t *req)
         "<html><head /><body><h1 align='center'>NetPlayer HTTP server</h1><pre>Free heap memory: ";
     httpd_resp_send_chunk(req, startHtml, sizeof(startHtml));
     DynBuffer buf(128);
+
     /* Print chip information */
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
-    buf.printf("%d\nchip type: %s\nnum cores: %d\nsilicon revision: %d\n",
+    buf.printf("%d\nchip type: %s\nnum cores: %d\nrunning at %d MHz\nsilicon revision: %d\n",
         xPortGetFreeHeapSize(), CONFIG_IDF_TARGET,
-        chip_info.cores, chip_info.revision
+        chip_info.cores, currentCpuFreq(), chip_info.revision
     );
     httpd_resp_send_chunk(req, buf.data(), buf.size());
     buf.clear();
@@ -232,9 +235,11 @@ static esp_err_t indexUrlHandler(httpd_req_t *req)
     );
     httpd_resp_send_chunk(req, buf.data(), buf.size());
     buf.clear();
+
     httpd_resp_send_chunk(req, nullptr, 0);
     return ESP_OK;
 }
+
 static const httpd_uri_t indexUrl = {
     .uri       = "/",
     .method    = HTTP_GET,
@@ -270,18 +275,16 @@ static const httpd_uri_t play = {
     .uri       = "/play",
     .method    = HTTP_GET,
     .handler   = playUrlHandler,
-    /* Let's pass response string in user
-     * context to demonstrate it's usage */
     .user_ctx  = nullptr
 };
 
 static esp_err_t pauseUrlHandler(httpd_req_t *req)
 {
     if (player.state() == AudioPlayer::kStatePlaying) {
-        player.pause();
+        player.stop();
         httpd_resp_sendstr(req, "Pause");
     } else {
-        player.resume();
+        player.play();
         httpd_resp_sendstr(req, "Play");
     }
     return ESP_OK;
@@ -291,8 +294,31 @@ static const httpd_uri_t pauseUrl = {
     .uri       = "/pause",
     .method    = HTTP_GET,
     .handler   = pauseUrlHandler,
-    /* Let's pass response string in user
-     * context to demonstrate it's usage */
+    .user_ctx  = nullptr
+};
+
+static esp_err_t volumeChangeUrlHandler(httpd_req_t *req)
+{
+    UrlParams params(req);
+    auto step = params.intParam("step", 0);
+    if (!step) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No 'step' parameter provided");
+        return ESP_OK;
+    }
+    int newVol = player.changeVolume(step);
+    if (newVol < 0) {
+        httpd_resp_send_err(req, HTTPD_501_METHOD_NOT_IMPLEMENTED, "Error setting volume");
+        return ESP_OK;
+    }
+    DynBuffer buf(24);
+    buf.printf("Volume set to %d", newVol);
+    httpd_resp_send(req, buf.data(), buf.size());
+    return ESP_OK;
+}
+static const httpd_uri_t volumeUrl = {
+    .uri       = "/vol",
+    .method    = HTTP_GET,
+    .handler   = volumeChangeUrlHandler,
     .user_ctx  = nullptr
 };
 
@@ -326,11 +352,9 @@ void startWebserver(bool isAp)
     httpd_register_uri_handler(gHttpServer, &indexUrl);
     httpd_register_uri_handler(gHttpServer, &httpFsPut);
     httpd_register_uri_handler(gHttpServer, &httpFsGet);
-
-    if (!isAp) {
-        httpd_register_uri_handler(gHttpServer, &play);
-        httpd_register_uri_handler(gHttpServer, &pauseUrl);
-    }
+    httpd_register_uri_handler(gHttpServer, &play);
+    httpd_register_uri_handler(gHttpServer, &pauseUrl);
+    httpd_register_uri_handler(gHttpServer, &volumeUrl);
 }
 
 void reconfigDhcpServer()

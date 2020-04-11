@@ -21,8 +21,8 @@
 #include "audioPlayer.hpp"
 
 constexpr int AudioPlayer::mEqualizerDefaultGainTable[] = {
-    10, 10, 8, 4, 2, 0, 0, 2, 4, 6,
-    10, 10, 8, 4, 2, 0, 0, 2, 4, 6
+    8, 8, 7, 4, 2, 0, 0, 2, 4, 6,
+    8, 8, 7, 4, 2, 0, 0, 2, 4, 6
 };
 
 void AudioPlayer::createInputHttp()
@@ -88,6 +88,7 @@ void AudioPlayer::createOutputI2s()
     ESP_LOGI(TAG, "Creating i2s output to write data to codec chip");
     i2s_stream_cfg_t cfg = myI2S_STREAM_INTERNAL_DAC_CFG_DEFAULT;
     cfg.type = AUDIO_STREAM_WRITER;
+    cfg.use_alc = 1;
     mStreamOut = i2s_stream_init(&cfg);
     assert(mStreamOut);
     mOutputType = kOutputI2s;
@@ -365,6 +366,43 @@ void AudioPlayer::destroyOutputSide()
     ESP_ERROR_CHECK(audio_element_deinit(mStreamOut));
     mStreamOut = nullptr;
     mOutputType = kOutputNone;
+}
+bool AudioPlayer::setVolume(int vol)
+{
+    if (mOutputType == kOutputI2s) {
+        ESP_ERROR_CHECK(i2s_alc_volume_set(mStreamOut, vol));
+        return true;
+    }
+    return false;
+}
+int AudioPlayer::getVolume()
+{
+    if (mOutputType == kOutputI2s) {
+        int vol;
+        ESP_ERROR_CHECK(i2s_alc_volume_get(mStreamOut, &vol));
+        return vol;
+    } else {
+        return -1;
+    }
+}
+int AudioPlayer::changeVolume(int step)
+{
+    int currVol = getVolume();
+    if (currVol < 0) {
+        return currVol;
+    }
+    int newVol = currVol + step;
+    if (newVol < 0) {
+        newVol = 0;
+    } else if (newVol > 100) {
+        newVol = 100;
+    }
+    if (newVol != currVol) {
+        if (!setVolume(newVol)) {
+            return -1;
+        }
+    }
+    return newVol;
 }
 
 AudioPlayer::~AudioPlayer()

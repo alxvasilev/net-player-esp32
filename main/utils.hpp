@@ -159,6 +159,9 @@ template<>
         void operator()(FILE* file) const { fclose(file); }
     };
 }
+
+int16_t currentCpuFreq();
+
 extern "C" const i2s_stream_cfg_t myI2S_STREAM_INTERNAL_DAC_CFG_DEFAULT;
 extern "C" const http_stream_cfg_t myHTTP_STREAM_CFG_DEFAULT;
 

@@ -68,6 +68,9 @@ public:
     void pause();
     void resume();
     void stop();
+    int getVolume();
+    bool setVolume(int vol);
+    int changeVolume(int step);
 };
 
 #endif
