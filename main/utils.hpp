@@ -98,16 +98,20 @@ char* numToHex(T val, char* str)
 bool unescapeUrlParam(char* str, size_t len);
 
 uint8_t hexDigitVal(char digit);
-class UrlParams: public BufPtr<char>
+long strToInt(const char* str, size_t len, long defVal, int base=10);
+
+class KeyValParser: public BufPtr<char>
 {
 public:
     struct Substring
     {
-        const char* str;
+        char* str;
         size_t len;
-        Substring(const char* aStr, size_t aLen): str(aStr), len(aLen) {}
+        Substring(char* aStr, size_t aLen): str(aStr), len(aLen) {}
         Substring() {}
         operator bool() const { return str != nullptr; }
+        void trimSpaces();
+        long toInt(long defVal, int base=10) const { return strToInt(str, len, defVal, base); }
     };
     struct KeyVal
     {
@@ -117,13 +121,24 @@ public:
 protected:
     size_t mSize;
     std::vector<KeyVal> mKeyVals;
-    bool parse();
+    KeyValParser() {} // ctor to inherit when derived class has its own initialization
 public:
+    enum Flags: uint8_t { kUrlUnescape = 1, kTrimSpaces = 2 };
     const std::vector<KeyVal>& keyVals() const { return mKeyVals; }
-    UrlParams(httpd_req_t* req);
-    Substring strParam(const char* name);
-    long intParam(const char* name, long defVal);
+    KeyValParser(char* str, size_t len): BufPtr(str), mSize(len) {}
+    bool parse(char pairDelim, char keyValDelim, Flags flags);
+    Substring strVal(const char* name);
+    long intVal(const char* name, long defVal);
 };
+
+class UrlParams: public KeyValParser
+{
+public:
+    UrlParams(httpd_req_t* req);
+    Substring strParam(const char* name) { return strVal(name); }
+    long intParam(const char* name, long defVal) { return intVal(name, defVal); }
+};
+
 const char* getUrlFile(const char* url);
 
 static inline TaskHandle_t currentTaskHandle()
@@ -138,10 +153,10 @@ class Mutex
     StaticSemaphore_t mMutexMem;
 public:
     Mutex() {
-        mMutex = xSemaphoreCreateMutexStatic(&mMutexMem);
+        mMutex = xSemaphoreCreateRecursiveMutexStatic(&mMutexMem);
     }
-    void lock() { xSemaphoreTake(mMutex, portMAX_DELAY); }
-    void unlock() { xSemaphoreGive(mMutex); }
+    void lock() { xSemaphoreTakeRecursive(mMutex, portMAX_DELAY); }
+    void unlock() { xSemaphoreGiveRecursive(mMutex); }
 };
 
 class MutexLocker
@@ -151,6 +166,39 @@ public:
     MutexLocker(Mutex& aMutex): mMutex(aMutex) { mMutex.lock(); }
     ~MutexLocker() { mMutex.unlock(); }
 };
+
+template <class F, bool isOneShot>
+struct TimerCtx
+{
+    typedef TimerCtx<F, isOneShot> Self;
+    F mUserCb;
+    esp_timer_handle_t mTimer;
+    virtual ~TimerCtx() { esp_timer_delete(mTimer); }
+    TimerCtx(F&& userCb): mUserCb(std::forward<F>(userCb)) {}
+    static void cFunc(void* ctx)
+    {
+        auto self = static_cast<Self*>(ctx);
+        self->mUserCb();
+        if (isOneShot) {
+            delete self;
+        }
+    }
+};
+
+template<class F>
+void setTimeout(uint32_t ms, F&& cb)
+{
+    esp_timer_create_args_t args = {};
+    args.dispatch_method = ESP_TIMER_TASK;
+    auto ctx = new TimerCtx<F, true>(std::forward<F>(cb));
+    args.callback = ctx->cFunc;
+    args.arg = ctx;
+    args.name = "userOneshotTimer";
+    esp_timer_handle_t timer;
+    ESP_ERROR_CHECK(esp_timer_create(&args, &timer));
+    ctx->mTimer = timer;
+    ESP_ERROR_CHECK(esp_timer_start_once(timer, ms * 1000));
+}
 
 namespace std {
 template<>

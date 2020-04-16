@@ -56,13 +56,40 @@ bool unescapeUrlParam(char* str, size_t len)
     return ok;
 }
 
-bool UrlParams::parse()
+long strToInt(const char* str, size_t len, long defVal, int base)
+{
+    char* end;
+    long val = strtol(str, &end, base);
+    return (end == str + len) ? val : defVal;
+}
+
+void KeyValParser::Substring::trimSpaces()
+{
+    auto end = str + len;
+    while (str < end && (*str == ' ' || *str == '\t')) {
+        str++;
+    }
+    if (str == end) {
+        str = nullptr;
+        len = 0;
+        return;
+    }
+    auto newEnd = end - 1;
+    while (newEnd > str && (*newEnd == ' ' || *newEnd == '\t')) {
+        newEnd--;
+    }
+    newEnd++;
+    *newEnd = 0;
+    len = newEnd - str;
+}
+
+bool KeyValParser::parse(char pairDelim, char keyValDelim, Flags flags)
 {
     auto end = mPtr + mSize - 1;
     char* pch = mPtr;
     for (;;) {
         auto start = pch;
-        for (; (pch < end) && (*pch != '='); pch++);
+        for (; (pch < end) && (*pch != keyValDelim); pch++);
         if (pch >= end) { // unexpected end
             return false;
         }
@@ -74,11 +101,13 @@ bool UrlParams::parse()
         key.len = pch - start;
 
         start = ++pch;
-        for (; (pch < end) && (*pch != '&'); pch++);
+        for (; (pch < end) && (*pch != pairDelim); pch++);
         auto& val = keyval.val;
         auto len = pch - start;
-        if (!unescapeUrlParam(start, len)) {
-            return false;
+        if (flags & kUrlUnescape) {
+            if (!unescapeUrlParam(start, len)) {
+                return false;
+            }
         }
         val.str = start;
         val.len = len;
@@ -88,8 +117,32 @@ bool UrlParams::parse()
             return true;
         }
         *(pch++) = 0; // null-terminate the value
+        if (flags & kTrimSpaces) {
+            keyval.key.trimSpaces();
+            keyval.val.trimSpaces();
+        }
     }
 }
+
+KeyValParser::Substring KeyValParser::strVal(const char* name)
+{
+    for (auto& keyval: mKeyVals) {
+        if (strcmp(name, keyval.key.str) == 0) {
+            return keyval.val;
+        }
+    }
+    return Substring(nullptr, 0);
+}
+long KeyValParser::intVal(const char* name, long defVal)
+{
+    auto sval = strVal(name);
+    auto str = sval.str;
+    if (!str) {
+        return defVal;
+    }
+    return sval.toInt(defVal);
+}
+
 UrlParams::UrlParams(httpd_req_t* req)
 {
     mSize = httpd_req_get_url_query_len(req) + 1;
@@ -103,28 +156,7 @@ UrlParams::UrlParams(httpd_req_t* req)
         free();
         return;
     }
-    parse();
-}
-
-UrlParams::Substring UrlParams::strParam(const char* name)
-{
-    for (auto& keyval: mKeyVals) {
-        if (strcmp(name, keyval.key.str) == 0) {
-            return keyval.val;
-        }
-    }
-    return Substring(nullptr, 0);
-}
-long UrlParams::intParam(const char* name, long defVal)
-{
-    auto strVal = strParam(name);
-    auto str = strVal.str;
-    if (!str) {
-        return defVal;
-    }
-    char* endptr;
-    auto val = strtol(str, &endptr, 10);
-    return (endptr == str + strVal.len) ? val : defVal;
+    parse('&', '=', kUrlUnescape);
 }
 
 const char* getUrlFile(const char* url)
@@ -145,3 +177,5 @@ int16_t currentCpuFreq() {
     rtc_clk_cpu_freq_get_config(&conf);
     return conf.freq_mhz;
 }
+
+

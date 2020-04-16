@@ -106,7 +106,10 @@ void NetLogger::logSink(const char* data, int len, void* userp)
     for (auto it = self.mConnections.begin(); it != self.mConnections.end(); it++) {
         int sockfd = (*it)->sockfd;
         if (!self.httpSendChunk(sockfd, data, len)) {
-            it--;
+            // this schedules an async call to connCloseFunc()
+            // on the httpd thread, so it won't happen now.
+            // Also, the mListenMutex is non-recursive, so it
+            // would deadlock if it was executed synchronously
             httpd_sess_trigger_close(self.mHttpServer, sockfd);
         }
     }

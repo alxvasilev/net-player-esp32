@@ -35,10 +35,10 @@ static constexpr gpio_num_t kPinLed = GPIO_NUM_2;
 
 static const char *TAG = "netplay";
 static const char* kStreamUrls[] = {
-    "https://mediaserv38.live-streams.nl:18030/stream",
     "http://streams.greenhost.nl:8080/live",
     "http://78.129.150.144/stream.mp3?ipport=78.129.150.144_5064",
     "http://stream01048.westreamradio.com:80/wsm-am-mp3",
+    "https://mediaserv38.live-streams.nl:18030/stream",
     "http://94.23.252.14:8067/player"
 };
 
@@ -48,7 +48,7 @@ static const char* kStreamUrls[] = {
         // BBC m4a "http://a.files.bbci.co.uk/media/live/manifesto/audio/simulcast/hls/nonuk/sbr_low/llnw/bbc_radio_one.m3u8"
 
 httpd_handle_t gHttpServer = nullptr;
-AudioPlayer player(AudioPlayer::kOutputI2s);
+std::unique_ptr<AudioPlayer> player;
 
 void reconfigDhcpServer();
 void startWifiSoftAp();
@@ -159,7 +159,7 @@ extern "C" void app_main(void)
 {
     esp_log_level_set("*", ESP_LOG_INFO);
     esp_log_level_set(TAG, ESP_LOG_DEBUG);
-    player.setLogLevel(ESP_LOG_DEBUG);
+    player->setLogLevel(ESP_LOG_DEBUG);
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -171,6 +171,8 @@ extern "C" void app_main(void)
     tcpip_adapter_init();
     rollbackCheckUserForced();
     rollbackConfirmAppIsWorking();
+    esp_wifi_set_ps(WIFI_PS_NONE);
+
     if (!gpio_get_level(kPinButton)) {
         ESP_LOGW(TAG, "Button pressed at boot, start as access point for configuration");
         startWifiSoftAp();
@@ -203,9 +205,9 @@ extern "C" void app_main(void)
     esp_bt_mem_release(ESP_BT_MODE_BTDM);
     ESP_LOGW("BT", "Free memory after releasing BLE memory: %d", xPortGetFreeHeapSize());
 
+    player.reset(new AudioPlayer(AudioPlayer::kInputHttp, ESP_CODEC_TYPE_MP3, AudioPlayer::kOutputI2s));
 
-    player.setSourceUrl(getNextStreamUrl(), AudioPlayer::kCodecMp3);
-    player.play();
+    player->playUrl(getNextStreamUrl());
 
 //  esp_periph_set_destroy(periphSet);
 }
@@ -253,21 +255,17 @@ static const httpd_uri_t indexUrl = {
 static esp_err_t playUrlHandler(httpd_req_t *req)
 {
     UrlParams params(req);
-    for (auto& param: params.keyVals()) {
-        ESP_LOGI("URL", "'%s' = '%s'", param.key.str, param.val.str);
+    auto urlParam = params.strParam("url");
+    const char* url;
+    if (!urlParam) {
+        url = getNextStreamUrl();
+    } else {
+        url = urlParam.str;
     }
-    auto url = params.strParam("url");
-    if (!url) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "URL parameter not found");
-        ESP_LOGE("http", "Url param not found, query:'%s'", params.ptr());
-        return ESP_OK;
-    }
-    ESP_LOGW("HTTP", "Http req url: %s", url.str);
-    auto strUrl = getNextStreamUrl();
-    player.setSourceUrl(strUrl, AudioPlayer::kCodecMp3);
-    std::string msg("Changing stream url to '");
-    msg.append(strUrl).append("'");
-    httpd_resp_send(req, msg.c_str(), msg.size());
+    player->playUrl(url);
+    DynBuffer buf(128);
+    buf.printf("Changing stream url to '%s'", url);
+    httpd_resp_send(req, buf.data(), buf.size());
     return ESP_OK;
 }
 
@@ -280,11 +278,11 @@ static const httpd_uri_t play = {
 
 static esp_err_t pauseUrlHandler(httpd_req_t *req)
 {
-    if (player.state() == AudioPlayer::kStatePlaying) {
-        player.stop();
+    if (player->state() == AudioPlayer::kStatePlaying) {
+        player->pause();
         httpd_resp_sendstr(req, "Pause");
     } else {
-        player.play();
+        player->play();
         httpd_resp_sendstr(req, "Play");
     }
     return ESP_OK;
@@ -305,7 +303,7 @@ static esp_err_t volumeChangeUrlHandler(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No 'step' parameter provided");
         return ESP_OK;
     }
-    int newVol = player.changeVolume(step);
+    int newVol = player->volumeChange(step);
     if (newVol < 0) {
         httpd_resp_send_err(req, HTTPD_501_METHOD_NOT_IMPLEMENTED, "Error setting volume");
         return ESP_OK;
@@ -319,6 +317,60 @@ static const httpd_uri_t volumeUrl = {
     .uri       = "/vol",
     .method    = HTTP_GET,
     .handler   = volumeChangeUrlHandler,
+    .user_ctx  = nullptr
+};
+
+static esp_err_t equalizerSetUrlHandler(httpd_req_t *req)
+{
+    UrlParams params(req);
+    auto data = params.strParam("vals");
+    if (data.str) {
+        player->equalizerSetGainsBulk(data.str, data.len);
+        return ESP_OK;
+    }
+
+    auto band = params.intParam("band", -1);
+    if (band < 0 || band > 9) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid 'band' parameter");
+        return ESP_OK;
+    }
+    auto level = params.intParam("level", 0xff);
+    if (level == 0xff) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid 'level' parameter");
+        return ESP_OK;
+    }
+    if (player->equalizerSetBand(band, level)) {
+        httpd_resp_sendstr(req, "ok");
+    } else {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed setting equalizer band");
+    }
+    return ESP_OK;
+}
+
+static const httpd_uri_t eqSetUrl = {
+    .uri       = "/eqset",
+    .method    = HTTP_GET,
+    .handler   = equalizerSetUrlHandler,
+    .user_ctx  = nullptr
+};
+
+static esp_err_t equalizerDumpUrlHandler(httpd_req_t *req)
+{
+    auto levels = player->equalizerDumpGains();
+    DynBuffer buf(240);
+    buf.printf("{");
+    for (int i = 0; i < 10; i++) {
+        buf.printf("[%d,%d],", player->equalizerFreqs[i], levels[i]);
+    }
+    buf[buf.size()-1] = '}';
+    httpd_resp_send(req, buf.data(), buf.size());
+    return ESP_OK;
+}
+
+static const httpd_uri_t eqGetUrl = {
+    .uri       = "/eqget",
+    .method    = HTTP_GET,
+    .handler   = equalizerDumpUrlHandler,
     .user_ctx  = nullptr
 };
 
@@ -339,6 +391,7 @@ void startWebserver(bool isAp)
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.max_uri_handlers = 12;
     config.uri_match_fn = httpd_uri_match_wildcard;
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
     if (httpd_start(&gHttpServer, &config) != ESP_OK) {
@@ -355,7 +408,10 @@ void startWebserver(bool isAp)
     httpd_register_uri_handler(gHttpServer, &play);
     httpd_register_uri_handler(gHttpServer, &pauseUrl);
     httpd_register_uri_handler(gHttpServer, &volumeUrl);
+    httpd_register_uri_handler(gHttpServer, &eqGetUrl);
+    httpd_register_uri_handler(gHttpServer, &eqSetUrl);
 }
+
 
 void reconfigDhcpServer()
 {
