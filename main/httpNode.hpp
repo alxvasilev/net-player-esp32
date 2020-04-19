@@ -33,7 +33,7 @@ protected:
     enum: uint8_t { kCommandPause, kCommandRun, kCommandSetUrl };
     char* mUrl = nullptr;
     StreamFormat mStreamFormat;
-    esp_http_client_handle_t mClient;
+    esp_http_client_handle_t mClient = nullptr;
     bool mAutoNextTrack = true; /* connect next track without open/close */
     Playlist mPlaylist; /* media playlist */
     size_t mStackSize;
