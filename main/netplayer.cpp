@@ -28,6 +28,7 @@
 #include "httpFile.hpp"
 #include "ota.hpp"
 #include "audioPlayer.hpp"
+#include "httpNode.hpp"
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
@@ -167,7 +168,7 @@ extern "C" void app_main(void)
     }
     configGpios();
 
-//    mountSpiffs();
+    mountSpiffs();
     tcpip_adapter_init();
     rollbackCheckUserForced();
     rollbackConfirmAppIsWorking();
@@ -205,6 +206,18 @@ extern "C" void app_main(void)
     esp_bt_mem_release(ESP_BT_MODE_BTDM);
     ESP_LOGW("BT", "Free memory after releasing BLE memory: %d", xPortGetFreeHeapSize());
 
+    HttpNode node("http", 40*1024);
+    node.setUrl(getNextStreamUrl());
+    node.run();
+    char buf[1024];
+    StreamFormat fmt;
+    for (;;) {
+        ESP_LOGI(TAG, "About to pull data");
+        int size = node.pullData(buf, 1024, -1, fmt);
+        ESP_LOGI(TAG, "pulled data %d", size);
+    }
+
+    return;
     player.reset(new AudioPlayer(AudioPlayer::kInputHttp, ESP_CODEC_TYPE_MP3, AudioPlayer::kOutputI2s));
 
     player->playUrl(getNextStreamUrl());

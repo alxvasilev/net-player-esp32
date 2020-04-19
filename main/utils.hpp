@@ -10,6 +10,10 @@
 #include <esp_log.h>
 #include <memory>
 
+#define myassert(cond) if (!(cond)) { \
+    ESP_LOGE("RINGBUFFER", "Assertion failed: %s at %s:%d", #cond, __FILE__, __LINE__); \
+    for (;;); }
+
 template<typename T>
 struct BufPtr
 {
@@ -165,6 +169,14 @@ class MutexLocker
 public:
     MutexLocker(Mutex& aMutex): mMutex(aMutex) { mMutex.lock(); }
     ~MutexLocker() { mMutex.unlock(); }
+};
+
+class MutexUnlocker
+{
+    Mutex& mMutex;
+public:
+    MutexUnlocker(Mutex& aMutex): mMutex(aMutex) { mMutex.unlock(); }
+    ~MutexUnlocker() { mMutex.lock(); }
 };
 
 template <class F, bool isOneShot>
