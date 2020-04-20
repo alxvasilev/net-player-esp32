@@ -129,6 +129,7 @@ public:
     }
     bool run();
     void pause(bool wait=true);
-    void stop(bool wait=true);
+    virtual void stop(bool wait=true) = 0;
+    void waitForStop();
 };
 #endif

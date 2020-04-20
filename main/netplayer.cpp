@@ -212,11 +212,14 @@ extern "C" void app_main(void)
     node.run();
     char* buf = (char*)malloc(12480);
     StreamFormat fmt;
-    for (;;) {
+//    for (;;) {
 //        int size = node.pullData(buf, 12480, -1, fmt);
 //        ESP_LOGI(TAG, "pulled data %d", size);
-        vTaskDelay(1000);
-    }
+        vTaskDelay(10000 / portTICK_PERIOD_MS);
+        ESP_LOGI(TAG, "stopping http node");
+        node.stop();
+        ESP_LOGI(TAG, "http node stopped");
+//    }
 
     return;
     player.reset(new AudioPlayer(AudioPlayer::kInputHttp, ESP_CODEC_TYPE_MP3, AudioPlayer::kOutputI2s));

@@ -345,6 +345,7 @@ bool HttpNode::dispatchCommand(Command &cmd)
 void HttpNode::nodeThreadFunc()
 {
     ESP_LOGI(TAG, "Task started");
+    mRingBuf.clearStopSignal();
     for (;;) {
         processMessages();
         if (mTerminate) {
@@ -364,6 +365,18 @@ void HttpNode::nodeThreadFunc()
                 recv(); // retries and goes to new playlist track
             }
         }
+    }
+}
+
+void HttpNode::stop(bool wait)
+{
+    if (mState == kStateStopped) {
+        return;
+    }
+    mTerminate = true;
+    mRingBuf.setStopSignal();
+    if (wait) {
+        waitForStop();
     }
 }
 

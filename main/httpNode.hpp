@@ -62,4 +62,5 @@ public:
     virtual ~HttpNode();
     virtual int pullData(char* buf, size_t size, int timeout, StreamFormat& fmt);
     void setUrl(const char* url);
+    virtual void stop(bool wait=true);
 };

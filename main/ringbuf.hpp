@@ -249,6 +249,14 @@ public:
         MutexLocker locker(mMutex);
         commitContigWrite(size);
     }
+    void setStopSignal()
+    {
+        mEvents.setBits(kFlagStop);
+    }
+    void clearStopSignal()
+    {
+        mEvents.clearBits(kFlagStop);
+    }
 };
 
 #endif

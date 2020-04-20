@@ -105,17 +105,9 @@ void AudioNodeWithTask::pause(bool wait)
     }
 }
 
-void AudioNodeWithTask::stop(bool wait)
+void AudioNodeWithTask::waitForStop()
 {
-    auto state = mState;
-    if (state == kStateStopped) {
-        return;
-    } else {
-        mTerminate = true;
-        if (wait) {
-            waitForState(kStateStopped);
-        }
-    }
+    waitForState(kStateStopped);
 }
 
 bool AudioNodeWithTask::dispatchCommand(Command& cmd)
