@@ -12,7 +12,9 @@
 
 #define myassert(cond) if (!(cond)) { \
     ESP_LOGE("RINGBUFFER", "Assertion failed: %s at %s:%d", #cond, __FILE__, __LINE__); \
-    for (;;); }
+    *((int*)nullptr) = 0; }
+
+#define TRACE ESP_LOGI("TRC", "%s:%d", __FILE__, __LINE__);
 
 template<typename T>
 struct BufPtr

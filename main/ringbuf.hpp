@@ -144,8 +144,10 @@ public:
     {
         if (mReadPtr < mWritePtr) {
             return mWritePtr - mReadPtr;
-        } else {
+        } else if (mReadPtr > mWritePtr) {
             return (mBufEnd - mReadPtr) + (mWritePtr - mBuf);
+        } else { // either empty or full
+            return (mEvents.get() & kFlagHasEmpty) ? 0 : (mBufEnd - mBuf);
         }
     }
     int totalEmptySpace()
@@ -165,9 +167,11 @@ public:
             if (ret <= 0) {
                 return ret;
             }
-            msTimeout -= (esp_timer_get_time() - tsStart) / 1000;
-            if (msTimeout < 0) {
-                return 0;
+            if (msTimeout > 0) {
+                msTimeout -= (esp_timer_get_time() - tsStart) / 1000;
+                if (msTimeout < 0) {
+                    return 0;
+                }
             }
         }
         // mutex is locked here

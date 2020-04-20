@@ -158,8 +158,9 @@ bool rollbackCheckUserForced()
 
 extern "C" void app_main(void)
 {
-    esp_log_level_set("*", ESP_LOG_INFO);
-    esp_log_level_set(TAG, ESP_LOG_DEBUG);
+    esp_log_level_set("*", ESP_LOG_DEBUG);
+//    esp_log_level_set(TAG, ESP_LOG_DEBUG);
+//    esp_log_level_set("HTTP_NODE", ESP_LOG_DEBUG);
     player->setLogLevel(ESP_LOG_DEBUG);
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
@@ -207,14 +208,14 @@ extern "C" void app_main(void)
     ESP_LOGW("BT", "Free memory after releasing BLE memory: %d", xPortGetFreeHeapSize());
 
     HttpNode node("http", 40*1024);
-    node.setUrl(getNextStreamUrl());
+    node.setUrl("http://dir.xiph.org/listen/1878608/listen.m3u");
     node.run();
-    char buf[1024];
+    char* buf = (char*)malloc(12480);
     StreamFormat fmt;
     for (;;) {
-        ESP_LOGI(TAG, "About to pull data");
-        int size = node.pullData(buf, 1024, -1, fmt);
-        ESP_LOGI(TAG, "pulled data %d", size);
+//        int size = node.pullData(buf, 12480, -1, fmt);
+//        ESP_LOGI(TAG, "pulled data %d", size);
+        vTaskDelay(1000);
     }
 
     return;

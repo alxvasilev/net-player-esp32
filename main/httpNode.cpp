@@ -43,7 +43,8 @@ esp_codec_type_t HttpNode::codecFromContentType(const char* content_type)
     if (strcasecmp(content_type, "audio/opus") == 0) {
         return ESP_CODEC_TYPE_OPUS;
     }
-    if (strcasecmp(content_type, "application/vnd.apple.mpegurl") == 0 ||
+    if (strcasecmp(content_type, "audio/x-mpegurl") == 0 ||
+        strcasecmp(content_type, "application/vnd.apple.mpegurl") == 0 ||
         strcasecmp(content_type, "vnd.apple.mpegURL") == 0) {
         return ESP_AUDIO_TYPE_M3U8;
     }
@@ -77,6 +78,7 @@ bool HttpNode::isPlaylist()
 
 void HttpNode::doSetUrl(const char *url)
 {
+    ESP_LOGI(TAG, "Setting url to %s", url);
     if (mUrl) {
         free(mUrl);
     }
@@ -90,6 +92,7 @@ bool HttpNode::createClient()
     assert(!mClient);
     esp_http_client_config_t cfg = {};
     cfg.url = mUrl;
+    cfg.event_handler = httpHeaderHandler;
     cfg.user_data = this;
     cfg.timeout_ms = kPollTimeoutMs;
     cfg.buffer_size = kStreamBufferSize;
@@ -103,16 +106,18 @@ bool HttpNode::createClient()
     };
     return true;
 }
-bool HttpNode::parseContentType()
+esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
 {
-    char* contentType = nullptr;
-    if (esp_http_client_get_header(mClient, "Content-Type", &contentType) != ESP_OK) {
-        mStreamFormat.mCodec = ESP_CODEC_TYPE_UNKNOW;
-        return false;
+    if (evt->event_id != HTTP_EVENT_ON_HEADER) {
+        return ESP_OK;
     }
-    ESP_LOGD(TAG, "Received content-type:  %s", contentType);
-    mStreamFormat.mCodec = codecFromContentType(contentType);
-    return true;
+    if (strcasecmp(evt->header_key, "Content-Type")) {
+        return ESP_OK;
+    }
+    auto self = static_cast<HttpNode*>(evt->user_data);
+    self->mStreamFormat.mCodec = self->codecFromContentType(evt->header_value);
+    ESP_LOGI(TAG, "Parsed content-type '%s' as %d", evt->header_value, self->mStreamFormat.mCodec);
+    return ESP_OK;
 }
 
 bool HttpNode::connect(bool isReconnect)
@@ -123,7 +128,7 @@ bool HttpNode::connect(bool isReconnect)
         return false;
     }
 
-    ESP_LOGD(TAG, "Opening URI '%s'", mUrl);
+    ESP_LOGI(TAG, "Opening URI '%s'", mUrl);
     // if not initialize http client, initial it
     if (!mClient) {
         if (!createClient()) {
@@ -132,6 +137,7 @@ bool HttpNode::connect(bool isReconnect)
     }
 
     if (!isReconnect) {
+        mStreamFormat.clear();
         mBytePos = 0;
     }
     if (mBytePos) { // we are resuming, send position
@@ -160,9 +166,11 @@ bool HttpNode::connect(bool isReconnect)
             mBytesTotal = contentLen;
         }
 
-        ESP_LOGI(TAG, "Content-length reported by server: %d", (int)mBytesTotal);
         int status_code = esp_http_client_get_status_code(mClient);
+        ESP_LOGI(TAG, "Connected to %s\n\tstatus code:%d, Content-length: %d", mUrl, status_code, (int)mBytesTotal);
+
         if (status_code == 301 || status_code == 302) {
+            ESP_LOGI(TAG, "Following redirect...");
             esp_http_client_set_redirection(mClient);
             continue;
         }
@@ -170,8 +178,9 @@ bool HttpNode::connect(bool isReconnect)
             ESP_LOGE(TAG, "Invalid HTTP stream, status code = %d", status_code);
             return false;
         }
-        parseContentType();
+        ESP_LOGI(TAG, "Checking if response is a playlist");
         if (parseResponseAsPlaylist()) {
+            ESP_LOGI(TAG, "Response parsed as playlist");
             auto url = mPlaylist.getNextTrack();
             if (!url) {
                 ESP_LOGE(TAG, "Response is a playlist, but couldn't obtain an url from it");
@@ -187,6 +196,7 @@ bool HttpNode::connect(bool isReconnect)
 bool HttpNode::parseResponseAsPlaylist()
 {
     if (!isPlaylist()) {
+        ESP_LOGI(TAG, "Content length and url don't looke like a playlist");
         return false;
     }
     int plLen = 0;
@@ -254,6 +264,8 @@ void HttpNode::recv()
             auto bufSize = mRingBuf.getWriteBuf(buf);
             if (bufSize < 0) { // command queued
                 return;
+            } else if (bufSize > mRecvSize) {
+                bufSize = mRecvSize;
             }
             int rlen;
             for (;;) { // periodic timeout - check abort request flag
@@ -269,6 +281,7 @@ void HttpNode::recv()
             }
             if (rlen > 0) {
                 mRingBuf.commitWrite(rlen);
+                ESP_LOGI(TAG, "Received %d bytes, wrote to ringbuf", rlen);
                 //TODO: Implement IceCast metadata support
                 return;
             }
@@ -331,14 +344,14 @@ bool HttpNode::dispatchCommand(Command &cmd)
 
 void HttpNode::nodeThreadFunc()
 {
-    ESP_LOGD(TAG, "Task started");
+    ESP_LOGI(TAG, "Task started");
     for (;;) {
         processMessages();
         if (mTerminate) {
             return;
         }
         myassert(mState == kStateRunning);
-        if (connect() != ESP_OK) {
+        if (!connect()) {
             setState(kStatePaused);
             continue;
         }

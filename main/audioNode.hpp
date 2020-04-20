@@ -47,8 +47,9 @@ struct StreamFormat
     StreamFormat()
     {
         static_assert(sizeof(StreamFormat) == sizeof(uint32_t), "");
-        memset(this, 0, sizeof(StreamFormat));
+        clear();
     }
+    void clear() { memset(this, 0, sizeof(StreamFormat)); }
     uint32_t toCode() const { return *reinterpret_cast<const uint32_t*>(this); }
 };
 

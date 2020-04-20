@@ -163,6 +163,7 @@ void AudioPlayer::createDecoderByType(esp_codec_type_t type)
         mDecoder = mp3_decoder_init(&cfg);
         break;
     }
+    /*
     case ESP_CODEC_TYPE_AAC: {
         aac_decoder_cfg_t cfg = DEFAULT_AAC_DECODER_CONFIG();
         mDecoder = aac_decoder_init(&cfg);
@@ -178,6 +179,7 @@ void AudioPlayer::createDecoderByType(esp_codec_type_t type)
         mDecoder = flac_decoder_init(&cfg);
         break;
     }
+    */
     default:
         mDecoder = nullptr;
         mDecoderType = ESP_CODEC_TYPE_UNKNOW;

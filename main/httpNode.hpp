@@ -23,7 +23,7 @@
 class HttpNode: public AudioNodeWithTask
 {
 protected:
-    enum { kPollTimeoutMs = 1000, kStreamBufferSize = 512, kStackSize = 3 * 1024};
+    enum { kPollTimeoutMs = 1000, kStreamBufferSize = 512, kStackSize = 3 * 1024 };
     enum: uint16_t {
         kHttpEventType = kUserEventTypeBase << 1,
         kEventOnRequest = 1 | kHttpEventType,
@@ -40,6 +40,8 @@ protected:
     RingBuf mRingBuf;
     int64_t mBytesTotal;
     EventGroup mEvents;
+    int mRecvSize = 2048;
+    static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     static esp_codec_type_t codecFromContentType(const char* content_type);
     bool sendEvent(uint16_t type, void* buffer, int bufSize);
     bool isPlaylist();
