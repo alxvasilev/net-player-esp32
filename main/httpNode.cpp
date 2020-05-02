@@ -68,7 +68,7 @@ bool HttpNode::sendEvent(uint16_t type, void* buf, int bufSize)
 
 bool HttpNode::isPlaylist()
 {
-    auto codec = mStreamFormat.mCodec;
+    auto codec = mStreamFormat.codec;
     if (codec == ESP_AUDIO_TYPE_M3U8 || codec == ESP_AUDIO_TYPE_PLS) {
         return true;
     }
@@ -95,7 +95,7 @@ bool HttpNode::createClient()
     cfg.event_handler = httpHeaderHandler;
     cfg.user_data = this;
     cfg.timeout_ms = kPollTimeoutMs;
-    cfg.buffer_size = kStreamBufferSize;
+    cfg.buffer_size = kClientBufSize;
     cfg.method = mIsWriter ? HTTP_METHOD_POST : HTTP_METHOD_GET;
 
     mClient = esp_http_client_init(&cfg);
@@ -115,8 +115,9 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
         return ESP_OK;
     }
     auto self = static_cast<HttpNode*>(evt->user_data);
-    self->mStreamFormat.mCodec = self->codecFromContentType(evt->header_value);
-    ESP_LOGI(TAG, "Parsed content-type '%s' as %d", evt->header_value, self->mStreamFormat.mCodec);
+    self->mStreamFormat.codec = self->codecFromContentType(evt->header_value);
+    self->mStreamFormat.ctr = !self->mStreamFormat.ctr;
+    ESP_LOGI(TAG, "Parsed content-type '%s' as %d", evt->header_value, self->mStreamFormat.codec);
     return ESP_OK;
 }
 
@@ -128,6 +129,17 @@ bool HttpNode::connect(bool isReconnect)
         return false;
     }
 
+    if (!isReconnect) {
+        ESP_LOGI(TAG, "Waiting for buffer to drain...");
+        // Wait till buffer is drained before changing format descriptor
+        bool ret = mRingBuf.waitForEmpty();
+        if (!ret) {
+            return false;
+        }
+        mStreamFormat.clear();
+        mBytePos = 0;
+    }
+
     ESP_LOGI(TAG, "Opening URI '%s'", mUrl);
     // if not initialize http client, initial it
     if (!mClient) {
@@ -136,10 +148,6 @@ bool HttpNode::connect(bool isReconnect)
         }
     }
 
-    if (!isReconnect) {
-        mStreamFormat.clear();
-        mBytePos = 0;
-    }
     if (mBytePos) { // we are resuming, send position
         char rang_header[32];
         snprintf(rang_header, 32, "bytes=%lld-", mBytePos);
@@ -167,7 +175,8 @@ bool HttpNode::connect(bool isReconnect)
         }
 
         int status_code = esp_http_client_get_status_code(mClient);
-        ESP_LOGI(TAG, "Connected to %s\n\tstatus code:%d, Content-length: %d", mUrl, status_code, (int)mBytesTotal);
+        ESP_LOGI(TAG, "Connected to '%s': http code: %d, content-length: %d",
+            mUrl, status_code, (int)mBytesTotal);
 
         if (status_code == 301 || status_code == 302) {
             ESP_LOGI(TAG, "Following redirect...");
@@ -261,7 +270,8 @@ void HttpNode::recv()
     for(;;) { // retry with next playlist track
         for (int retries = 0; retries < 4; retries++) { // retry net errors
             char* buf;
-            auto bufSize = mRingBuf.getWriteBuf(buf);
+            auto bufSize = mRingBuf.getWriteBuf(buf, kReadSize);
+
             if (bufSize < 0) { // command queued
                 return;
             } else if (bufSize > mRecvSize) {
@@ -281,7 +291,7 @@ void HttpNode::recv()
             }
             if (rlen > 0) {
                 mRingBuf.commitWrite(rlen);
-                ESP_LOGI(TAG, "Received %d bytes, wrote to ringbuf", rlen);
+                ESP_LOGI(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.totalDataAvail());
                 //TODO: Implement IceCast metadata support
                 return;
             }
@@ -368,16 +378,13 @@ void HttpNode::nodeThreadFunc()
     }
 }
 
-void HttpNode::stop(bool wait)
+void HttpNode::doStop()
 {
     if (mState == kStateStopped) {
         return;
     }
     mTerminate = true;
     mRingBuf.setStopSignal();
-    if (wait) {
-        waitForStop();
-    }
 }
 
 HttpNode::~HttpNode()
@@ -390,8 +397,31 @@ HttpNode::HttpNode(const char* tag, size_t bufSize)
 : AudioNodeWithTask(tag, kStackSize), mRingBuf(bufSize)
 {
 }
-int HttpNode::pullData(char* buf, size_t size, int timeout, StreamFormat& fmt)
+
+AudioNode::StreamError HttpNode::pullData(DataPullReq& dp, int timeout)
 {
-    fmt = mStreamFormat;
-    return mRingBuf.read(buf, size, timeout);
+    if (!mRingBuf.hasData()) {
+        if (!mRingBuf.waitForData()) {
+            return kStreamStopped;
+        }
+    }
+    dp.fmt = mStreamFormat;
+    if (!dp.size) { // caller only wants to get the stream format
+        return kNoError;
+    }
+    auto ret = mRingBuf.contigRead(dp.buf, dp.size, timeout);
+
+    if (ret < 0) {
+        return kStreamStopped;
+    } else if (ret == 0){
+        return kTimeout;
+    } else {
+        dp.size = ret;
+        return kNoError;
+    }
+}
+
+void HttpNode::confirmRead(int size)
+{
+    mRingBuf.commitContigRead(size);
 }

@@ -41,8 +41,8 @@ struct EventGroup
 class RingBuf
 {
 protected:
-    enum: uint8_t { kFlagHasData = 1, kFlagHasEmpty = 2, kFlagWriteOp = 4,
-                    kFlagReadOp = 8, kFlagStop = 16 };
+    enum: uint8_t { kFlagHasData = 1, kFlagIsEmpty = 2, kFlagHasEmpty = 4,
+                    kFlagWriteOp = 8, kFlagReadOp = 16, kFlagStop = 32 };
     char* mBuf;
     char* mBufEnd;
     char* mWritePtr;
@@ -56,10 +56,14 @@ protected:
             return mWritePtr - mReadPtr;
         } else if (mReadPtr > mWritePtr) { // write wrapped, read didn't
             return mBufEnd - mReadPtr;
-        } else {
+        } else if (mEvents.get() & kFlagHasEmpty) { // empty
             return 0;
+        } else { // full
+            myassert(mEvents.get() & kFlagHasData);
+            return mBufEnd - mReadPtr;
         }
     }
+    int maxPossibleContigReadSize() { return mBufEnd - mReadPtr; }
     int availableForContigWrite()
     {
         if (mWritePtr >= mReadPtr) {
@@ -68,7 +72,7 @@ protected:
             return mReadPtr - mWritePtr - 1; // artificially leave 1 byte to distinguish between empty and full
         }
     }
-    void commitContigRead(int size)
+    void doCommitContigRead(int size)
     {
         rbassert(size <= availableForContigRead());
         mReadPtr += size;
@@ -79,8 +83,9 @@ protected:
         }
         if (mWritePtr == mReadPtr) {
             mEvents.clearBits(kFlagHasData);
+            mEvents.setBits(kFlagIsEmpty);
         }
-        mEvents.setBits(kFlagReadOp);
+        mEvents.setBits(kFlagReadOp|kFlagHasEmpty);
     }
     void commitContigWrite(int size)
     {
@@ -89,12 +94,14 @@ protected:
         if (mWritePtr == mBufEnd) {
             mWritePtr = mBuf;
         } else {
-            assert(mWritePtr < mBufEnd);
+            rbassert(mWritePtr < mBufEnd);
         }
+        EventBits_t bitsToClear = kFlagIsEmpty;
         if (mWritePtr == mReadPtr) {
-            mEvents.clearBits(kFlagHasEmpty);
+            bitsToClear |= kFlagHasEmpty;
         }
-        mEvents.setBits(kFlagWriteOp);
+        mEvents.clearBits(bitsToClear);
+        mEvents.setBits(kFlagWriteOp | kFlagHasData);
     }
     // -1: stopped, 0: timeout, 1: event occurred
     int8_t waitFor(uint32_t flag, int msTimeout)
@@ -127,20 +134,7 @@ protected:
         commitContigWrite(wlen);
         return wlen;
     }
-public:
-    RingBuf(size_t bufSize)
-    : mBuf((char*)malloc(bufSize))
-    {
-        if (!mBuf) {
-            ESP_LOGE("RINGBUF", "Out of memory allocation %zu bytes", bufSize);
-            return;
-        }
-        mBufEnd = mBuf + bufSize;
-        mWritePtr = mReadPtr = mBuf;
-        mEvents.setBits(kFlagHasEmpty);
-        assert(mEvents.get() == kFlagHasEmpty);
-    }
-    int totalDataAvail()
+    int totalDataAvail_nolock()
     {
         if (mReadPtr < mWritePtr) {
             return mWritePtr - mReadPtr;
@@ -150,10 +144,39 @@ public:
             return (mEvents.get() & kFlagHasEmpty) ? 0 : (mBufEnd - mBuf);
         }
     }
-    int totalEmptySpace()
+    int totalEmptySpace_nolock()
     {
         return (mBufEnd - mBuf) - totalDataAvail();
     }
+public:
+    // If user wants to keep some external state in sync with the ringbuffer,
+    // they can use the ringbuf's mutex to protect that state
+    Mutex& mutex() { return mMutex; }
+    RingBuf(size_t bufSize)
+    : mBuf((char*)malloc(bufSize))
+    {
+        if (!mBuf) {
+            ESP_LOGE("RINGBUF", "Out of memory allocation %zu bytes", bufSize);
+            return;
+        }
+        mBufEnd = mBuf + bufSize;
+        mWritePtr = mReadPtr = mBuf;
+        mEvents.setBits(kFlagHasEmpty|kFlagIsEmpty);
+        assert(mEvents.get() == (kFlagHasEmpty|kFlagIsEmpty));
+    }
+    int totalDataAvail()
+    {
+        MutexLocker locker(mMutex);
+        return totalDataAvail_nolock();
+    }
+    int totalEmptySpace()
+    {
+        MutexLocker locker(mMutex);
+        return totalEmptySpace_nolock();
+    }
+    /* Read requested amount and block if needed.
+     * @returns 1 upon success, 0 upon timeout, -1 if stop was signalled
+     */
     int8_t read(char* buf, int size, int msTimeout)
     {
         for (;;) {
@@ -177,7 +200,7 @@ public:
         // mutex is locked here
         auto rlen = std::min(size, availableForContigRead());
         memcpy(buf, mReadPtr, rlen);
-        commitContigRead(rlen);
+        doCommitContigRead(rlen);
         if (rlen >= size) {
             rbassert(rlen == size);
             mMutex.unlock();
@@ -186,23 +209,46 @@ public:
         buf += rlen;
         size -= rlen;
         memcpy(buf, mReadPtr, size);
-        commitContigRead(size);
+        doCommitContigRead(size);
         mMutex.unlock();
         return 1;
     }
+    /* Returns a contiguous buffer with data for reading, which may be shorter
+     * than sizeWanted. If no data is available for reading, blocks until data becomes
+     * available or timeout elapses
+     * @returns the amount of data in the returned buffer, 0 for timeout or -1 if stop
+     * was signalled
+     */
     int contigRead(char*& buf, int sizeWanted, int msTimeout)
     {
-        auto ret = waitFor(kFlagHasData, msTimeout);
-        if (ret <= 0) {
-            return ret;
+        MutexLocker locker(mMutex);
+        auto maxPossible = maxPossibleContigReadSize();
+        if (sizeWanted > maxPossible) {
+            sizeWanted = maxPossible;
         }
-        {
-            MutexLocker locker(mMutex);
-            auto rlen = std::min(sizeWanted, availableForContigRead());
-            buf = mReadPtr;
-            commitContigRead(rlen);
-            return rlen;
+        if (msTimeout < 0) {
+            while (availableForContigRead() < sizeWanted) {
+                MutexUnlocker unlocker(mMutex);
+                if (waitFor(kFlagWriteOp, -1) <= 0) {
+                    return -1;
+                }
+            }
+        } else {
+            while (availableForContigRead() < sizeWanted) {
+                int64_t tsStart = esp_timer_get_time();
+                MutexUnlocker unlocker(mMutex);
+                int ret = waitFor(kFlagWriteOp, msTimeout);
+                msTimeout -= (esp_timer_get_time() - tsStart) / 1000;
+                if (ret < 0) {
+                    return ret;
+                }
+                if (msTimeout < 0) {
+                    return 0;
+                }
+            }
         }
+        buf = mReadPtr;
+        return sizeWanted;
     }
     bool write(char* buf, int size)
     {
@@ -227,27 +273,38 @@ public:
         mMutex.unlock();
         return true;
     }
-    int getWriteBuf(char*& buf)
+    int getWriteBuf(char*& buf, int reqSize)
     {
+        MutexLocker locker(mMutex);
+        int maxPossible = mBufEnd - mWritePtr;
+        if (reqSize > maxPossible) {
+            reqSize = maxPossible;
+        }
         for (;;) {
-            auto ret = waitFor(kFlagHasEmpty, -1);
-            if (ret <= 0) {
-                return -1;
-            }
             {
-                MutexLocker locker(mMutex);
-                auto contig = availableForContigWrite();
-                if (contig < 1) {
-                    continue;
+                MutexUnlocker unlocker(mMutex);
+                auto ret = waitFor(kFlagHasEmpty, -1);
+                if (ret <= 0) {
+                    return -1;
                 }
-                buf = mWritePtr;
-                return contig;
             }
+            auto contig = availableForContigWrite();
+            if (contig < reqSize) {
+                continue;
+            }
+            buf = mWritePtr;
+            return contig;
         }
     }
     void commitWrite(int size) {
         MutexLocker locker(mMutex);
         commitContigWrite(size);
+    }
+    void commitContigRead(int size)
+    {
+        MutexLocker locker(mMutex);
+        doCommitContigRead(size);
+
     }
     void setStopSignal()
     {
@@ -257,6 +314,19 @@ public:
     {
         mEvents.clearBits(kFlagStop);
     }
+    bool hasData() const
+    {
+        return ((mEvents.get() & kFlagHasData) != 0);
+    }
+    bool waitForData()
+    {
+        return waitFor(kFlagHasData, -1) >= 0;
+    }
+    bool waitForEmpty()
+    {
+        return waitFor(kFlagIsEmpty, -1) >= 0;
+    }
+
 };
 
 #endif

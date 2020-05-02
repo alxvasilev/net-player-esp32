@@ -20,20 +20,13 @@
 #include "playlist.hpp"
 #include "audioNode.hpp"
 
-static const char* TAG = "AUDIO_NODE";
-
-void AudioNode::setState(State newState)
+void AudioNodeWithTask::setState(State newState)
 {
     if (newState == mState) {
         return;
     }
-    ESP_LOGD(TAG, "state change %d -> %d", mState, newState);
+    ESP_LOGD(mTag, "state change %d -> %d", mState, newState);
     mState = newState;
-}
-
-void AudioNodeWithTask::setState(State newState)
-{
-    AudioNode::setState(newState);
     mEvents.clearBits(kStateStopped|kStatePaused|kStateRunning);
     mEvents.setBits(newState);
 }
@@ -71,7 +64,7 @@ bool AudioNodeWithTask::run()
 {
     auto flags = mEvents.get();
     if (flags & kStateRunning) {
-        ESP_LOGW(TAG, "Node '%s' already running", mTag);
+        ESP_LOGW(mTag, "Node already running");
         return true;
     }
     if (flags & kStateStopped) {
@@ -79,7 +72,7 @@ bool AudioNodeWithTask::run()
         mMutex.unlock();
         myassert(!mTaskId);
         if (!createAndStartTask()) {
-            ESP_LOGE(TAG, "Error creating task for node '%s'", mTag);
+            ESP_LOGE(mTag, "Error creating task for node");
             return false;
         }
     }
@@ -93,7 +86,7 @@ void AudioNodeWithTask::pause(bool wait)
 {
     auto state = mState;
     if (state == kStateStopped) {
-        ESP_LOGW(TAG, "pause(): Node is stopped");
+        ESP_LOGW(mTag, "pause(): Node is stopped");
         return;
     } else if (state == kStatePaused) {
         return;
@@ -110,19 +103,27 @@ void AudioNodeWithTask::waitForStop()
     waitForState(kStateStopped);
 }
 
+void AudioNodeWithTask::stop(bool wait)
+{
+    doStop();
+    if (wait) {
+        waitForStop();
+    }
+}
+
 bool AudioNodeWithTask::dispatchCommand(Command& cmd)
 {
     switch(cmd.opcode) {
     case kCommandRun:
         if (mState == kStateRunning) {
-            ESP_LOGW(TAG, "kCommandRun: Already running");
+            ESP_LOGW(mTag, "kCommandRun: Already running");
         } else {
             setState(kStateRunning);
         }
         break;
     case kCommandPause:
         if (mState == kStatePaused) {
-            ESP_LOGW(TAG, "kCommndPause: Already paused");
+            ESP_LOGW(mTag, "kCommndPause: Already paused");
         } else {
             setState(kStatePaused);
         }
@@ -138,7 +139,7 @@ void AudioNodeWithTask::processMessages()
 {
     while (!mTerminate) {
         Command cmd;
-        ESP_LOGD(TAG, "Waiting for command...");
+        ESP_LOGD(mTag, "Waiting for command...");
         mCmdQueue.get(cmd, -1);
         dispatchCommand(cmd);
         if (mState == kStateRunning && mCmdQueue.numMessages() == 0) {

@@ -24,25 +24,29 @@
 
 struct StreamFormat
 {
-    uint8_t mChannels: 1;
-    uint32_t mSamplerate: 19;
+protected:
+    uint8_t nChannels: 1;
+public:
+    uint32_t samplerate: 19;
+    bool ctr: 1; // toogled with every change of the format, to signal e.g. reset of the (same) decider
+protected:
     uint8_t mBits: 3;
-    uint8_t mReserved: 1;
-    esp_codec_type_t mCodec: 8;
+public:
+    esp_codec_type_t codec: 8;
     static uint8_t encodeBitRes(uint8_t bits) { return (bits >> 3) - 1; }
     static uint8_t decodeBitRes(uint8_t bits) { return (bits + 1) << 3; }
 
     StreamFormat(uint32_t sr, uint8_t bits, uint8_t channels)
-        :mChannels(channels), mSamplerate(sr),
-         mBits(encodeBitRes(bits)), mCodec(ESP_CODEC_TYPE_UNKNOW)
+        :nChannels(channels-1), samplerate(sr),
+         mBits(encodeBitRes(bits)), codec(ESP_CODEC_TYPE_UNKNOW)
     {
         static_assert(sizeof(StreamFormat) == sizeof(uint32_t), "");
     }
-    StreamFormat(esp_codec_type_t codec)
+    StreamFormat(esp_codec_type_t aCodec)
     {
         static_assert(sizeof(StreamFormat) == sizeof(uint32_t), "");
         memset(this, 0, sizeof(StreamFormat));
-        mCodec = codec;
+        codec = aCodec;
     }
     StreamFormat()
     {
@@ -51,6 +55,11 @@ struct StreamFormat
     }
     void clear() { memset(this, 0, sizeof(StreamFormat)); }
     uint32_t toCode() const { return *reinterpret_cast<const uint32_t*>(this); }
+    uint8_t bits() const { return decodeBitRes(mBits); }
+    void setBits(uint8_t bits) { mBits = encodeBitRes(bits); }
+    uint8_t channels() const { return nChannels + 1; }
+    void setChannels(uint8_t ch) { nChannels = ch - 1; }
+    operator bool() const { return toCode() != 0; }
 };
 
 class AudioNode
@@ -67,27 +76,51 @@ public:
         kEventStateChange = kStateEventType | 1,
         kEventData = kDataEventType | 2
     };
+    enum Flags: uint8_t { kFlagNone = 0, kFlagFixedRead = 1 };
     struct EventHandler
     {
         virtual bool onEvent(AudioNode* self, uint16_t type, void* buf, size_t bufSize) = 0;
     };
     const char* tag() { return mTag; }
 protected:
-    char* mTag;
+    const char* mTag;
     Mutex mMutex;
     bool mIsWriter = false;
     AudioNode* mPrev = nullptr;
     int64_t mBytePos = 0;
-    State mState = kStateStopped;
     void* mUserp = nullptr;
     EventHandler* mEventHandler = nullptr;
     EventType mSubscribedEvents = kNoEvents;
+    Flags mFlags;
     void setState(State newState);
+    AudioNode(const char* tag, Flags flags=kFlagNone)
+        : mTag(strdup(tag)), mFlags(flags) {}
 public:
-    AudioNode(const char* tag) { mTag = strdup(tag); }
-    virtual ~AudioNode() { free(mTag); }
-    State state() const { return mState; }
-    virtual int pullData(char* buf, size_t size, int timeout, StreamFormat& fmt) = 0;
+    virtual ~AudioNode() {}
+    void linkToPrev(AudioNode* prev) { mPrev = prev; }
+    Flags flags() const { return mFlags; }
+    enum StreamError: int8_t {
+        kNoError = 0,
+        kTimeout = -1,
+        kFormatChange = -2,
+        kNeedMoreData = -3,
+        kStreamStopped = -4,
+        kErrNoCodec = -5,
+        kErrDecode = -6,
+    };
+    struct DataPullReq
+    {
+        char* buf = nullptr;
+        int size;
+        StreamFormat fmt;
+        DataPullReq(size_t aSize): size(aSize){}
+    };
+
+    // Upon return, buf is set to the internal buffer containing the data, and size is updated to the available data
+    // for reading from it. Once the caller reads the amount it needs, it must call
+    // confirmRead() with the actual amount read.
+    virtual StreamError pullData(DataPullReq& dpr, int timeout) = 0;
+    virtual void confirmRead(int amount) = 0;
 };
 
 class AudioNodeWithTask: public AudioNode
@@ -105,7 +138,8 @@ protected:
     enum { kEventLockReleased = kStateLast << 1 };
     TaskHandle_t mTaskId = NULL;
     uint32_t mStackSize;
-    UBaseType_t mTaskPrio;
+    UBaseType_t mTaskPrio = kDefaultPrio;
+    State mState = kStateStopped;
     EventGroup mEvents;
     volatile bool mTerminate = false;
     Queue<Command, 4> mCmdQueue;
@@ -119,17 +153,20 @@ protected:
     // kStatePaused before it is called. After it returns, the node's state
     // is set to kStateStopped
     virtual void nodeThreadFunc() = 0;
+    virtual void doStop() = 0;
     void processMessages();
     virtual bool dispatchCommand(Command& cmd);
 public:
-    AudioNodeWithTask(const char* tag, uint32_t stackSize, UBaseType_t prio=kDefaultPrio):
-        AudioNode(tag), mStackSize(stackSize), mTaskPrio(prio)
+    AudioNodeWithTask(const char* tag, uint32_t stackSize, Flags flags=kFlagNone)
+    :AudioNode(tag, flags), mStackSize(stackSize)
     {
         mEvents.setBits(kStateStopped);
     }
+    State state() const { return mState; }
+    void setPriority(UBaseType_t prio) { mTaskPrio = prio; }
     bool run();
     void pause(bool wait=true);
-    virtual void stop(bool wait=true) = 0;
+    void stop(bool wait=true);
     void waitForStop();
 };
 #endif

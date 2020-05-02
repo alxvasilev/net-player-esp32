@@ -22,6 +22,7 @@
 #include <esp_spiffs.h>
 #include <sys/param.h>
 #include <string>
+#include <algorithm> // for sorting task list
 #include <memory>
 #include "utils.hpp"
 #include "netLogger.hpp"
@@ -29,6 +30,8 @@
 #include "ota.hpp"
 #include "audioPlayer.hpp"
 #include "httpNode.hpp"
+#include "decoderNode.hpp"
+#include "i2sSinkNode.hpp"
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
@@ -207,19 +210,20 @@ extern "C" void app_main(void)
     esp_bt_mem_release(ESP_BT_MODE_BTDM);
     ESP_LOGW("BT", "Free memory after releasing BLE memory: %d", xPortGetFreeHeapSize());
 
-    HttpNode node("http", 40*1024);
-    node.setUrl("http://dir.xiph.org/listen/1878608/listen.m3u");
-    node.run();
-    char* buf = (char*)malloc(12480);
-    StreamFormat fmt;
-//    for (;;) {
-//        int size = node.pullData(buf, 12480, -1, fmt);
-//        ESP_LOGI(TAG, "pulled data %d", size);
-        vTaskDelay(10000 / portTICK_PERIOD_MS);
-        ESP_LOGI(TAG, "stopping http node");
-        node.stop();
-        ESP_LOGI(TAG, "http node stopped");
-//    }
+// ====
+    HttpNode http("http", 40*1024);
+    DecoderNode dec("dec");
+    dec.linkToPrev(&http);
+    I2sSinkNode i2s("i2s", 0xff, nullptr);
+    i2s.linkToPrev(&dec);
+
+//  http.setUrl("http://streams.greenhost.nl:8080/live");
+    http.setUrl("https://mediaserv38.live-streams.nl:18030/stream");
+    http.run();
+    i2s.run();
+    for (;;) {
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
 
     return;
     player.reset(new AudioPlayer(AudioPlayer::kInputHttp, ESP_CODEC_TYPE_MP3, AudioPlayer::kOutputI2s));
@@ -229,11 +233,39 @@ extern "C" void app_main(void)
 //  esp_periph_set_destroy(periphSet);
 }
 
+std::string getTaskStats()
+{
+    uint32_t totalRunTime;
+
+     // Take a snapshot of the number of tasks in case it changes while this
+     // function is executing.
+     auto nTasks = uxTaskGetNumberOfTasks();
+     std::vector<TaskStatus_t> tasks(nTasks);
+     // Generate raw status information about each task.
+     auto actual = uxTaskGetSystemState(tasks.data(), nTasks, &totalRunTime);
+     if (actual != nTasks) {
+         myassert(actual < nTasks);
+         tasks.resize(actual);
+     }
+     std::sort(tasks.begin(), tasks.end(), [](TaskStatus_t& a, TaskStatus_t& b) {
+         return a.ulRunTimeCounter > b.ulRunTimeCounter;
+     });
+     std::string result("name             cpu%    lowstk    prio    core\n");
+     char buf[32];
+     for (auto& task: tasks) {
+         auto nameLen = strlen(task.pcTaskName);
+         auto percent = task.ulRunTimeCounter * 100 / totalRunTime;
+         result.append(task.pcTaskName).append(std::string(18 - nameLen, ' '))
+               .append(itoa(percent, buf, 10)).append("\t")
+               .append(itoa(task.usStackHighWaterMark, buf, 10)). append("\t")
+               .append(itoa(task.uxBasePriority, buf, 10)).append("\t")
+               .append((task.xCoreID < 16) ? itoa(task.xCoreID, buf, 10) : "?")+= "\n";
+     }
+     return result;
+}
 static esp_err_t indexUrlHandler(httpd_req_t *req)
 {
-    static const char startHtml[] =
-        "<html><head /><body><h1 align='center'>NetPlayer HTTP server</h1><pre>Free heap memory: ";
-    httpd_resp_send_chunk(req, startHtml, sizeof(startHtml));
+    httpd_resp_sendstr_chunk(req, "<html><head /><body><h1 align='center'>NetPlayer HTTP inteface</h1><pre>Free heap memory: ");
     DynBuffer buf(128);
 
     /* Print chip information */
@@ -246,7 +278,7 @@ static esp_err_t indexUrlHandler(httpd_req_t *req)
     httpd_resp_send_chunk(req, buf.data(), buf.size());
     buf.clear();
 
-    buf.printf("radio: WiFi%s%s\nflash size: %dMB\nflash type: %s</pre></body></html>",
+    buf.printf("radio: WiFi%s%s\nflash size: %dMB\nflash type: %s\nTasks:\n",
         (chip_info.features & CHIP_FEATURE_BT) ? "/BT" : "",
         (chip_info.features & CHIP_FEATURE_BLE) ? "/BLE" : "",
         spi_flash_get_chip_size() / (1024 * 1024),
@@ -254,7 +286,9 @@ static esp_err_t indexUrlHandler(httpd_req_t *req)
     );
     httpd_resp_send_chunk(req, buf.data(), buf.size());
     buf.clear();
-
+    auto stats = getTaskStats();
+    httpd_resp_send_chunk(req, stats.c_str(), stats.size());
+    httpd_resp_sendstr_chunk(req, "</pre></body></html>");
     httpd_resp_send_chunk(req, nullptr, 0);
     return ESP_OK;
 }
@@ -408,6 +442,7 @@ void startWebserver(bool isAp)
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.stack_size = 2048;
     config.max_uri_handlers = 12;
     config.uri_match_fn = httpd_uri_match_wildcard;
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);

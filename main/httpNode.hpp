@@ -23,7 +23,8 @@
 class HttpNode: public AudioNodeWithTask
 {
 protected:
-    enum { kPollTimeoutMs = 1000, kStreamBufferSize = 512, kStackSize = 3 * 1024 };
+    enum { kPollTimeoutMs = 1000, kClientBufSize = 512, kReadSize = 1024,
+           kStackSize = 3600 };
     enum: uint16_t {
         kHttpEventType = kUserEventTypeBase << 1,
         kEventOnRequest = 1 | kHttpEventType,
@@ -57,10 +58,11 @@ protected:
     void send();
     void nodeThreadFunc();
     virtual bool dispatchCommand(Command &cmd);
+    virtual void doStop();
 public:
     HttpNode(const char* tag, size_t bufSize);
     virtual ~HttpNode();
-    virtual int pullData(char* buf, size_t size, int timeout, StreamFormat& fmt);
+    virtual StreamError pullData(DataPullReq &dp, int timeout);
+    virtual void confirmRead(int size);
     void setUrl(const char* url);
-    virtual void stop(bool wait=true);
 };
