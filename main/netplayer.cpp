@@ -211,25 +211,8 @@ extern "C" void app_main(void)
     ESP_LOGW("BT", "Free memory after releasing BLE memory: %d", xPortGetFreeHeapSize());
 
 // ====
-    HttpNode http("http", 40*1024);
-    DecoderNode dec("dec");
-    dec.linkToPrev(&http);
-    I2sSinkNode i2s("i2s", 0xff, nullptr);
-    i2s.linkToPrev(&dec);
-
-//  http.setUrl("http://streams.greenhost.nl:8080/live");
-    http.setUrl("https://mediaserv38.live-streams.nl:18030/stream");
-    http.run();
-    i2s.run();
-    for (;;) {
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-    }
-
-    return;
-    player.reset(new AudioPlayer(AudioPlayer::kInputHttp, ESP_CODEC_TYPE_MP3, AudioPlayer::kOutputI2s));
-
-    player->playUrl(getNextStreamUrl());
-
+      player.reset(new AudioPlayer(AudioNode::kTypeHttpIn, AudioNode::kTypeI2sOut));
+      player->playUrl("https://mediaserv38.live-streams.nl:18030/stream");
 //  esp_periph_set_destroy(periphSet);
 }
 
@@ -250,7 +233,7 @@ std::string getTaskStats()
      std::sort(tasks.begin(), tasks.end(), [](TaskStatus_t& a, TaskStatus_t& b) {
          return a.ulRunTimeCounter > b.ulRunTimeCounter;
      });
-     std::string result("name             cpu%    lowstk    prio    core\n");
+     std::string result("name             cpu%  lowstk  prio  core\n");
      char buf[32];
      for (auto& task: tasks) {
          auto nameLen = strlen(task.pcTaskName);
@@ -329,7 +312,7 @@ static const httpd_uri_t play = {
 
 static esp_err_t pauseUrlHandler(httpd_req_t *req)
 {
-    if (player->state() == AudioPlayer::kStatePlaying) {
+    if (player->isPlaying()) {
         player->pause();
         httpd_resp_sendstr(req, "Pause");
     } else {
@@ -349,21 +332,29 @@ static const httpd_uri_t pauseUrl = {
 static esp_err_t volumeChangeUrlHandler(httpd_req_t *req)
 {
     UrlParams params(req);
+    int newVol;
     auto step = params.intParam("step", 0);
-    if (!step) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No 'step' parameter provided");
-        return ESP_OK;
-    }
-    int newVol = player->volumeChange(step);
-    if (newVol < 0) {
-        httpd_resp_send_err(req, HTTPD_501_METHOD_NOT_IMPLEMENTED, "Error setting volume");
-        return ESP_OK;
+    if (step) {
+        newVol = player->volumeChange(step);
+        if (newVol < 0) {
+            httpd_resp_send_err(req, HTTPD_501_METHOD_NOT_IMPLEMENTED, "Error setting volume");
+            return ESP_OK;
+        }
+    } else {
+        auto vol = params.intParam("vol", -1);
+        if (vol < 0) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Neither 'step' nor 'vol' parameter provided");
+            return ESP_OK;
+        }
+        player->volumeSet(vol);
+        newVol = player->volumeGet();
     }
     DynBuffer buf(24);
     buf.printf("Volume set to %d", newVol);
     httpd_resp_send(req, buf.data(), buf.size());
     return ESP_OK;
 }
+
 static const httpd_uri_t volumeUrl = {
     .uri       = "/vol",
     .method    = HTTP_GET,
@@ -442,7 +433,7 @@ void startWebserver(bool isAp)
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.stack_size = 2048;
+    config.stack_size = 4096;
     config.max_uri_handlers = 12;
     config.uri_match_fn = httpd_uri_match_wildcard;
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);

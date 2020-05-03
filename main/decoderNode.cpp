@@ -6,7 +6,7 @@ bool DecoderNode::createDecoder(esp_codec_type_t type)
     switch (type) {
     case ESP_CODEC_TYPE_MP3:
         ESP_LOGI(mTag, "Created MP3 decoder");
-        mDecoder = new DecoderMp3;
+        mDecoder = new DecoderMp3(mVolume);
         return true;
     default: return false;
     }
@@ -24,13 +24,15 @@ bool DecoderNode::changeDecoder(esp_codec_type_t type)
 AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp, int timeout)
 {
     for (;;) {
-        ESP_LOGD(mTag, "About to get upstream codec type");
         DataPullReq idp(0);
         auto err = mPrev->pullData(idp, timeout);
         if (err) {
+            if (err == kStreamFlush && mDecoder) {
+                ESP_LOGW(mTag, "kStreamFlush returned by upstream node, resetting decoder");
+                mDecoder->reset();
+            }
             return err;
         }
-        ESP_LOGD(mTag, "Obtained upstream codec type: %d", idp.fmt.codec);
         if (!mDecoder) {
             ESP_LOGI(mTag, "No decoder, getting codec info from upstream node");
             createDecoder(idp.fmt.codec); // clears any remaining data from input buffer
@@ -47,15 +49,17 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp, int timeout)
             if (ret <= 0) {
                 mFormatChangeCtr = idp.fmt.ctr;
                 if (codecChanged) {
+                    ESP_LOGW(mTag, "Stream encoding changed");
                     changeDecoder(idp.fmt.codec);
                 } else {
+                    ESP_LOGW(mTag, "Stream changed, but codec not - resetting codec");
                     mDecoder->reset();
                 }
                 continue;
             } else {
-                ESP_LOGI(mTag, "Codec type changed in upstream node, successfully decoded and returning leftover data");
                 odp.buf = mDecoder->outputBuf();
                 odp.size = ret;
+                odp.fmt = mDecoder->outputFmt();
                 return kNoError;
             }
         }
@@ -88,4 +92,13 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp, int timeout)
         odp.fmt = mDecoder->outputFmt();
         return kNoError;
     }
+}
+uint8_t DecoderNode::getVolume() const
+{
+    return mVolume;
+}
+
+void DecoderNode::setVolume(uint8_t vol)
+{
+    mVolume = vol;
 }

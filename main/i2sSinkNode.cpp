@@ -12,9 +12,7 @@
 #include "esp_err.h"
 #include "i2sSinkNode.hpp"
 
-static const char *TAG = "I2S_SINK";
-
-void I2sSinkNode::adjustSamplesForInternalDac(char* sBuff, int len)
+void I2sOutputNode::adjustSamplesForInternalDac(char* sBuff, int len)
 {
     int16_t* buf16 = (int16_t*)sBuff;
     auto end = buf16 + len / 2;
@@ -24,7 +22,7 @@ void I2sSinkNode::adjustSamplesForInternalDac(char* sBuff, int len)
     }
 }
 
-void I2sSinkNode::nodeThreadFunc()
+void I2sOutputNode::nodeThreadFunc()
 {
     for (;;) {
         processMessages();
@@ -34,8 +32,23 @@ void I2sSinkNode::nodeThreadFunc()
         myassert(mState == kStateRunning);
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
             DataPullReq dpr(10240); // read all available data
-            auto err = mPrev->pullData(dpr, 1000);
+#ifndef NDEBUG
+            auto tim = esp_timer_get_time();
+#endif
+            auto err = mPrev->pullData(dpr, mReadTimeout);
+#ifndef NDEBUG
+            tim = (esp_timer_get_time() - tim) / 1000;
             if (err == kTimeout) {
+                if (abs(tim - mReadTimeout) > portTICK_PERIOD_MS) {
+                    ESP_LOGW(mTag, "pullData timed out with unexpected delay: took %lld ms, timeout was %d ms", tim, mReadTimeout);
+                }
+            } else if (err == kNoError) {
+                if (tim - mReadTimeout > 5) {
+                    ESP_LOGW(mTag, "pullData returned data but took more than specified by timeout: took %lld ms, timeout was %d ms", tim, mReadTimeout);
+                }
+            }
+#endif
+            if (err == kTimeout || err == kStreamFlush) {
                 ESP_LOGW(mTag, "Read timeout, sending silence");
                 dmaFillWithSilence();
                 continue;
@@ -54,16 +67,16 @@ void I2sSinkNode::nodeThreadFunc()
             auto espErr = i2s_write(mPort, dpr.buf, dpr.size, &written, portMAX_DELAY);
             mPrev->confirmRead(dpr.size);
             if (espErr != ESP_OK) {
-                ESP_LOGE(TAG, "i2s_write error: %s", esp_err_to_name(espErr));
+                ESP_LOGE(mTag, "i2s_write error: %s", esp_err_to_name(espErr));
                 continue;
             }
             if (written != dpr.size) {
-                ESP_LOGE(TAG, "is2_write() wrote less than requested with infinite timeout");
+                ESP_LOGE(mTag, "is2_write() wrote less than requested with infinite timeout");
             }
         }
     }
 }
-void I2sSinkNode::dmaFillWithSilence()
+void I2sOutputNode::dmaFillWithSilence()
 {
     enum { kSampleCnt = 64 };
     uint16_t buf[kSampleCnt];
@@ -78,28 +91,36 @@ void I2sSinkNode::dmaFillWithSilence()
     } while (written == 128);
 }
 
-bool I2sSinkNode::setFormat(StreamFormat fmt)
+bool I2sOutputNode::setFormat(StreamFormat fmt)
 {
     auto bits = fmt.bits();
     if (bits != 16) {
-        ESP_LOGE(TAG, "Only 16bit sample width is supported, but %d provided", bits);
+        ESP_LOGE(mTag, "Only 16bit sample width is supported, but %d provided", bits);
         return false;
     }
-    ESP_LOGI(TAG, "Setting output mode to %d-bit %s, %d Hz", bits,
-        (fmt.channels() == 2) ? "stereo" : "mono", fmt.samplerate);
-    auto err = i2s_set_clk(mPort, fmt.samplerate,
+    auto samplerate = fmt.samplerate;
+    ESP_LOGW(mTag, "Setting output mode to %d-bit %s, %d Hz", bits,
+        (fmt.channels() == 2) ? "stereo" : "mono", samplerate);
+    auto err = i2s_set_clk(mPort, samplerate,
         (i2s_bits_per_sample_t)fmt.bits(), (i2s_channel_t)fmt.channels());
     if (err == ESP_FAIL) {
-        ESP_LOGE(TAG, "i2s_set_clk failed: rate: %d, bits: %d, ch: %d. Error: %s",
-            fmt.samplerate, bits, fmt.channels(), esp_err_to_name(err));
+        ESP_LOGE(mTag, "i2s_set_clk failed: rate: %d, bits: %d, ch: %d. Error: %s",
+            samplerate, bits, fmt.channels(), esp_err_to_name(err));
         return false;
     }
     mFormat = fmt;
+    recalcReadTimeout(samplerate);
     return true;
 }
 
-I2sSinkNode::I2sSinkNode(const char* tag, int port, i2s_pin_config_t* pinCfg)
-:AudioNodeWithTask(tag, kStackSize), mFormat(44100, 16, 2)
+void I2sOutputNode::recalcReadTimeout(int samplerate)
+{
+    mReadTimeout = 1000 * (kDmaBufCnt * kDmaBufLen) / samplerate;
+    ESP_LOGW(mTag, "Setting read timeout to %d ms", mReadTimeout);
+}
+
+I2sOutputNode::I2sOutputNode(int port, i2s_pin_config_t* pinCfg)
+:AudioNodeWithTask("i2s-out", kStackSize), mFormat(kDefaultSamplerate, 16, 2)
 {
     if (port == 0xff) {
         mUseInternalDac = true;
@@ -110,7 +131,7 @@ I2sSinkNode::I2sSinkNode(const char* tag, int port, i2s_pin_config_t* pinCfg)
     }
     i2s_config_t cfg = {};
     cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
-    cfg.sample_rate = 44100;
+    cfg.sample_rate = kDefaultSamplerate;
     cfg.bits_per_sample = (i2s_bits_per_sample_t) 16;
     cfg.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
     cfg.communication_format = I2S_COMM_FORMAT_I2S_MSB;
@@ -125,7 +146,7 @@ I2sSinkNode::I2sSinkNode(const char* tag, int port, i2s_pin_config_t* pinCfg)
 
     auto err = i2s_driver_install(mPort, &cfg, 0, NULL);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error installing i2s driver: %s", esp_err_to_name(err));
+        ESP_LOGE(mTag, "Error installing i2s driver: %s", esp_err_to_name(err));
         myassert(false);
     }
 
@@ -137,9 +158,10 @@ I2sSinkNode::I2sSinkNode(const char* tag, int port, i2s_pin_config_t* pinCfg)
     }
 //  i2s_mclk_gpio_select(i2s->config.i2s_port, GPIO_NUM_0);
     i2s_zero_dma_buffer(mPort);
+    recalcReadTimeout(kDefaultSamplerate);
 }
 
-I2sSinkNode::~I2sSinkNode()
+I2sOutputNode::~I2sOutputNode()
 {
     i2s_driver_uninstall(mPort);
 }

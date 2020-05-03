@@ -19,17 +19,13 @@ protected:
     char mOutputBuf[kOutputBufSize];
     bool initStreamFormat(mad_header& header);
     int output(const mad_pcm& pcm);
-    void doReset();
+    void initMadState();
+    void freeMadState();
     void logEncodingInfo();
 public:
     virtual esp_codec_type_t type() const { return ESP_CODEC_TYPE_MP3; }
-    DecoderMp3();
-    uint16_t scale(mad_fixed_t sample) {
-        auto isNeg = sample & 0x80000000;
-        sample >>= (29 - 15);
-        return (isNeg) ? ((sample & 0xffff) | 0x8000)
-                       :  (sample & 0x7fff);
-    }
+    DecoderMp3(uint8_t& vol);
+    ~DecoderMp3();
     virtual int inputBytesNeeded();
     virtual int decode(const char* buf, int size);
     virtual char* outputBuf() { return mOutputBuf; }

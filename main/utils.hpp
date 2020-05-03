@@ -214,6 +214,18 @@ void setTimeout(uint32_t ms, F&& cb)
     ESP_ERROR_CHECK(esp_timer_start_once(timer, ms * 1000));
 }
 
+class ElapsedTimer
+{
+protected:
+    int64_t mTsStart;
+public:
+    ElapsedTimer(): mTsStart(esp_timer_get_time()) {}
+    int msStartTime() const { return (mTsStart + 500 ) / 1000; }
+    int64_t usStartTime() const { return mTsStart; }
+    int64_t usElapsed() const { return esp_timer_get_time() - mTsStart; }
+    int msElapsed() const { return (usElapsed() + 500) / 1000; }
+};
+
 namespace std {
 template<>
     struct default_delete<FILE>

@@ -30,30 +30,40 @@ public:
     uint32_t samplerate: 19;
     bool ctr: 1; // toogled with every change of the format, to signal e.g. reset of the (same) decider
 protected:
-    uint8_t mBits: 3;
+    bool mReserved: 1;
+    uint8_t mBits: 2;
+    void zero() { memset(this, 0, sizeof(StreamFormat)); }
 public:
     esp_codec_type_t codec: 8;
     static uint8_t encodeBitRes(uint8_t bits) { return (bits >> 3) - 1; }
     static uint8_t decodeBitRes(uint8_t bits) { return (bits + 1) << 3; }
-
     StreamFormat(uint32_t sr, uint8_t bits, uint8_t channels)
-        :nChannels(channels-1), samplerate(sr),
-         mBits(encodeBitRes(bits)), codec(ESP_CODEC_TYPE_UNKNOW)
     {
         static_assert(sizeof(StreamFormat) == sizeof(uint32_t), "");
+        zero();
+        nChannels = channels-1;
+        samplerate = sr;
+        mBits = encodeBitRes(bits);
     }
     StreamFormat(esp_codec_type_t aCodec)
     {
         static_assert(sizeof(StreamFormat) == sizeof(uint32_t), "");
-        memset(this, 0, sizeof(StreamFormat));
+        zero();
         codec = aCodec;
     }
     StreamFormat()
     {
         static_assert(sizeof(StreamFormat) == sizeof(uint32_t), "");
-        clear();
+        zero();
     }
-    void clear() { memset(this, 0, sizeof(StreamFormat)); }
+    bool operator==(StreamFormat other) const { return toCode() == other.toCode(); }
+    bool operator!=(StreamFormat other) const { return toCode() != other.toCode(); }
+    void reset()
+    {
+        bool ctrSave = ctr;
+        zero();
+        ctr = !ctrSave;
+    }
     uint32_t toCode() const { return *reinterpret_cast<const uint32_t*>(this); }
     uint8_t bits() const { return decodeBitRes(mBits); }
     void setBits(uint8_t bits) { mBits = encodeBitRes(bits); }
@@ -77,6 +87,22 @@ public:
         kEventData = kDataEventType | 2
     };
     enum Flags: uint8_t { kFlagNone = 0, kFlagFixedRead = 1 };
+    // Static registry of all possible node types.
+    // Ideally each node class should have a static singleton that should be
+    // initialized at runtime with an autoincremented global that is a static member
+    // of this class
+    enum Type {
+        kTypeUnknown = 0,
+        kTypeHttpIn,
+        kTypeI2sIn,
+        kTypeA2dpIn,
+        kTypeDecoder,
+        kTypeEncoder,
+        kTypeEqualizer,
+        kTypeI2sOut,
+        kTypeHttpOut,
+        kTypeA2dpOut
+    };
     struct EventHandler
     {
         virtual bool onEvent(AudioNode* self, uint16_t type, void* buf, size_t bufSize) = 0;
@@ -96,6 +122,7 @@ protected:
     AudioNode(const char* tag, Flags flags=kFlagNone)
         : mTag(strdup(tag)), mFlags(flags) {}
 public:
+    virtual Type type() const = 0;
     virtual ~AudioNode() {}
     void linkToPrev(AudioNode* prev) { mPrev = prev; }
     Flags flags() const { return mFlags; }
@@ -105,8 +132,9 @@ public:
         kFormatChange = -2,
         kNeedMoreData = -3,
         kStreamStopped = -4,
-        kErrNoCodec = -5,
-        kErrDecode = -6,
+        kStreamFlush = - 5,
+        kErrNoCodec = -6,
+        kErrDecode = -7
     };
     struct DataPullReq
     {
@@ -121,6 +149,7 @@ public:
     // confirmRead() with the actual amount read.
     virtual StreamError pullData(DataPullReq& dpr, int timeout) = 0;
     virtual void confirmRead(int amount) = 0;
+    static const char* codecTypeToStr(esp_codec_type_t type);
 };
 
 class AudioNodeWithTask: public AudioNode
@@ -133,7 +162,7 @@ protected:
         Command(uint8_t aCmd, void* aArg=nullptr): opcode(aCmd), arg(aArg){}
         Command(){} //no init, used for retrieving commands
     };
-    enum: uint8_t { kCommandPause, kCommandRun };
+    enum: uint8_t { kCommandPause = 1, kCommandRun, kCommandLast = kCommandRun };
     enum { kDefaultPrio = 4 };
     enum { kEventLockReleased = kStateLast << 1 };
     TaskHandle_t mTaskId = NULL;
@@ -144,7 +173,6 @@ protected:
     volatile bool mTerminate = false;
     Queue<Command, 4> mCmdQueue;
     void setState(State newState);
-    State waitForState(unsigned state) { return (State)mEvents.waitForOneNoReset(state, -1); }
     bool waitForRun();
     static void sTaskFunc(void* ctx);
     bool createAndStartTask();
@@ -153,7 +181,7 @@ protected:
     // kStatePaused before it is called. After it returns, the node's state
     // is set to kStateStopped
     virtual void nodeThreadFunc() = 0;
-    virtual void doStop() = 0;
+    virtual void doStop() {} // node-specific stop code goes here. Guaranteed to be called with mState != kStateStopped
     void processMessages();
     virtual bool dispatchCommand(Command& cmd);
 public:
@@ -163,10 +191,22 @@ public:
         mEvents.setBits(kStateStopped);
     }
     State state() const { return mState; }
+    State waitForState(unsigned state);
     void setPriority(UBaseType_t prio) { mTaskPrio = prio; }
     bool run();
     void pause(bool wait=true);
     void stop(bool wait=true);
     void waitForStop();
 };
+
+class IAudioVolume
+{
+public:
+    // volume is in percent of original.
+    // 0-99% attenuates, 101-400% amplifies
+    virtual uint8_t getVolume() const = 0;
+    virtual void setVolume(uint8_t vol) = 0;
+    virtual void fadeOut() = 0;
+};
+
 #endif

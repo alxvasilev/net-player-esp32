@@ -31,7 +31,8 @@ protected:
         kEventNewTrack = 2 | kHttpEventType,
         kEventNoMoreTracks = 3 | kHttpEventType
     };
-    enum: uint8_t { kCommandPause, kCommandRun, kCommandSetUrl };
+    enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1};
+    enum BufReadMode { kReadNormal, kReadFlushReq, kReadPrefill  };
     char* mUrl = nullptr;
     StreamFormat mStreamFormat;
     esp_http_client_handle_t mClient = nullptr;
@@ -39,6 +40,8 @@ protected:
     Playlist mPlaylist; /* media playlist */
     size_t mStackSize;
     RingBuf mRingBuf;
+    BufReadMode mBufReadMode = kReadPrefill;
+    int mPrefillAmount;
     int64_t mBytesTotal;
     EventGroup mEvents;
     int mRecvSize = 2048;
@@ -60,8 +63,9 @@ protected:
     virtual bool dispatchCommand(Command &cmd);
     virtual void doStop();
 public:
-    HttpNode(const char* tag, size_t bufSize);
+    HttpNode(size_t bufSize);
     virtual ~HttpNode();
+    virtual Type type() const { return kTypeHttpIn; }
     virtual StreamError pullData(DataPullReq &dp, int timeout);
     virtual void confirmRead(int size);
     void setUrl(const char* url);

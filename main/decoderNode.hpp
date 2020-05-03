@@ -7,7 +7,10 @@ class Decoder
 {
 protected:
     StreamFormat mOutputFormat;
+    uint8_t& mVolume;
 public:
+    Decoder(uint8_t& vol): mVolume(vol){}
+    virtual ~Decoder() {}
     virtual esp_codec_type_t type() const = 0;
     /** returns an approximate amount of data that should be provided until the next
      * decode has enough data to complete. May be negative in case the data in the buffer
@@ -23,22 +26,29 @@ public:
     virtual char* outputBuf() = 0;
     virtual void reset() = 0;
     StreamFormat outputFmt() const { return mOutputFormat; }
-    virtual ~Decoder() {}
 };
 
-class DecoderNode: public AudioNode
+class DecoderNode: public AudioNode, public IAudioVolume
 {
 protected:
     enum { kInputBufSize = 3000 };
     Decoder* mDecoder = nullptr;
     bool mFormatChangeCtr;
+    uint8_t mVolume = kVolumeDiv; // 100% volume
     bool createDecoder(esp_codec_type_t type);
     bool changeDecoder(esp_codec_type_t type);
 public:
-    DecoderNode(const char* tag): AudioNode(tag, kFlagFixedRead){}
+    enum { kVolumeDiv = 64 };
+    DecoderNode(): AudioNode("dec-node", kFlagFixedRead){}
+    virtual Type type() const { return kTypeDecoder; }
     virtual StreamError pullData(DataPullReq& dpr, int timeout);
     virtual void confirmRead(int size) {}
     virtual ~DecoderNode() {}
+    // volume interface
+    virtual uint8_t getVolume() const;
+    virtual void setVolume(uint8_t vol);
+    virtual void fadeOut() {}
+    friend class Decoder;
 };
 
 #endif

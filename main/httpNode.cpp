@@ -61,7 +61,7 @@ bool HttpNode::sendEvent(uint16_t type, void* buf, int bufSize)
     }
     auto ret = mEventHandler->onEvent(this, type, buf, bufSize);
     if (!ret) {
-        ESP_LOGW(TAG, "User event handler returned false for event %d", type);
+        ESP_LOGW(mTag, "User event handler returned false for event %d", type);
     }
     return ret;
 }
@@ -78,7 +78,7 @@ bool HttpNode::isPlaylist()
 
 void HttpNode::doSetUrl(const char *url)
 {
-    ESP_LOGI(TAG, "Setting url to %s", url);
+    ESP_LOGI(mTag, "Setting url to %s", url);
     if (mUrl) {
         free(mUrl);
     }
@@ -116,7 +116,6 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
     }
     auto self = static_cast<HttpNode*>(evt->user_data);
     self->mStreamFormat.codec = self->codecFromContentType(evt->header_value);
-    self->mStreamFormat.ctr = !self->mStreamFormat.ctr;
     ESP_LOGI(TAG, "Parsed content-type '%s' as %d", evt->header_value, self->mStreamFormat.codec);
     return ESP_OK;
 }
@@ -136,7 +135,7 @@ bool HttpNode::connect(bool isReconnect)
         if (!ret) {
             return false;
         }
-        mStreamFormat.clear();
+        mStreamFormat.reset();
         mBytePos = 0;
     }
 
@@ -184,7 +183,11 @@ bool HttpNode::connect(bool isReconnect)
             continue;
         }
         else if (status_code != 200 && status_code != 206) {
-            ESP_LOGE(TAG, "Invalid HTTP stream, status code = %d", status_code);
+            if (status_code < 0) {
+                ESP_LOGE(mTag, "Error connecting, will retry");
+                continue;
+            }
+            ESP_LOGE(mTag, "Non-200 response code %d", status_code);
             return false;
         }
         ESP_LOGI(TAG, "Checking if response is a playlist");
@@ -332,10 +335,10 @@ void HttpNode::setUrl(const char* url)
     if (!mTaskId) {
         doSetUrl(url);
     } else {
+        ESP_LOGI(mTag, "Posting setUrl command");
         mCmdQueue.post(kCommandSetUrl, strdup(url));
     }
 }
-
 
 bool HttpNode::dispatchCommand(Command &cmd)
 {
@@ -344,7 +347,10 @@ bool HttpNode::dispatchCommand(Command &cmd)
     }
     switch(cmd.opcode) {
     case kCommandSetUrl:
-        setUrl(mUrl);
+        doSetUrl((const char*)cmd.arg);
+        free(cmd.arg);
+        cmd.arg = nullptr;
+        mBufReadMode = kReadFlushReq;
         setState(kStateRunning);
         break;
     default: return false;
@@ -380,10 +386,6 @@ void HttpNode::nodeThreadFunc()
 
 void HttpNode::doStop()
 {
-    if (mState == kStateStopped) {
-        return;
-    }
-    mTerminate = true;
     mRingBuf.setStopSignal();
 }
 
@@ -393,16 +395,29 @@ HttpNode::~HttpNode()
     destroyClient();
 }
 
-HttpNode::HttpNode(const char* tag, size_t bufSize)
-: AudioNodeWithTask(tag, kStackSize), mRingBuf(bufSize)
+HttpNode::HttpNode(size_t bufSize)
+: AudioNodeWithTask("http-node", kStackSize), mRingBuf(bufSize),
+  mPrefillAmount(bufSize * 3 / 4)
 {
 }
 
 AudioNode::StreamError HttpNode::pullData(DataPullReq& dp, int timeout)
 {
-    if (!mRingBuf.hasData()) {
-        if (!mRingBuf.waitForData()) {
+    if (mBufReadMode == kReadFlushReq) {
+        mBufReadMode = kReadPrefill;
+        mRingBuf.clear();
+        ESP_LOGI(mTag, "Ring buffer flush requested, buffer cleared and prefill state set");
+        return kStreamFlush;
+    }
+    if (mBufReadMode == kReadPrefill) {
+        ESP_LOGI(mTag, "Wait prefill");
+        auto ret = mRingBuf.waitForMinData(mPrefillAmount, timeout);
+        if (ret < 0) {
             return kStreamStopped;
+        } else if (ret == 0) {
+            return kTimeout;
+        } else {
+            mBufReadMode = kReadNormal;
         }
     }
     dp.fmt = mStreamFormat;
@@ -410,7 +425,6 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp, int timeout)
         return kNoError;
     }
     auto ret = mRingBuf.contigRead(dp.buf, dp.size, timeout);
-
     if (ret < 0) {
         return kStreamStopped;
     } else if (ret == 0){

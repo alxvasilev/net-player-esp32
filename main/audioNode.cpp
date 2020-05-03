@@ -33,14 +33,7 @@ void AudioNodeWithTask::setState(State newState)
 
 bool AudioNodeWithTask::createAndStartTask()
 {
-    char name[16];
-    auto tagLen = strlen(mTag);
-    if (tagLen > 10) {
-        tagLen = 10;
-    }
-    memcpy(name, mTag, tagLen);
-    memcpy(name + tagLen, "-task", 6);
-    auto ret = xTaskCreate(sTaskFunc, name, mStackSize, this, mTaskPrio, &mTaskId);
+    auto ret = xTaskCreate(sTaskFunc, mTag, mStackSize, this, mTaskPrio, &mTaskId);
     if (ret == pdPASS) {
         assert(mTaskId);
         return true;
@@ -98,6 +91,11 @@ void AudioNodeWithTask::pause(bool wait)
     }
 }
 
+AudioNodeWithTask::State AudioNodeWithTask::waitForState(unsigned state)
+{
+    return (State)mEvents.waitForOneNoReset(state, -1);
+}
+
 void AudioNodeWithTask::waitForStop()
 {
     waitForState(kStateStopped);
@@ -105,6 +103,11 @@ void AudioNodeWithTask::waitForStop()
 
 void AudioNodeWithTask::stop(bool wait)
 {
+    if (mState == kStateStopped) {
+        ESP_LOGI(mTag, "stop: Already stopped");
+        return;
+    }
+    mTerminate = true;
     doStop();
     if (wait) {
         waitForStop();
@@ -145,5 +148,18 @@ void AudioNodeWithTask::processMessages()
         if (mState == kStateRunning && mCmdQueue.numMessages() == 0) {
             break;
         }
+    }
+}
+const char* AudioNode::codecTypeToStr(esp_codec_type_t type)
+{
+    switch (type) {
+        case ESP_CODEC_TYPE_MP3: return "mp3";
+        case ESP_CODEC_TYPE_AAC: return "aac";
+        case ESP_CODEC_TYPE_OGG: return "ogg";
+        case ESP_CODEC_TYPE_M4A: return "m4a";
+        case ESP_CODEC_TYPE_FLAC: return "flac";
+        case ESP_CODEC_TYPE_OPUS: return "opus";
+        case ESP_CODEC_TYPE_UNKNOW: return "none";
+        default: return "(unknown)";
     }
 }

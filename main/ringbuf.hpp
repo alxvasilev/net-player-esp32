@@ -48,6 +48,7 @@ protected:
     char* mWritePtr;
     char* mReadPtr;
     Mutex mMutex;
+    int mDataSize;
     EventGroup mEvents;
     int bufSize() const { return mBufEnd - mBuf; }
     int availableForContigRead()
@@ -69,7 +70,7 @@ protected:
         if (mWritePtr >= mReadPtr) {
             return mBufEnd - mWritePtr;
         } else {
-            return mReadPtr - mWritePtr - 1; // artificially leave 1 byte to distinguish between empty and full
+            return mReadPtr - mWritePtr; // Removed: artificially leave 1 byte to distinguish between empty and full
         }
     }
     void doCommitContigRead(int size)
@@ -81,6 +82,7 @@ protected:
         } else {
             assert(mReadPtr < mBufEnd);
         }
+        mDataSize -= size;
         if (mWritePtr == mReadPtr) {
             mEvents.clearBits(kFlagHasData);
             mEvents.setBits(kFlagIsEmpty);
@@ -96,6 +98,7 @@ protected:
         } else {
             rbassert(mWritePtr < mBufEnd);
         }
+        mDataSize += size;
         EventBits_t bitsToClear = kFlagIsEmpty;
         if (mWritePtr == mReadPtr) {
             bitsToClear |= kFlagHasEmpty;
@@ -136,17 +139,28 @@ protected:
     }
     int totalDataAvail_nolock()
     {
+        int result;
         if (mReadPtr < mWritePtr) {
-            return mWritePtr - mReadPtr;
+            result = mWritePtr - mReadPtr;
         } else if (mReadPtr > mWritePtr) {
-            return (mBufEnd - mReadPtr) + (mWritePtr - mBuf);
+            result = (mBufEnd - mReadPtr) + (mWritePtr - mBuf);
         } else { // either empty or full
-            return (mEvents.get() & kFlagHasEmpty) ? 0 : (mBufEnd - mBuf);
+            result = (mEvents.get() & kFlagHasEmpty) ? 0 : (mBufEnd - mBuf);
         }
+        myassert(result == mDataSize);
+        return result;
     }
     int totalEmptySpace_nolock()
     {
-        return (mBufEnd - mBuf) - totalDataAvail();
+        return (mBufEnd - mBuf) - totalDataAvail_nolock();
+    }
+    void doClear()
+    {
+        mDataSize = 0;
+        mWritePtr = mReadPtr = mBuf;
+        mEvents.clearBits(0xff);
+        mEvents.setBits(kFlagHasEmpty|kFlagIsEmpty);
+        assert(mEvents.get() == (kFlagHasEmpty|kFlagIsEmpty));
     }
 public:
     // If user wants to keep some external state in sync with the ringbuffer,
@@ -160,9 +174,12 @@ public:
             return;
         }
         mBufEnd = mBuf + bufSize;
-        mWritePtr = mReadPtr = mBuf;
-        mEvents.setBits(kFlagHasEmpty|kFlagIsEmpty);
-        assert(mEvents.get() == (kFlagHasEmpty|kFlagIsEmpty));
+        doClear();
+    }
+    void clear()
+    {
+        MutexLocker locker(mMutex);
+        doClear();
     }
     int totalDataAvail()
     {
@@ -219,22 +236,19 @@ public:
      * @returns the amount of data in the returned buffer, 0 for timeout or -1 if stop
      * was signalled
      */
-    int contigRead(char*& buf, int sizeWanted, int msTimeout)
+    int contigRead(char*& buf, int maxSize, int msTimeout)
     {
         MutexLocker locker(mMutex);
-        auto maxPossible = maxPossibleContigReadSize();
-        if (sizeWanted > maxPossible) {
-            sizeWanted = maxPossible;
-        }
+        int avail;
         if (msTimeout < 0) {
-            while (availableForContigRead() < sizeWanted) {
+            while ((avail = availableForContigRead()) < 1) {
                 MutexUnlocker unlocker(mMutex);
                 if (waitFor(kFlagWriteOp, -1) <= 0) {
                     return -1;
                 }
             }
         } else {
-            while (availableForContigRead() < sizeWanted) {
+            while ((avail = availableForContigRead()) < 1) {
                 int64_t tsStart = esp_timer_get_time();
                 MutexUnlocker unlocker(mMutex);
                 int ret = waitFor(kFlagWriteOp, msTimeout);
@@ -248,7 +262,7 @@ public:
             }
         }
         buf = mReadPtr;
-        return sizeWanted;
+        return avail > maxSize ? maxSize : avail;
     }
     bool write(char* buf, int size)
     {
@@ -326,7 +340,26 @@ public:
     {
         return waitFor(kFlagIsEmpty, -1) >= 0;
     }
-
+    int8_t waitForMinData(int amount, int msTimeout)
+    {
+        MutexLocker locker(mMutex);
+        while (totalDataAvail() < amount) {
+            auto tsStart = esp_timer_get_time();
+            {
+                MutexUnlocker unlocker(mMutex);
+                if (waitFor(kFlagWriteOp, msTimeout) < 0) {
+                    return -1;
+                }
+            }
+            if (msTimeout > 0) {
+                msTimeout -= (esp_timer_get_time() - tsStart) / 1000;
+                if (msTimeout <= 0) {
+                    return totalDataAvail() >= amount ? 1 : 0;
+                }
+            }
+        }
+        return 1;
+    }
 };
 
 #endif

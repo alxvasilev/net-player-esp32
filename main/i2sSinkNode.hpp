@@ -4,21 +4,25 @@
 #include <string.h>
 #include "audioNode.hpp"
 
-class I2sSinkNode: public AudioNodeWithTask
+class I2sOutputNode: public AudioNodeWithTask
 {
 protected:
     i2s_port_t mPort;
     bool mUseInternalDac;
     StreamFormat mFormat;
-    enum { kDmaBufLen = 600, kDmaBufCnt = 3, kStackSize = 9000 };
+    int mReadTimeout;
+    enum { kDmaBufLen = 600, kDmaBufCnt = 3,
+           kStackSize = 9000, kDefaultSamplerate = 44100
+    };
     virtual void nodeThreadFunc();
     void adjustSamplesForInternalDac(char* sBuff, int len);
     void dmaFillWithSilence();
     bool setFormat(StreamFormat fmt);
-    virtual void doStop() { mTerminate = true; }
+    void recalcReadTimeout(int samplerate);
 public:
-    I2sSinkNode(const char* tag, int port, i2s_pin_config_t* pinCfg);
-    ~I2sSinkNode();
+    I2sOutputNode(int port, i2s_pin_config_t* pinCfg);
+    ~I2sOutputNode();
+    virtual Type type() const { return kTypeI2sOut; }
     virtual StreamError pullData(DataPullReq& dpr, int timeout) { return kTimeout; }
     virtual void confirmRead(int amount) {}
 };
