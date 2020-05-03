@@ -50,7 +50,7 @@ void I2sOutputNode::nodeThreadFunc()
 #endif
             if (err == kTimeout || err == kStreamFlush) {
                 ESP_LOGW(mTag, "Read timeout, sending silence");
-                dmaFillWithSilence();
+                i2s_zero_dma_buffer(mPort);
                 continue;
             } else if (err) {
                 i2s_zero_dma_buffer(mPort);
@@ -120,7 +120,7 @@ void I2sOutputNode::recalcReadTimeout(int samplerate)
 }
 
 I2sOutputNode::I2sOutputNode(int port, i2s_pin_config_t* pinCfg)
-:AudioNodeWithTask("i2s-out", kStackSize), mFormat(kDefaultSamplerate, 16, 2)
+:AudioNodeWithTask("i2s-out", kStackSize, 16), mFormat(kDefaultSamplerate, 16, 2)
 {
     if (port == 0xff) {
         mUseInternalDac = true;

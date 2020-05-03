@@ -8,7 +8,7 @@
 class AudioPlayer
 {
 public:
-    static constexpr int kHttpBufSize = 40 * 1024;
+    static constexpr int kHttpBufSize = 20 * 1024;
 protected:
     enum Flags: uint8_t
     { kFlagUseEqualizer = 1, kFlagListenerHooked = 2, kFlagNoWaitPrefill = 4 };

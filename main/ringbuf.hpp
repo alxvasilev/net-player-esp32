@@ -16,7 +16,10 @@ struct EventGroup
 {
     StaticEventGroup_t mEventStruct;
     EventGroupHandle_t mEventGroup;
-    EventGroup(): mEventGroup(xEventGroupCreateStatic(&mEventStruct)) {}
+    EventBits_t mNeverResetBit;
+    EventGroup(EventBits_t neverResetBit)
+    : mEventGroup(xEventGroupCreateStatic(&mEventStruct)),
+      mNeverResetBit(neverResetBit) {}
     EventBits_t get() const { return xEventGroupGetBits(mEventGroup); }
     void setBits(EventBits_t bit) { xEventGroupSetBits(mEventGroup, bit); }
     void clearBits(EventBits_t bit) { xEventGroupClearBits(mEventGroup, bit); }
@@ -25,6 +28,9 @@ struct EventGroup
     {
         auto ret = xEventGroupWaitBits(mEventGroup, waitBits, autoReset, all,
             (msTimeout < 0) ? portMAX_DELAY : (msTimeout / portTICK_PERIOD_MS));
+        if ((ret & mNeverResetBit) && autoReset) {
+            setBits(mNeverResetBit);
+        }
         return ret & waitBits;
     }
     EventBits_t waitForOneNoReset(EventBits_t waitBits, int msTimeout) {
@@ -167,7 +173,7 @@ public:
     // they can use the ringbuf's mutex to protect that state
     Mutex& mutex() { return mMutex; }
     RingBuf(size_t bufSize)
-    : mBuf((char*)malloc(bufSize))
+    : mBuf((char*)malloc(bufSize)), mEvents(kFlagStop)
     {
         if (!mBuf) {
             ESP_LOGE("RINGBUF", "Out of memory allocation %zu bytes", bufSize);
@@ -248,6 +254,7 @@ public:
                 }
             }
         } else {
+            auto timeoutSave = msTimeout;
             while ((avail = availableForContigRead()) < 1) {
                 int64_t tsStart = esp_timer_get_time();
                 MutexUnlocker unlocker(mMutex);
@@ -259,6 +266,7 @@ public:
                 if (msTimeout < 0) {
                     return 0;
                 }
+                ESP_LOGI("RB", "contigRead timeout decreased to %d, was %d", msTimeout, timeoutSave);
             }
         }
         buf = mReadPtr;
@@ -318,7 +326,6 @@ public:
     {
         MutexLocker locker(mMutex);
         doCommitContigRead(size);
-
     }
     void setStopSignal()
     {
@@ -332,34 +339,16 @@ public:
     {
         return ((mEvents.get() & kFlagHasData) != 0);
     }
-    bool waitForData()
+    int8_t waitForData(int msTimeout)
     {
-        return waitFor(kFlagHasData, -1) >= 0;
+        return waitFor(kFlagHasData, msTimeout);
     }
     bool waitForEmpty()
     {
         return waitFor(kFlagIsEmpty, -1) >= 0;
     }
-    int8_t waitForMinData(int amount, int msTimeout)
-    {
-        MutexLocker locker(mMutex);
-        while (totalDataAvail() < amount) {
-            auto tsStart = esp_timer_get_time();
-            {
-                MutexUnlocker unlocker(mMutex);
-                if (waitFor(kFlagWriteOp, msTimeout) < 0) {
-                    return -1;
-                }
-            }
-            if (msTimeout > 0) {
-                msTimeout -= (esp_timer_get_time() - tsStart) / 1000;
-                if (msTimeout <= 0) {
-                    return totalDataAvail() >= amount ? 1 : 0;
-                }
-            }
-        }
-        return 1;
-    }
+    int8_t waitForWriteOp(int msTimeout) { return waitAndReset(kFlagWriteOp, msTimeout); }
+    int8_t waitForReadOp(int msTimeout) { return waitAndReset(kFlagReadOp, msTimeout); }
 };
 
 #endif

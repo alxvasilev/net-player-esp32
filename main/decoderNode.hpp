@@ -39,7 +39,7 @@ protected:
     bool changeDecoder(esp_codec_type_t type);
 public:
     enum { kVolumeDiv = 64 };
-    DecoderNode(): AudioNode("dec-node", kFlagFixedRead){}
+    DecoderNode(): AudioNode("decoder"){}
     virtual Type type() const { return kTypeDecoder; }
     virtual StreamError pullData(DataPullReq& dpr, int timeout);
     virtual void confirmRead(int size) {}

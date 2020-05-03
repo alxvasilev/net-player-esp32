@@ -33,6 +33,7 @@ void AudioNodeWithTask::setState(State newState)
 
 bool AudioNodeWithTask::createAndStartTask()
 {
+    mEvents.clearBits(kEvtStopRequest);
     auto ret = xTaskCreate(sTaskFunc, mTag, mStackSize, this, mTaskPrio, &mTaskId);
     if (ret == pdPASS) {
         assert(mTaskId);
@@ -108,6 +109,7 @@ void AudioNodeWithTask::stop(bool wait)
         return;
     }
     mTerminate = true;
+    mEvents.setBits(kEvtStopRequest);
     doStop();
     if (wait) {
         waitForStop();

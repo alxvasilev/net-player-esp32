@@ -75,8 +75,6 @@ public:
 class AudioNode
 {
 public:
-    enum State: uint8_t { kStateStopped = 1, kStatePaused = 2,
-                          kStateRunning = 4, kStateLast = kStateRunning};
     enum EventType: uint16_t {
         kEventTypeMask = 0xff00,
         kDataEventType = 0x0100,
@@ -86,7 +84,11 @@ public:
         kEventStateChange = kStateEventType | 1,
         kEventData = kDataEventType | 2
     };
-    enum Flags: uint8_t { kFlagNone = 0, kFlagFixedRead = 1 };
+    // we put here the state definitions only because the class name is shorter than AudioNodeWithTask
+    enum State: uint8_t {
+        kStateStopped = 1, kStatePaused = 2,
+        kStateRunning = 4, kStateLast = kStateRunning
+    };
     // Static registry of all possible node types.
     // Ideally each node class should have a static singleton that should be
     // initialized at runtime with an autoincremented global that is a static member
@@ -117,31 +119,32 @@ protected:
     void* mUserp = nullptr;
     EventHandler* mEventHandler = nullptr;
     EventType mSubscribedEvents = kNoEvents;
-    Flags mFlags;
-    void setState(State newState);
-    AudioNode(const char* tag, Flags flags=kFlagNone)
-        : mTag(strdup(tag)), mFlags(flags) {}
+    AudioNode(const char* tag): mTag(tag) {}
 public:
     virtual Type type() const = 0;
     virtual ~AudioNode() {}
     void linkToPrev(AudioNode* prev) { mPrev = prev; }
-    Flags flags() const { return mFlags; }
     enum StreamError: int8_t {
         kNoError = 0,
         kTimeout = -1,
-        kFormatChange = -2,
-        kNeedMoreData = -3,
-        kStreamStopped = -4,
+        kStreamStopped = -2,
+        kFormatChange = -3,
+        kNeedMoreData = -4,
         kStreamFlush = - 5,
         kErrNoCodec = -6,
         kErrDecode = -7
     };
     struct DataPullReq
     {
-        char* buf = nullptr;
+        char* buf;
         int size;
         StreamFormat fmt;
-        DataPullReq(size_t aSize): size(aSize){}
+        DataPullReq(size_t aSize) { reset(aSize); }
+        void reset(size_t aSize)
+        {
+            size = aSize;
+            buf = nullptr;
+        }
     };
 
     // Upon return, buf is set to the internal buffer containing the data, and size is updated to the available data
@@ -154,6 +157,7 @@ public:
 
 class AudioNodeWithTask: public AudioNode
 {
+public:
 protected:
     struct Command
     {
@@ -164,10 +168,10 @@ protected:
     };
     enum: uint8_t { kCommandPause = 1, kCommandRun, kCommandLast = kCommandRun };
     enum { kDefaultPrio = 4 };
-    enum { kEventLockReleased = kStateLast << 1 };
+    enum { kEvtStopRequest = kStateLast << 1, kEvtLast = kEvtStopRequest };
     TaskHandle_t mTaskId = NULL;
     uint32_t mStackSize;
-    UBaseType_t mTaskPrio = kDefaultPrio;
+    UBaseType_t mTaskPrio;
     State mState = kStateStopped;
     EventGroup mEvents;
     volatile bool mTerminate = false;
@@ -185,8 +189,8 @@ protected:
     void processMessages();
     virtual bool dispatchCommand(Command& cmd);
 public:
-    AudioNodeWithTask(const char* tag, uint32_t stackSize, Flags flags=kFlagNone)
-    :AudioNode(tag, flags), mStackSize(stackSize)
+    AudioNodeWithTask(const char* tag, uint32_t stackSize, UBaseType_t prop=kDefaultPrio)
+    :AudioNode(tag), mStackSize(stackSize), mEvents(kEvtStopRequest)
     {
         mEvents.setBits(kStateStopped);
     }

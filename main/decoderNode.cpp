@@ -8,7 +8,9 @@ bool DecoderNode::createDecoder(esp_codec_type_t type)
         ESP_LOGI(mTag, "Created MP3 decoder");
         mDecoder = new DecoderMp3(mVolume);
         return true;
-    default: return false;
+    default:
+        ESP_LOGW(mTag, "No decoder for codec type %s", AudioNode::codecTypeToStr(type));
+        return false;
     }
 }
 
@@ -23,8 +25,16 @@ bool DecoderNode::changeDecoder(esp_codec_type_t type)
 
 AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp, int timeout)
 {
+    if (timeout < 0) {
+        timeout = 0x7fffffff;
+    }
     for (;;) {
+        if (timeout < 0) {
+            return kTimeout;
+        }
+        // get only stream format, no data, but wait for data to be available (so we know the stream format)
         DataPullReq idp(0);
+        ElapsedTimer tim;
         auto err = mPrev->pullData(idp, timeout);
         if (err) {
             if (err == kStreamFlush && mDecoder) {
@@ -33,8 +43,12 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp, int timeout)
             }
             return err;
         }
+        timeout -= tim.msElapsed();
+        if (timeout <= 0) {
+            return kTimeout;
+        }
         if (!mDecoder) {
-            ESP_LOGI(mTag, "No decoder, getting codec info from upstream node");
+            ESP_LOGI(mTag, "No decoder, creating one");
             createDecoder(idp.fmt.codec); // clears any remaining data from input buffer
             if (!mDecoder) {
                 return kErrNoCodec;
@@ -42,6 +56,7 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp, int timeout)
             mFormatChangeCtr = idp.fmt.ctr;
             continue;
         }
+        // handle format/stream change
         bool ctrChanged = idp.fmt.ctr != mFormatChangeCtr;
         bool codecChanged = idp.fmt.codec != mDecoder->type();
         if (ctrChanged || codecChanged) {
@@ -63,23 +78,23 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp, int timeout)
                 return kNoError;
             }
         }
-
+        // do actual stream read and decode
         int bytesNeeded = mDecoder->inputBytesNeeded();
-        idp.size = bytesNeeded;
-        idp.buf = nullptr;
-
+        int ret;
         if (bytesNeeded > 0) {
+            tim.reset();
+            idp.reset(bytesNeeded);
             auto err = mPrev->pullData(idp, timeout);
             if (err) {
                 return err;
             }
-            myassert(idp.size > 0);
-            myassert(idp.size <= bytesNeeded);
+            timeout -= tim.msElapsed();
             myassert(idp.fmt.codec == mDecoder->type());
+            ret = mDecoder->decode(idp.buf, idp.size);
+            mPrev->confirmRead(idp.size);
+        } else {
+            ret = mDecoder->decode(nullptr, 0);
         }
-
-        auto ret = mDecoder->decode(idp.buf, idp.size);
-        mPrev->confirmRead(idp.size);
         if (ret == kNeedMoreData) {
             ESP_LOGI(mTag, "Need more data, repeating");
             continue;

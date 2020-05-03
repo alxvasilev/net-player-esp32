@@ -224,6 +224,7 @@ public:
     int64_t usStartTime() const { return mTsStart; }
     int64_t usElapsed() const { return esp_timer_get_time() - mTsStart; }
     int msElapsed() const { return (usElapsed() + 500) / 1000; }
+    void reset() { mTsStart = esp_timer_get_time(); }
 };
 
 namespace std {

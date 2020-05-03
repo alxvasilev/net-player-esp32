@@ -124,13 +124,18 @@ bool HttpNode::connect(bool isReconnect)
 {
     myassert(mState != kStateStopped);
     if (!mUrl) {
-        ESP_LOGE(TAG, "open: URI has not been set");
+        ESP_LOGE(mTag, "connect: URL has not been set");
         return false;
     }
 
+    ESP_LOGI(mTag, "Connecting to '%s'...", mUrl);
     if (!isReconnect) {
-        ESP_LOGI(TAG, "Waiting for buffer to drain...");
+        ESP_LOGI(mTag, "connect: Waiting for buffer to drain...");
         // Wait till buffer is drained before changing format descriptor
+        if (mReadMode == kReadPrefill && mRingBuf.hasData()) {
+            ESP_LOGW(mTag, "Connect: Read state is kReadPrefill, but the buffer should be drained, allowing read");
+            setReadMode(kReadAllowed);
+        }
         bool ret = mRingBuf.waitForEmpty();
         if (!ret) {
             return false;
@@ -139,10 +144,9 @@ bool HttpNode::connect(bool isReconnect)
         mBytePos = 0;
     }
 
-    ESP_LOGI(TAG, "Opening URI '%s'", mUrl);
-    // if not initialize http client, initial it
     if (!mClient) {
         if (!createClient()) {
+            ESP_LOGE(mTag, "connect: Error creating http client");
             return false;
         }
     }
@@ -165,9 +169,7 @@ bool HttpNode::connect(bool isReconnect)
             ESP_LOGE(TAG, "Failed to open http stream, error %s", esp_err_to_name(err));
             return false;
         }
-        /*
-         * Due to the total byte of content has been changed after seek, set info.total_bytes at beginning only.
-         */
+
         int64_t contentLen = esp_http_client_fetch_headers(mClient);
         if (!mBytePos) {
             mBytesTotal = contentLen;
@@ -255,6 +257,11 @@ void HttpNode::destroyClient()
     mClient = NULL;
 }
 
+bool HttpNode::isConnected() const
+{
+    return mClient != nullptr;
+}
+
 bool HttpNode::nextTrack()
 {
     if (!mAutoNextTrack) {
@@ -296,6 +303,9 @@ void HttpNode::recv()
                 mRingBuf.commitWrite(rlen);
                 ESP_LOGI(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.totalDataAvail());
                 //TODO: Implement IceCast metadata support
+                if (mReadMode == kReadPrefill && mRingBuf.totalDataAvail() >= mPrefillAmount) {
+                    setReadMode(kReadAllowed);
+                }
                 return;
             }
             // even though len == 0 means graceful disconnect, i.e.
@@ -350,8 +360,11 @@ bool HttpNode::dispatchCommand(Command &cmd)
         doSetUrl((const char*)cmd.arg);
         free(cmd.arg);
         cmd.arg = nullptr;
-        mBufReadMode = kReadFlushReq;
+        setReadMode(kReadFlushReq);
         setState(kStateRunning);
+        break;
+    case kCommandNotifyFlushed:
+        setReadMode(kReadPrefill);
         break;
     default: return false;
     }
@@ -368,9 +381,11 @@ void HttpNode::nodeThreadFunc()
             return;
         }
         myassert(mState == kStateRunning);
-        if (!connect()) {
-            setState(kStatePaused);
-            continue;
+        if (!isConnected()) {
+            if (!connect()) {
+                setState(kStatePaused);
+                continue;
+            }
         }
         if (mIsWriter) {
             while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
@@ -403,28 +418,48 @@ HttpNode::HttpNode(size_t bufSize)
 
 AudioNode::StreamError HttpNode::pullData(DataPullReq& dp, int timeout)
 {
-    if (mBufReadMode == kReadFlushReq) {
-        mBufReadMode = kReadPrefill;
-        mRingBuf.clear();
-        ESP_LOGI(mTag, "Ring buffer flush requested, buffer cleared and prefill state set");
-        return kStreamFlush;
+    ElapsedTimer tim;
+    while (mReadMode != kReadAllowed) {
+        if (mReadMode == kReadFlushReq) {
+            mRingBuf.clear();
+            mCmdQueue.post(kCommandNotifyFlushed);
+            do {
+                auto ret = waitReadModeChange(-1); // should not take long
+                if (ret < 0) {
+                    return kStreamStopped;
+                }
+                myassert(ret != 0);
+            } while (mReadMode == kReadFlushReq);
+            ESP_LOGI(mTag, "Ring buffer flush requested, buffer cleared, read mode is %d", mReadMode);
+            return kStreamFlush;
+        } else if (mReadMode == kReadPrefill) {
+            auto ret = waitReadModeChange(timeout);
+            if (ret < 0) {
+                return kStreamStopped;
+            } else if (ret == 0) {
+                return kTimeout;
+            }
+        }
     }
-    if (mBufReadMode == kReadPrefill) {
-        ESP_LOGI(mTag, "Wait prefill");
-        auto ret = mRingBuf.waitForMinData(mPrefillAmount, timeout);
+    timeout -= tim.msElapsed();
+    if (timeout <= 0) {
+        return kTimeout;
+    }
+    if (!dp.size) { // caller only wants to get the stream format
+        auto ret = mRingBuf.waitForData(timeout);
         if (ret < 0) {
             return kStreamStopped;
         } else if (ret == 0) {
             return kTimeout;
-        } else {
-            mBufReadMode = kReadNormal;
         }
-    }
-    dp.fmt = mStreamFormat;
-    if (!dp.size) { // caller only wants to get the stream format
+        dp.fmt = mStreamFormat;
         return kNoError;
     }
+    tim.reset();
     auto ret = mRingBuf.contigRead(dp.buf, dp.size, timeout);
+    if (tim.msElapsed() > timeout) {
+        ESP_LOGW(mTag, "RingBuf read took more than timeout: took %d, timeout %d", tim.msElapsed(), timeout);
+    }
     if (ret < 0) {
         return kStreamStopped;
     } else if (ret == 0){
@@ -438,4 +473,22 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp, int timeout)
 void HttpNode::confirmRead(int size)
 {
     mRingBuf.commitContigRead(size);
+}
+
+void HttpNode::setReadMode(ReadMode mode)
+{
+    mReadMode = mode;
+    mEvents.setBits(kEvtReadModeChange);
+}
+
+int8_t HttpNode::waitReadModeChange(int msTimeout)
+{
+    auto bits = mEvents.waitForOneAndReset(kEvtReadModeChange|kEvtStopRequest, msTimeout);
+    if (bits & kEvtStopRequest) {
+        return -1;
+    } else if (bits & kEvtReadModeChange) {
+        return 1;
+    } else {
+        return 0;
+    }
 }
