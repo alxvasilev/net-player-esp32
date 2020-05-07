@@ -21,7 +21,7 @@ protected:
     std::unique_ptr<DecoderNode> mDecoder;
     std::unique_ptr<EqualizerNode> mEqualizer;
     std::unique_ptr<AudioNodeWithTask> mStreamOut;
-    IAudioVolume* mVolumeNode;
+    IAudioVolume* mVolumeInterface = nullptr;
     static const int mEqualizerDefaultGainTable[];
 
     void createInputA2dp();
@@ -48,7 +48,7 @@ public:
     int volumeGet();
     bool volumeSet(uint16_t vol);
     uint16_t volumeChange(int step);
-    int* equalizerDumpGains();
+    const float *equalizerDumpGains();
     bool equalizerSetBand(int band, int8_t dbGain);
     // format is: bandIdx1=gain1;bandIdx2=gain2....
     bool equalizerSetGainsBulk(char* str, size_t len);

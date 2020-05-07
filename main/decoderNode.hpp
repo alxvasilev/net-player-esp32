@@ -7,9 +7,7 @@ class Decoder
 {
 protected:
     StreamFormat mOutputFormat;
-    uint8_t& mVolume;
 public:
-    Decoder(uint8_t& vol): mVolume(vol){}
     virtual ~Decoder() {}
     virtual esp_codec_type_t type() const = 0;
     /** returns an approximate amount of data that should be provided until the next
@@ -28,26 +26,20 @@ public:
     StreamFormat outputFmt() const { return mOutputFormat; }
 };
 
-class DecoderNode: public AudioNode, public IAudioVolume
+class DecoderNode: public AudioNode
 {
 protected:
     enum { kInputBufSize = 3000 };
     Decoder* mDecoder = nullptr;
     bool mFormatChangeCtr;
-    uint8_t mVolume = kVolumeDiv; // 100% volume
     bool createDecoder(esp_codec_type_t type);
     bool changeDecoder(esp_codec_type_t type);
 public:
-    enum { kVolumeDiv = 64 };
     DecoderNode(): AudioNode("decoder"){}
     virtual Type type() const { return kTypeDecoder; }
-    virtual uint8_t flags() const { return kSupportsVolume; }
     virtual StreamError pullData(DataPullReq& dpr, int timeout);
     virtual void confirmRead(int size) {}
     virtual ~DecoderNode() {}
-    // volume interface
-    virtual uint16_t getVolume() const;
-    virtual void setVolume(uint16_t vol);
     friend class Decoder;
 };
 

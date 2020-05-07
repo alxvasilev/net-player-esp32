@@ -22,6 +22,16 @@ void I2sOutputNode::adjustSamplesForInternalDac(char* sBuff, int len)
     }
 }
 
+template <typename T>
+void I2sOutputNode::applyVolume(DataPullReq& dpr)
+{
+    T* pSample = (T*)dpr.buf;
+    T* end = pSample + dpr.size / sizeof(T);
+    for(; pSample < end; pSample++) {
+        *pSample = (static_cast<int64_t>(*pSample) * mVolume + kVolumeDiv / 2) / kVolumeDiv;
+    }
+}
+
 void I2sOutputNode::nodeThreadFunc()
 {
     for (;;) {
@@ -60,6 +70,11 @@ void I2sOutputNode::nodeThreadFunc()
             if (dpr.fmt != mFormat) {
                 setFormat(dpr.fmt);
             }
+
+            if (mVolume != kVolumeDiv) {
+                applyVolume<int16_t>(dpr);
+            }
+
             if (mUseInternalDac) {
                 adjustSamplesForInternalDac(dpr.buf, dpr.size);
             }
@@ -164,4 +179,15 @@ I2sOutputNode::I2sOutputNode(int port, i2s_pin_config_t* pinCfg)
 I2sOutputNode::~I2sOutputNode()
 {
     i2s_driver_uninstall(mPort);
+}
+
+uint16_t I2sOutputNode::getVolume() const
+{
+    return (mVolume * 100 + kVolumeDiv/2) / kVolumeDiv;
+}
+
+void I2sOutputNode::setVolume(uint16_t vol)
+{
+    mVolume = ((vol * kVolumeDiv + 50) / 100);
+    ESP_LOGW(mTag, "setVolume(%u) -> %u", vol, mVolume);
 }

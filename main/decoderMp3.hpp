@@ -24,7 +24,7 @@ protected:
     void logEncodingInfo();
 public:
     virtual esp_codec_type_t type() const { return ESP_CODEC_TYPE_MP3; }
-    DecoderMp3(uint8_t& vol);
+    DecoderMp3();
     ~DecoderMp3();
     virtual int inputBytesNeeded();
     virtual int decode(const char* buf, int size);

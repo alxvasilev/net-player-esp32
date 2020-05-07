@@ -6,7 +6,7 @@ bool DecoderNode::createDecoder(esp_codec_type_t type)
     switch (type) {
     case ESP_CODEC_TYPE_MP3:
         ESP_LOGI(mTag, "Created MP3 decoder");
-        mDecoder = new DecoderMp3(mVolume);
+        mDecoder = new DecoderMp3();
         return true;
     default:
         ESP_LOGW(mTag, "No decoder for codec type %s", AudioNode::codecTypeToStr(type));
@@ -107,13 +107,4 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp, int timeout)
         odp.fmt = mDecoder->outputFmt();
         return kNoError;
     }
-}
-uint16_t DecoderNode::getVolume() const
-{
-    return (mVolume * 100 + kVolumeDiv/2) / kVolumeDiv;
-}
-
-void DecoderNode::setVolume(uint16_t vol)
-{
-    mVolume = (vol * kVolumeDiv + 50) / 100;
 }

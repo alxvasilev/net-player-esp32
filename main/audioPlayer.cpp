@@ -148,12 +148,13 @@ void AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
 
 void AudioPlayer::detectVolumeNode() {
     for (AudioNode* node = mStreamOut.get(); node; node = node->prev()) {
-        if (node->flags() & AudioNode::kSupportsVolume) {
-            mVolumeNode = (IAudioVolume*)node;
+        mVolumeInterface = node->volumeInterface();
+        if (mVolumeInterface) {
+            ESP_LOGW(TAG, "Volume node found: '%s'", node->tag());
             return;
         }
     }
-    mVolumeNode = nullptr;
+    ESP_LOGE(TAG, "No node with volume interface found, volume control will be unavailable");
 }
 
 void AudioPlayer::destroyPipeline()
@@ -232,8 +233,8 @@ void AudioPlayer::stop()
 bool AudioPlayer::volumeSet(uint16_t vol)
 {
     LOCK_PLAYER();
-    if (mDecoder) {
-        static_cast<DecoderNode*>(mDecoder.get())->setVolume(vol);
+    if (mVolumeInterface) {
+        mVolumeInterface->setVolume(vol);
         return true;
     }
     return false;
@@ -242,8 +243,8 @@ bool AudioPlayer::volumeSet(uint16_t vol)
 int AudioPlayer::volumeGet()
 {
     LOCK_PLAYER();
-    if (mVolumeNode) {
-        return mVolumeNode->getVolume();
+    if (mVolumeInterface) {
+        return mVolumeInterface->getVolume();
     }
     return -1;
 }
@@ -305,13 +306,12 @@ bool AudioPlayer::equalizerSetGainsBulk(char* str, size_t len)
     return ok;
 }
 
-int* AudioPlayer::equalizerDumpGains()
+const float* AudioPlayer::equalizerDumpGains()
 {
-/*
-    equalizer_cfg_t cfg = DEFAULT_EQUALIZER_CONFIG();
-    return cfg.set_gain;
-*/
-    return nullptr;
+    if (!mEqualizer) {
+        return nullptr;
+    }
+    return mEqualizer->allGains();
 }
 
 AudioPlayer::~AudioPlayer()

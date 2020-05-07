@@ -73,6 +73,8 @@ public:
     operator bool() const { return toCode() != 0; }
 };
 
+class IAudioVolume;
+
 class AudioNode
 {
 public:
@@ -122,9 +124,8 @@ protected:
     EventType mSubscribedEvents = kNoEvents;
     AudioNode(const char* tag): mTag(tag) {}
 public:
-    enum Flags: uint8_t { kSupportsVolume = 1 };
     virtual Type type() const = 0;
-    virtual uint8_t flags() const { return 0; }
+    virtual IAudioVolume* volumeInterface() { return nullptr; }
     virtual ~AudioNode() {}
     void linkToPrev(AudioNode* prev) { mPrev = prev; }
     AudioNode* prev() const { return mPrev; }
@@ -136,7 +137,8 @@ public:
         kNeedMoreData = -4,
         kStreamFlush = - 5,
         kErrNoCodec = -6,
-        kErrDecode = -7
+        kErrDecode = -7,
+        kErrStreamFmt = -8
     };
     struct DataPullReq
     {

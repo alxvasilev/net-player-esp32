@@ -3,7 +3,7 @@
 
 const char* TAG = "mp3dec";
 
-DecoderMp3::DecoderMp3(uint8_t& vol): Decoder(vol)
+DecoderMp3::DecoderMp3()
 {
     initMadState();
 }
@@ -84,15 +84,8 @@ void DecoderMp3::logEncodingInfo()
         mMadFrame.header.bitrate);
 }
 
-static inline uint16_t scaleWithVolume(mad_fixed_t sample, uint8_t vol) {
+static inline uint16_t scale(mad_fixed_t sample) {
     auto isNeg = sample & 0x80000000;
-    if (vol != DecoderNode::kVolumeDiv) {
-        // we don't need integer division rounding, as we will discard the LSBs anyway
-        sample = (static_cast<int64_t>(sample) * vol) / DecoderNode::kVolumeDiv;
-        if (sample == 0) {
-            return 0;
-        }
-    }
     sample >>= (29 - 15);
     return isNeg ? (sample | 0x8000) : (sample & 0x7fff);
 }
@@ -117,11 +110,11 @@ int DecoderMp3::output(const mad_pcm& pcmData)
         auto right_ch = pcmData.samples[1];
         int n = 0;
         for (char* sbytes = mOutputBuf; n < nsamples; n++) {
-            uint16_t sample = scaleWithVolume(*left_ch++, mVolume);
+            uint16_t sample = scale(*left_ch++);
             *(sbytes++) = (sample & 0xff);
             *(sbytes++) = ((sample >> 8) & 0xff);
 
-            sample = scaleWithVolume(*right_ch++, mVolume);
+            sample = scale(*right_ch++);
             *(sbytes++) = (sample & 0xff);
             *(sbytes++) = ((sample >> 8) & 0xff);
         }
@@ -130,7 +123,7 @@ int DecoderMp3::output(const mad_pcm& pcmData)
         auto samples = pcmData.samples[0];
         int n = 0;
         for (char* sbytes = mOutputBuf; n < nsamples;) {
-            uint32_t sample = scaleWithVolume(*samples++, mVolume);
+            uint32_t sample = scale(*samples++);
             *(sbytes++) = (sample & 0xff);
             *(sbytes++) = ((sample >> 8) & 0xff);
         }

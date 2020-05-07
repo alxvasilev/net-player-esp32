@@ -211,7 +211,7 @@ extern "C" void app_main(void)
     ESP_LOGW("BT", "Free memory after releasing BLE memory: %d", xPortGetFreeHeapSize());
 
 // ====
-      player.reset(new AudioPlayer(AudioNode::kTypeHttpIn, AudioNode::kTypeI2sOut, false));
+      player.reset(new AudioPlayer(AudioNode::kTypeHttpIn, AudioNode::kTypeI2sOut));
       player->playUrl("https://mediaserv38.live-streams.nl:18030/stream");
 //  esp_periph_set_destroy(periphSet);
 }
@@ -402,7 +402,7 @@ static esp_err_t equalizerDumpUrlHandler(httpd_req_t *req)
     DynBuffer buf(240);
     buf.printf("{");
     for (int i = 0; i < 10; i++) {
-        buf.printf("[%d,%d],", player->equalizerFreqs[i], levels[i]);
+        buf.printf("[%d,%.2f],", player->equalizerFreqs[i], levels[i]);
     }
     buf[buf.size()-1] = '}';
     httpd_resp_send(req, buf.data(), buf.size());
