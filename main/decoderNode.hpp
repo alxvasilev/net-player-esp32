@@ -41,13 +41,13 @@ public:
     enum { kVolumeDiv = 64 };
     DecoderNode(): AudioNode("decoder"){}
     virtual Type type() const { return kTypeDecoder; }
+    virtual uint8_t flags() const { return kSupportsVolume; }
     virtual StreamError pullData(DataPullReq& dpr, int timeout);
     virtual void confirmRead(int size) {}
     virtual ~DecoderNode() {}
     // volume interface
-    virtual uint8_t getVolume() const;
-    virtual void setVolume(uint8_t vol);
-    virtual void fadeOut() {}
+    virtual uint16_t getVolume() const;
+    virtual void setVolume(uint16_t vol);
     friend class Decoder;
 };
 

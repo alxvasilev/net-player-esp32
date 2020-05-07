@@ -68,6 +68,7 @@ public:
     uint8_t bits() const { return decodeBitRes(mBits); }
     void setBits(uint8_t bits) { mBits = encodeBitRes(bits); }
     uint8_t channels() const { return nChannels + 1; }
+    bool isStereo() const { return nChannels != 0; }
     void setChannels(uint8_t ch) { nChannels = ch - 1; }
     operator bool() const { return toCode() != 0; }
 };
@@ -121,9 +122,12 @@ protected:
     EventType mSubscribedEvents = kNoEvents;
     AudioNode(const char* tag): mTag(tag) {}
 public:
+    enum Flags: uint8_t { kSupportsVolume = 1 };
     virtual Type type() const = 0;
+    virtual uint8_t flags() const { return 0; }
     virtual ~AudioNode() {}
     void linkToPrev(AudioNode* prev) { mPrev = prev; }
+    AudioNode* prev() const { return mPrev; }
     enum StreamError: int8_t {
         kNoError = 0,
         kTimeout = -1,
@@ -203,14 +207,21 @@ public:
     void waitForStop();
 };
 
+/* Interface for setting and getting volume of an audio node. If implemented,
+ * flags() should have the kHasVolume bit set.
+ * IMPORTANT: This interface class should have no members, because it is
+ * used in multple inheritance and AudioNode is cast to IAudioVolume based
+ * on the presence of kHasVolume bit in flags(). This cast will not work correctly
+ * if IAudioVolume is not a pure virtual class, because the this pointers will
+ * differ in the multiple inheritance
+ */
 class IAudioVolume
 {
 public:
     // volume is in percent of original.
     // 0-99% attenuates, 101-400% amplifies
-    virtual uint8_t getVolume() const = 0;
-    virtual void setVolume(uint8_t vol) = 0;
-    virtual void fadeOut() = 0;
+    virtual uint16_t getVolume() const = 0;
+    virtual void setVolume(uint16_t vol) = 0;
 };
 
 #endif

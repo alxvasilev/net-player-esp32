@@ -211,7 +211,7 @@ extern "C" void app_main(void)
     ESP_LOGW("BT", "Free memory after releasing BLE memory: %d", xPortGetFreeHeapSize());
 
 // ====
-      player.reset(new AudioPlayer(AudioNode::kTypeHttpIn, AudioNode::kTypeI2sOut));
+      player.reset(new AudioPlayer(AudioNode::kTypeHttpIn, AudioNode::kTypeI2sOut, false));
       player->playUrl("https://mediaserv38.live-streams.nl:18030/stream");
 //  esp_periph_set_destroy(periphSet);
 }

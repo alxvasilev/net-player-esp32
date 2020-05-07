@@ -108,12 +108,12 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp, int timeout)
         return kNoError;
     }
 }
-uint8_t DecoderNode::getVolume() const
+uint16_t DecoderNode::getVolume() const
 {
-    return mVolume;
+    return (mVolume * 100 + kVolumeDiv/2) / kVolumeDiv;
 }
 
-void DecoderNode::setVolume(uint8_t vol)
+void DecoderNode::setVolume(uint16_t vol)
 {
-    mVolume = vol;
+    mVolume = (vol * kVolumeDiv + 50) / 100;
 }

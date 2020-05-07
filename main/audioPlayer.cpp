@@ -17,6 +17,7 @@
 #include "httpNode.hpp"
 #include "i2sSinkNode.hpp"
 #include "decoderNode.hpp"
+#include "equalizerNode.hpp"
 
 constexpr int AudioPlayer::mEqualizerDefaultGainTable[] = {
     8, 8, 7, 4, 2, 0, 0, 2, 4, 6,
@@ -125,11 +126,9 @@ void AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         myassert(false);
     }
     if (mFlags & kFlagUseEqualizer) {
-/*
         mEqualizer.reset(new EqualizerNode);
         mEqualizer->linkToPrev(pcmSource);
         pcmSource = mEqualizer.get();
-*/
     }
     switch(outType) {
     case AudioNode::kTypeI2sOut:
@@ -144,6 +143,17 @@ void AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         myassert(false);
     }
     mStreamOut->linkToPrev(pcmSource);
+    detectVolumeNode();
+}
+
+void AudioPlayer::detectVolumeNode() {
+    for (AudioNode* node = mStreamOut.get(); node; node = node->prev()) {
+        if (node->flags() & AudioNode::kSupportsVolume) {
+            mVolumeNode = (IAudioVolume*)node;
+            return;
+        }
+    }
+    mVolumeNode = nullptr;
 }
 
 void AudioPlayer::destroyPipeline()
@@ -232,26 +242,26 @@ bool AudioPlayer::volumeSet(uint16_t vol)
 int AudioPlayer::volumeGet()
 {
     LOCK_PLAYER();
-    if (mDecoder) {
-        return static_cast<DecoderNode*>(mDecoder.get())->getVolume();
+    if (mVolumeNode) {
+        return mVolumeNode->getVolume();
     }
     return -1;
 }
 
-int AudioPlayer::volumeChange(int step)
+uint16_t AudioPlayer::volumeChange(int step)
 {
     LOCK_PLAYER();
-    int currVol = volumeGet();
+    auto currVol = volumeGet();
     if (currVol < 0) {
         return currVol;
     }
-    int newVol = currVol + step;
+    double newVol = currVol + step;
     if (newVol < 0) {
         newVol = 0;
     } else if (newVol > 255) {
         newVol = 255;
     }
-    if (newVol != currVol) {
+    if (fabs(newVol - currVol) > 0.01) {
         if (!volumeSet(newVol)) {
             return -1;
         }
@@ -259,21 +269,18 @@ int AudioPlayer::volumeChange(int step)
     return newVol;
 }
 
-bool AudioPlayer::equalizerSetBand(int band, int level)
+bool AudioPlayer::equalizerSetBand(int band, int8_t dbGain)
 {
-/*
     LOCK_PLAYER();
     if (!mEqualizer) {
         return false;
     }
-    return equalizer_set_gain_info(mEqualizer, band, level, 1) == ESP_OK;
-*/
+    mEqualizer->setBandGain(band, dbGain);
     return true;
 }
 
 bool AudioPlayer::equalizerSetGainsBulk(char* str, size_t len)
 {
-/*
     LOCK_PLAYER();
     KeyValParser vals(str, len);
     vals.parse(';', '=', KeyValParser::kTrimSpaces);
@@ -284,14 +291,18 @@ bool AudioPlayer::equalizerSetGainsBulk(char* str, size_t len)
             ok = false;
         }
         int gain = kv.val.toInt(0xff);
-        if (gain < 50 || gain > 50) {
+        if (gain == 0xff) {
             ok = false;
+            continue;
         }
-        ok &= (equalizer_set_gain_info(mEqualizer, band, gain, 1) != ESP_OK);
+        if (gain < -50) {
+            gain = -50;
+        } else if (gain > 50) {
+            gain = 50;
+        }
+        mEqualizer->setBandGain(band, gain);
     }
     return ok;
-*/
-    return true;
 }
 
 int* AudioPlayer::equalizerDumpGains()
