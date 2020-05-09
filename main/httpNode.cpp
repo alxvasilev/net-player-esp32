@@ -54,18 +54,6 @@ esp_codec_type_t HttpNode::codecFromContentType(const char* content_type)
     return ESP_CODEC_TYPE_UNKNOW;
 }
 
-bool HttpNode::sendEvent(uint16_t type, void* buf, int bufSize)
-{
-    if (!mEventHandler || ((type & mSubscribedEvents) == 0)) {
-        return true;
-    }
-    auto ret = mEventHandler->onEvent(this, type, buf, bufSize);
-    if (!ret) {
-        ESP_LOGW(mTag, "User event handler returned false for event %d", type);
-    }
-    return ret;
-}
-
 bool HttpNode::isPlaylist()
 {
     auto codec = mStreamFormat.codec;
@@ -156,9 +144,7 @@ bool HttpNode::connect(bool isReconnect)
         snprintf(rang_header, 32, "bytes=%lld-", mBytePos);
         esp_http_client_set_header(mClient, "Range", rang_header);
     }
-    if (!sendEvent(kEventOnRequest, mClient, 0)) {
-        return false;
-    }
+    sendEvent(kEventOnRequest, mClient, 0);
 
     if (mIsWriter) {
         return esp_http_client_open(mClient, -1); // -1 for content length means chunked encoding

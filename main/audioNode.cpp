@@ -20,7 +20,7 @@
 #include "playlist.hpp"
 #include "audioNode.hpp"
 
-void AudioNodeWithTask::setState(State newState)
+void AudioNodeWithState::setState(State newState)
 {
     if (newState == mState) {
         return;
@@ -54,15 +54,23 @@ void AudioNodeWithTask::sTaskFunc(void* ctx)
     vTaskDelete(nullptr);
 }
 
-bool AudioNodeWithTask::run()
+bool AudioNodeWithState::run()
 {
-    auto flags = mEvents.get();
-    if (flags & kStateRunning) {
+    if (mEvents.get() & kStateRunning) {
         ESP_LOGW(mTag, "Node already running");
         return true;
     }
-    if (flags & kStateStopped) {
-        mMutex.lock(); // wait for task termination
+    if (!doRun()) {
+        return false;
+    }
+    waitForState(kStateRunning);
+    return true;
+}
+
+bool AudioNodeWithTask::doRun()
+{
+    if (mEvents.get() & kStateStopped) {
+        mMutex.lock(); // wait for task cleanup
         mMutex.unlock();
         myassert(!mTaskId);
         if (!createAndStartTask()) {
@@ -72,11 +80,10 @@ bool AudioNodeWithTask::run()
     }
     waitForState(kStatePaused);
     mCmdQueue.post(kCommandRun);
-    waitForState(kStateRunning);
     return true;
 }
 
-void AudioNodeWithTask::pause(bool wait)
+void AudioNodeWithState::pause(bool wait)
 {
     auto state = mState;
     if (state == kStateStopped) {
@@ -85,24 +92,24 @@ void AudioNodeWithTask::pause(bool wait)
     } else if (state == kStatePaused) {
         return;
     } else {
-        mCmdQueue.post(kCommandPause);
+        doPause();
         if (wait) {
             waitForState(kStatePaused);
         }
     }
 }
 
-AudioNodeWithTask::State AudioNodeWithTask::waitForState(unsigned state)
+AudioNodeWithState::State AudioNodeWithState::waitForState(unsigned state)
 {
     return (State)mEvents.waitForOneNoReset(state, -1);
 }
 
-void AudioNodeWithTask::waitForStop()
+void AudioNodeWithState::waitForStop()
 {
     waitForState(kStateStopped);
 }
 
-void AudioNodeWithTask::stop(bool wait)
+void AudioNodeWithState::stop(bool wait)
 {
     if (mState == kStateStopped) {
         ESP_LOGI(mTag, "stop: Already stopped");

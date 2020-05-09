@@ -79,13 +79,9 @@ class AudioNode
 {
 public:
     enum EventType: uint16_t {
-        kEventTypeMask = 0xff00,
-        kDataEventType = 0x0100,
-        kStateEventType = 0x0200,
-        kUserEventTypeBase = 0x0800,
-        kNoEvents = 0,
-        kEventStateChange = kStateEventType | 1,
-        kEventData = kDataEventType | 2
+        kEventStateChange = 1,
+        kEventData = 2,
+        kEventLastGeneric = 15
     };
     // we put here the state definitions only because the class name is shorter than AudioNodeWithTask
     enum State: uint8_t {
@@ -121,7 +117,7 @@ protected:
     int64_t mBytePos = 0;
     void* mUserp = nullptr;
     EventHandler* mEventHandler = nullptr;
-    EventType mSubscribedEvents = kNoEvents;
+    inline void sendEvent(uint16_t type, void* buf=nullptr, int bufSize=0);
     AudioNode(const char* tag): mTag(tag) {}
 public:
     virtual Type type() const = 0;
@@ -159,9 +155,44 @@ public:
     virtual StreamError pullData(DataPullReq& dpr, int timeout) = 0;
     virtual void confirmRead(int amount) = 0;
     static const char* codecTypeToStr(esp_codec_type_t type);
+    static StreamError threeStateStreamError(int ret) {
+        if (ret > 0) {
+            return kNoError;
+        }
+        else if (ret == 0) {
+            return kTimeout;
+        }
+        else {
+            return kStreamStopped;
+        }
+    }
 };
 
-class AudioNodeWithTask: public AudioNode
+class AudioNodeWithState: public AudioNode
+{
+protected:
+    State mState = kStateStopped;
+    volatile bool mTerminate = false;
+    EventGroup mEvents;
+    enum { kEvtStopRequest = kStateLast << 1, kEvtLast = kEvtStopRequest };
+    void setState(State newState);
+    virtual void doStop() { setState(kStateStopped); } // node-specific stop code goes here. Guaranteed to be called with mState != kStateStopped
+    virtual void doPause() { setState(kStatePaused); }
+    virtual bool doRun() { setState(kStateRunning); return true; }
+public:
+    AudioNodeWithState(const char* tag): AudioNode(tag), mEvents(kEvtStopRequest)
+    {
+        mEvents.setBits(kStateStopped);
+    }
+    State state() const { return mState; }
+    State waitForState(unsigned state);
+    void pause(bool wait=true);
+    void stop(bool wait=true);
+    bool run();
+    void waitForStop();
+};
+
+class AudioNodeWithTask: public AudioNodeWithState
 {
 public:
 protected:
@@ -174,16 +205,10 @@ protected:
     };
     enum: uint8_t { kCommandPause = 1, kCommandRun, kCommandLast = kCommandRun };
     enum { kDefaultPrio = 4 };
-    enum { kEvtStopRequest = kStateLast << 1, kEvtLast = kEvtStopRequest };
     TaskHandle_t mTaskId = NULL;
     uint32_t mStackSize;
     UBaseType_t mTaskPrio;
-    State mState = kStateStopped;
-    EventGroup mEvents;
-    volatile bool mTerminate = false;
     Queue<Command, 4> mCmdQueue;
-    void setState(State newState);
-    bool waitForRun();
     static void sTaskFunc(void* ctx);
     bool createAndStartTask();
     // This is the node's task function.
@@ -191,22 +216,15 @@ protected:
     // kStatePaused before it is called. After it returns, the node's state
     // is set to kStateStopped
     virtual void nodeThreadFunc() = 0;
-    virtual void doStop() {} // node-specific stop code goes here. Guaranteed to be called with mState != kStateStopped
     void processMessages();
     virtual bool dispatchCommand(Command& cmd);
+    virtual void doPause() override { mCmdQueue.post(kCommandPause); }
+    virtual bool doRun() override;
 public:
     AudioNodeWithTask(const char* tag, uint32_t stackSize, UBaseType_t prop=kDefaultPrio)
-    :AudioNode(tag), mStackSize(stackSize), mEvents(kEvtStopRequest)
-    {
-        mEvents.setBits(kStateStopped);
-    }
-    State state() const { return mState; }
-    State waitForState(unsigned state);
+    :AudioNodeWithState(tag), mStackSize(stackSize)
+    {}
     void setPriority(UBaseType_t prio) { mTaskPrio = prio; }
-    bool run();
-    void pause(bool wait=true);
-    void stop(bool wait=true);
-    void waitForStop();
 };
 
 /* Interface for setting and getting volume of an audio node. If implemented,
@@ -226,4 +244,11 @@ public:
     virtual void setVolume(uint16_t vol) = 0;
 };
 
+inline void AudioNode::sendEvent(uint16_t type, void *buf, int bufSize)
+{
+    if (!mEventHandler) {
+        return;
+    }
+    mEventHandler->onEvent(this, type, buf, bufSize);
+}
 #endif

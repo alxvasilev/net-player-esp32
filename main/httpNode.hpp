@@ -26,10 +26,10 @@ protected:
     enum { kPollTimeoutMs = 1000, kClientBufSize = 512, kReadSize = 1024,
            kStackSize = 3600 };
     enum: uint16_t {
-        kHttpEventType = kUserEventTypeBase << 1,
-        kEventOnRequest = 1 | kHttpEventType,
-        kEventNewTrack = 2 | kHttpEventType,
-        kEventNoMoreTracks = 3 | kHttpEventType
+        kHttpEventType = kEventLastGeneric + 1,
+        kEventOnRequest,
+        kEventNewTrack,
+        kEventNoMoreTracks
     };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1,
                     kCommandNotifyFlushed };
@@ -51,7 +51,6 @@ protected:
     int mRecvSize = 2048;
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     static esp_codec_type_t codecFromContentType(const char* content_type);
-    bool sendEvent(uint16_t type, void* buffer, int bufSize);
     bool isPlaylist();
     bool createClient();
     bool parseContentType();

@@ -18,6 +18,7 @@
 #include "i2sSinkNode.hpp"
 #include "decoderNode.hpp"
 #include "equalizerNode.hpp"
+#include "a2dpInputNode.hpp"
 
 constexpr int AudioPlayer::mEqualizerDefaultGainTable[] = {
     8, 8, 7, 4, 2, 0, 0, 2, 4, 6,
@@ -30,50 +31,6 @@ const uint16_t AudioPlayer::equalizerFreqs[10] = {
 };
 
 #define LOCK_PLAYER() MutexLocker locker(mutex)
-
-void AudioPlayer::createInputA2dp()
-{
-    assert(!mStreamIn);
-    static constexpr const char* BT = "BT";
-    ESP_LOGI(BT, "Init Bluetooth");
-    ESP_LOGW(BT, "Free memory before releasing BLE memory: %d", xPortGetFreeHeapSize());
-    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
-    ESP_LOGW(BT, "Free memory after releasing BLE memory: %d", xPortGetFreeHeapSize());
-
-    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_bt_controller_init(&bt_cfg));
-    ESP_ERROR_CHECK(esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT));
-    ESP_ERROR_CHECK(esp_bluedroid_init());
-    ESP_ERROR_CHECK(esp_bluedroid_enable());
-    ESP_LOGW(BT, "Free memory after enable bluedroid: %d", xPortGetFreeHeapSize());
-
-    esp_bt_dev_set_device_name("NetPlayer");
-
-    esp_bt_gap_set_scan_mode(ESP_BT_SCAN_MODE_CONNECTABLE_DISCOVERABLE);
-    ESP_LOGI(BT, "Get Bluetooth stream");
-    a2dp_stream_config_t cfg = {
-        .type = AUDIO_STREAM_READER,
-        .user_callback = {
-            .user_a2d_cb = [](esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param) {
-                ESP_LOGI(BT, "A2DP stream event %d", event);
-            },
-            .user_a2d_sink_data_cb = [](const uint8_t *buf, uint32_t len) {
-                //static uint8_t ctr = 0;
-                //gpio_set_level(kPinLed, (++ctr) & 1);
-            },
-            nullptr
-        }
-    };
-/*
-    Commented out because this doesnt compile anymore
-    mStreamIn = a2dp_stream_init(&cfg);
-    assert(mStreamIn);
-    audio_element_set_event_callback(mStreamIn, inputFormatEventCb, this);
-*/
-    ESP_LOGI(BT, "Create and start Bluetooth peripheral");
-    auto bt_periph = bt_create_periph();
-    ESP_ERROR_CHECK(esp_periph_start(mPeriphSet, bt_periph));
-}
 
 void AudioPlayer::createOutputA2dp()
 {
@@ -95,10 +52,6 @@ void AudioPlayer::createOutputA2dp()
     binToHex(addr, 6, strAddr);
     ESP_LOGW("BT", "Own BT MAC: '%s'", strAddr);
 //  Move this to execute only once
-    ESP_LOGI(TAG, "\tCreating and starting Bluetooth peripheral");
-    esp_periph_handle_t btPeriph = bluetooth_service_create_periph();
-    assert(btPeriph);
-    ESP_ERROR_CHECK(esp_periph_start(mPeriphSet, btPeriph));
 }
 
 AudioPlayer::AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, bool useEq)
@@ -118,7 +71,7 @@ void AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         pcmSource = mDecoder.get();
         break;
     case AudioNode::kTypeA2dpIn:
-        createInputA2dp();
+        mStreamIn.reset(new A2dpInputNode("NetPlayer"));
         mDecoder.reset();
         pcmSource = mStreamIn.get();
         break;

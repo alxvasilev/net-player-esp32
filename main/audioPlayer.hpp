@@ -15,9 +15,8 @@ protected:
     enum Flags: uint8_t
     { kFlagUseEqualizer = 1, kFlagListenerHooked = 2, kFlagNoWaitPrefill = 4 };
 
-    esp_periph_set_handle_t mPeriphSet;
     Flags mFlags;
-    std::unique_ptr<AudioNodeWithTask> mStreamIn;
+    std::unique_ptr<AudioNodeWithState> mStreamIn;
     std::unique_ptr<DecoderNode> mDecoder;
     std::unique_ptr<EqualizerNode> mEqualizer;
     std::unique_ptr<AudioNodeWithTask> mStreamOut;

@@ -7,42 +7,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "freertos/event_groups.h"
 #include "esp_log.h"
 #include "utils.hpp"
+#include "eventGroup.hpp"
+
 #define rbassert myassert
-
-struct EventGroup
-{
-    StaticEventGroup_t mEventStruct;
-    EventGroupHandle_t mEventGroup;
-    EventBits_t mNeverResetBit;
-    EventGroup(EventBits_t neverResetBit)
-    : mEventGroup(xEventGroupCreateStatic(&mEventStruct)),
-      mNeverResetBit(neverResetBit) {}
-    EventBits_t get() const { return xEventGroupGetBits(mEventGroup); }
-    void setBits(EventBits_t bit) { xEventGroupSetBits(mEventGroup, bit); }
-    void clearBits(EventBits_t bit) { xEventGroupClearBits(mEventGroup, bit); }
-
-    EventBits_t wait(EventBits_t waitBits, BaseType_t all, BaseType_t autoReset, int msTimeout)
-    {
-        auto ret = xEventGroupWaitBits(mEventGroup, waitBits, autoReset, all,
-            (msTimeout < 0) ? portMAX_DELAY : (msTimeout / portTICK_PERIOD_MS));
-        if ((ret & mNeverResetBit) && autoReset) {
-            setBits(mNeverResetBit);
-        }
-        return ret & waitBits;
-    }
-    EventBits_t waitForOneNoReset(EventBits_t waitBits, int msTimeout) {
-        return wait(waitBits, pdFALSE, pdFALSE, msTimeout);
-    }
-    EventBits_t waitForAllNoReset(EventBits_t waitBits, int msTimeout) {
-        return wait(waitBits, pdTRUE, pdFALSE, msTimeout);
-    }
-    EventBits_t waitForOneAndReset(EventBits_t waitBits, int msTimeout) {
-        return wait(waitBits, pdFALSE, pdTRUE, msTimeout);
-    }
-};
 
 class RingBuf
 {
@@ -254,7 +223,6 @@ public:
                 }
             }
         } else {
-            auto timeoutSave = msTimeout;
             while ((avail = availableForContigRead()) < 1) {
                 int64_t tsStart = esp_timer_get_time();
                 MutexUnlocker unlocker(mMutex);
@@ -266,7 +234,6 @@ public:
                 if (msTimeout < 0) {
                     return 0;
                 }
-                ESP_LOGI("RB", "contigRead timeout decreased to %d, was %d", msTimeout, timeoutSave);
             }
         }
         buf = mReadPtr;

@@ -6,19 +6,11 @@
 #include <driver/gpio.h>
 #include <esp_wifi.h>
 #include <nvs_flash.h>
-#include "esp_peripherals.h"
-#include "periph_wifi.h"
-#include "bluetooth_service.h"
 #include <esp_ota_ops.h>
-#include "board.h"
 #include <esp_event_loop.h>
 #include <esp_log.h>
 #include <esp_system.h>
 #include <esp_http_server.h>
-#include <esp_bt_device.h>
-#include <esp_bt.h>
-#include <esp_bt_main.h>
-#include <esp_gap_bt_api.h>
 #include <esp_spiffs.h>
 #include <sys/param.h>
 #include <string>
@@ -29,9 +21,8 @@
 #include "httpFile.hpp"
 #include "ota.hpp"
 #include "audioPlayer.hpp"
-#include "httpNode.hpp"
-#include "decoderNode.hpp"
-#include "i2sSinkNode.hpp"
+#include "wifi.hpp"
+#include "bluetooth.hpp"
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
@@ -53,12 +44,11 @@ static const char* kStreamUrls[] = {
 
 httpd_handle_t gHttpServer = nullptr;
 std::unique_ptr<AudioPlayer> player;
+WifiClient wifiClient;
 
 void reconfigDhcpServer();
 void startWifiSoftAp();
 void startWebserver(bool isAp=false);
-
-esp_periph_set_handle_t periphSet;
 
 const char* getNextStreamUrl() {
     static int currStreamIdx = -1;
@@ -185,35 +175,33 @@ extern "C" void app_main(void)
         return;
     }
 //== WIFI
-    esp_periph_config_t periph_cfg = DEFAULT_ESP_PERIPH_SET_CONFIG();
-    periphSet = esp_periph_set_init(&periph_cfg);
-
-    ESP_LOGI(TAG, "Start and wait for Wi-Fi network");
-    periph_wifi_cfg_t wifi_cfg;
-    memset(&wifi_cfg, 0, sizeof(wifi_cfg));
-    wifi_cfg.ssid = CONFIG_WIFI_SSID;
-    wifi_cfg.password = CONFIG_WIFI_PASSWORD;
-    esp_periph_handle_t wifi_handle = periph_wifi_init(&wifi_cfg);
-    esp_periph_start(periphSet, wifi_handle);
-    periph_wifi_wait_for_connected(wifi_handle, portMAX_DELAY);
+    wifiClient.start(CONFIG_WIFI_SSID, CONFIG_WIFI_PASSWORD);
+    wifiClient.waitForConnect(-1);
 //====
 
     startWebserver();
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
-
-    ESP_LOGW("BT", "Free memory before releasing BLE memory: %d", xPortGetFreeHeapSize());
-    esp_bluedroid_disable();
-    esp_bluedroid_deinit();
-    esp_bt_controller_disable();
-    esp_bt_controller_deinit();
-    esp_bt_mem_release(ESP_BT_MODE_BTDM);
-    ESP_LOGW("BT", "Free memory after releasing BLE memory: %d", xPortGetFreeHeapSize());
-
 // ====
-      player.reset(new AudioPlayer(AudioNode::kTypeHttpIn, AudioNode::kTypeI2sOut));
-      player->playUrl("https://mediaserv38.live-streams.nl:18030/stream");
-//  esp_periph_set_destroy(periphSet);
+/*
+    auto before = xPortGetFreeHeapSize();
+    BluetoothStack::disableCompletely();
+    ESP_LOGW(TAG, "Releasing Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
+
+    player.reset(new AudioPlayer(AudioNode::kTypeHttpIn, AudioNode::kTypeI2sOut));
+    player->playUrl("https://mediaserv38.live-streams.nl:18030/stream");
+*/
+    wifi_country_t country;
+    esp_wifi_get_country(&country);
+    ESP_LOGW(TAG, "Current WiFi country: ccode: '%.3s', startChan: %d, nChans: %d, maxTx: %d, policy: %d",
+        country.cc,
+        country.schan, country.nchan,
+        country.max_tx_power, (int)country.policy);
+
+    player.reset(new AudioPlayer(AudioNode::kTypeA2dpIn, AudioNode::kTypeI2sOut));
+    player->play();
+
+    ESP_LOGI(TAG, "player started");
 }
 
 std::string getTaskStats()
