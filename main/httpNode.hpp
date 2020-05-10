@@ -12,7 +12,6 @@
 #include "errno.h"
 #include "esp_system.h"
 #include <esp_http_client.h>
-#include <audio_type_def.h>
 #include <strings.h>
 #include "ringbuf.hpp"
 #include "queue.hpp"
@@ -50,7 +49,7 @@ protected:
     int64_t mBytesTotal;
     int mRecvSize = 2048;
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
-    static esp_codec_type_t codecFromContentType(const char* content_type);
+    static CodecType codecFromContentType(const char* content_type);
     bool isPlaylist();
     bool createClient();
     bool parseContentType();

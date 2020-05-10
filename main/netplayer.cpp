@@ -183,24 +183,24 @@ extern "C" void app_main(void)
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
 // ====
-/*
+#if 1
     auto before = xPortGetFreeHeapSize();
     BluetoothStack::disableCompletely();
     ESP_LOGW(TAG, "Releasing Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
 
     player.reset(new AudioPlayer(AudioNode::kTypeHttpIn, AudioNode::kTypeI2sOut));
     player->playUrl("https://mediaserv38.live-streams.nl:18030/stream");
-*/
+
     wifi_country_t country;
     esp_wifi_get_country(&country);
     ESP_LOGW(TAG, "Current WiFi country: ccode: '%.3s', startChan: %d, nChans: %d, maxTx: %d, policy: %d",
         country.cc,
         country.schan, country.nchan,
         country.max_tx_power, (int)country.policy);
-
+#else
     player.reset(new AudioPlayer(AudioNode::kTypeA2dpIn, AudioNode::kTypeI2sOut));
     player->play();
-
+#endif
     ESP_LOGI(TAG, "player started");
 }
 

@@ -9,7 +9,7 @@ protected:
     StreamFormat mOutputFormat;
 public:
     virtual ~Decoder() {}
-    virtual esp_codec_type_t type() const = 0;
+    virtual CodecType type() const = 0;
     /** returns an approximate amount of data that should be provided until the next
      * decode has enough data to complete. May be negative in case the data in the buffer
      * is more than enough
@@ -32,8 +32,8 @@ protected:
     enum { kInputBufSize = 3000 };
     Decoder* mDecoder = nullptr;
     bool mFormatChangeCtr;
-    bool createDecoder(esp_codec_type_t type);
-    bool changeDecoder(esp_codec_type_t type);
+    bool createDecoder(CodecType type);
+    bool changeDecoder(CodecType type);
 public:
     DecoderNode(): AudioNode("decoder"){}
     virtual Type type() const { return kTypeDecoder; }

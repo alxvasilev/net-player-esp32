@@ -15,12 +15,24 @@
 #include "errno.h"
 #include "esp_system.h"
 #include <esp_http_client.h>
-#include <audio_type_def.h>
 #include <strings.h>
 #include "ringbuf.hpp"
 #include "queue.hpp"
 #include "utils.hpp"
 #include "playlist.hpp"
+enum CodecType: uint8_t {
+    kCodecUnknown = 0,
+    kCodecMp3,
+    kCodecAac,
+    kCodecOgg,
+    kCodecM4a,
+    kCodecFlac,
+    kCodecOpus,
+    kCodecWav,
+    // ====
+    kPlaylistM3u8,
+    kPlaylistPls
+};
 
 struct StreamFormat
 {
@@ -34,7 +46,7 @@ protected:
     uint8_t mBits: 2;
     void zero() { memset(this, 0, sizeof(StreamFormat)); }
 public:
-    esp_codec_type_t codec: 8;
+    CodecType codec: 8;
     static uint8_t encodeBitRes(uint8_t bits) { return (bits >> 3) - 1; }
     static uint8_t decodeBitRes(uint8_t bits) { return (bits + 1) << 3; }
     StreamFormat(uint32_t sr, uint8_t bits, uint8_t channels)
@@ -45,7 +57,7 @@ public:
         samplerate = sr;
         mBits = encodeBitRes(bits);
     }
-    StreamFormat(esp_codec_type_t aCodec)
+    StreamFormat(CodecType aCodec)
     {
         static_assert(sizeof(StreamFormat) == sizeof(uint32_t), "");
         zero();
@@ -154,7 +166,7 @@ public:
     // confirmRead() with the actual amount read.
     virtual StreamError pullData(DataPullReq& dpr, int timeout) = 0;
     virtual void confirmRead(int amount) = 0;
-    static const char* codecTypeToStr(esp_codec_type_t type);
+    static const char* codecTypeToStr(CodecType type);
     static StreamError threeStateStreamError(int ret) {
         if (ret > 0) {
             return kNoError;

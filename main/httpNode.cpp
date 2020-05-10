@@ -9,7 +9,6 @@
 #include "errno.h"
 #include "esp_system.h"
 #include <esp_http_client.h>
-#include <audio_type_def.h>
 #include <strings.h>
 #include "ringbuf.hpp"
 #include "queue.hpp"
@@ -18,46 +17,46 @@
 
 static const char *TAG = "HTTP_NODE";
 
-esp_codec_type_t HttpNode::codecFromContentType(const char* content_type)
+CodecType HttpNode::codecFromContentType(const char* content_type)
 {
     if (strcasecmp(content_type, "mp3") == 0 ||
         strcasecmp(content_type, "audio/mp3") == 0 ||
         strcasecmp(content_type, "audio/mpeg") == 0 ||
         strcasecmp(content_type, "binary/octet-stream") == 0 ||
         strcasecmp(content_type, "application/octet-stream") == 0) {
-        return ESP_CODEC_TYPE_MP3;
+        return kCodecMp3;
     }
     if (strcasecmp(content_type, "audio/aac") == 0 ||
         strcasecmp(content_type, "audio/x-aac") == 0 ||
         strcasecmp(content_type, "audio/mp4") == 0 ||
         strcasecmp(content_type, "audio/aacp") == 0 ||
         strcasecmp(content_type, "video/MP2T") == 0) {
-        return ESP_CODEC_TYPE_AAC;
+        return kCodecAac;
     }
     if (strcasecmp(content_type, "application/ogg") == 0) {
-        return ESP_CODEC_TYPE_OGG;
+        return kCodecOgg;
     }
     if (strcasecmp(content_type, "audio/wav") == 0) {
-        return ESP_CODEC_TYPE_WAV;
+        return kCodecWav;
     }
     if (strcasecmp(content_type, "audio/opus") == 0) {
-        return ESP_CODEC_TYPE_OPUS;
+        return kCodecOpus;
     }
     if (strcasecmp(content_type, "audio/x-mpegurl") == 0 ||
         strcasecmp(content_type, "application/vnd.apple.mpegurl") == 0 ||
         strcasecmp(content_type, "vnd.apple.mpegURL") == 0) {
-        return ESP_AUDIO_TYPE_M3U8;
+        return kPlaylistM3u8;
     }
     if (strncasecmp(content_type, "audio/x-scpls", strlen("audio/x-scpls")) == 0) {
-        return ESP_AUDIO_TYPE_PLS;
+        return kPlaylistPls;
     }
-    return ESP_CODEC_TYPE_UNKNOW;
+    return kCodecUnknown;
 }
 
 bool HttpNode::isPlaylist()
 {
     auto codec = mStreamFormat.codec;
-    if (codec == ESP_AUDIO_TYPE_M3U8 || codec == ESP_AUDIO_TYPE_PLS) {
+    if (codec == kPlaylistM3u8 || codec == kPlaylistPls) {
         return true;
     }
     char *dot = strrchr(mUrl, '.');

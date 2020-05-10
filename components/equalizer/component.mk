@@ -7,7 +7,5 @@
 # please read the ESP-IDF documents if you need to do this.
 #
 
-COMPONENT_SRCDIRS := .
-COMPONENT_ADD_INCLUDEDIRS += . include
-CFLAGS += -Wno-error=unused-label -Wno-error=return-type -Wno-error=missing-braces -Wno-error=pointer-sign -Wno-error=parentheses -Wno-implicit-fallthrough
-
+COMPONENT_ADD_INCLUDEDIRS += .
+COMPONENT_ADD_LDFLAGS := -L$(COMPONENT_PATH) -lesp_processing

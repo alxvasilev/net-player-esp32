@@ -36,7 +36,7 @@ void BluetoothStack::gapCallback(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_para
         break;
 #endif
     default: {
-        ESP_LOGI(TAG, "event: %d", event);
+        ESP_LOGI(TAG, "GAP event: %d", event);
         break;
     }
     }
@@ -86,7 +86,7 @@ bool BluetoothStack::startInClassicMode(const char* discoName)
     esp_avrc_ct_register_callback(avrcControllerCallback);
 
     /* set discoverable and connectable mode, wait to be connected */
-    esp_bt_gap_set_scan_mode(ESP_BT_SCAN_MODE_CONNECTABLE_DISCOVERABLE);
+    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
     return true;
 }
 

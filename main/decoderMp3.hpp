@@ -23,7 +23,7 @@ protected:
     void freeMadState();
     void logEncodingInfo();
 public:
-    virtual esp_codec_type_t type() const { return ESP_CODEC_TYPE_MP3; }
+    virtual CodecType type() const { return kCodecMp3; }
     DecoderMp3();
     ~DecoderMp3();
     virtual int inputBytesNeeded();

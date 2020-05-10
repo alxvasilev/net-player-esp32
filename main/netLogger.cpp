@@ -1,8 +1,5 @@
 #include <esp_http_server.h>
 #include <stdarg.h>
-#include <audio_element.h>
-#include <http_stream.h>
-#include <i2s_stream.h>
 #include <esp_log.h>
 #include <sys/socket.h>
 #include "netLogger.hpp"

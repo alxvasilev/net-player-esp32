@@ -98,7 +98,7 @@ int DecoderMp3::output(const mad_pcm& pcmData)
     }
 
     if (!mOutputFormat.samplerate) { // we haven't yet initialized output format info
-        mOutputFormat.codec = ESP_CODEC_TYPE_MP3;
+        mOutputFormat.codec = kCodecMp3;
         mOutputFormat.samplerate = pcmData.samplerate;
         mOutputFormat.setChannels(pcmData.channels);
         mOutputFormat.setBits(16);

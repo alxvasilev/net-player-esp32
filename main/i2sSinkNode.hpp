@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "audioNode.hpp"
+#include <driver/i2s.h>
 
 class I2sOutputNode: public AudioNodeWithTask, public IAudioVolume
 {

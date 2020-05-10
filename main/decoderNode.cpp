@@ -1,10 +1,10 @@
 #include "decoderNode.hpp"
 #include "decoderMp3.hpp"
 
-bool DecoderNode::createDecoder(esp_codec_type_t type)
+bool DecoderNode::createDecoder(CodecType type)
 {
     switch (type) {
-    case ESP_CODEC_TYPE_MP3:
+    case kCodecMp3:
         ESP_LOGI(mTag, "Created MP3 decoder");
         mDecoder = new DecoderMp3();
         return true;
@@ -14,7 +14,7 @@ bool DecoderNode::createDecoder(esp_codec_type_t type)
     }
 }
 
-bool DecoderNode::changeDecoder(esp_codec_type_t type)
+bool DecoderNode::changeDecoder(CodecType type)
 {
     if (mDecoder) {
         delete mDecoder;

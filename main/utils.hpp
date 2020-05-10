@@ -4,10 +4,8 @@
 #include <esp_http_server.h>
 #include <vector>
 #include <stdarg.h>
-#include <audio_element.h>
-#include <http_stream.h>
-#include <i2s_stream.h>
 #include <esp_log.h>
+#include <freertos/semphr.h>
 #include <memory>
 
 #define myassert(cond) if (!(cond)) { \
@@ -236,8 +234,5 @@ template<>
 }
 
 int16_t currentCpuFreq();
-
-extern "C" const i2s_stream_cfg_t myI2S_STREAM_INTERNAL_DAC_CFG_DEFAULT;
-extern "C" const http_stream_cfg_t myHTTP_STREAM_CFG_DEFAULT;
 
 #endif

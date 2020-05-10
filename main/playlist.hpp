@@ -1,6 +1,8 @@
 #ifndef PLAYLIST_HPP
 #define PLAYLIST_HPP
 #include <vector>
+#include <stdint.h>
+
 class Playlist: public std::vector<char*>
 {
     typedef std::vector<char*> Base;

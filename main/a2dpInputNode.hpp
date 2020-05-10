@@ -10,7 +10,6 @@
 #include "nvs_flash.h"
 #include "esp_system.h"
 #include "esp_log.h"
-#include "esp_peripherals.h"
 #include "esp_a2dp_api.h"
 #include "audioNode.hpp"
 #include "bluetooth.hpp"

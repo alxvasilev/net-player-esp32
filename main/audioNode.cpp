@@ -12,7 +12,6 @@
 #include "errno.h"
 #include "esp_system.h"
 #include <esp_http_client.h>
-#include <audio_type_def.h>
 #include <strings.h>
 #include "ringbuf.hpp"
 #include "queue.hpp"
@@ -159,16 +158,16 @@ void AudioNodeWithTask::processMessages()
         }
     }
 }
-const char* AudioNode::codecTypeToStr(esp_codec_type_t type)
+const char* AudioNode::codecTypeToStr(CodecType type)
 {
     switch (type) {
-        case ESP_CODEC_TYPE_MP3: return "mp3";
-        case ESP_CODEC_TYPE_AAC: return "aac";
-        case ESP_CODEC_TYPE_OGG: return "ogg";
-        case ESP_CODEC_TYPE_M4A: return "m4a";
-        case ESP_CODEC_TYPE_FLAC: return "flac";
-        case ESP_CODEC_TYPE_OPUS: return "opus";
-        case ESP_CODEC_TYPE_UNKNOW: return "none";
+        case kCodecMp3: return "mp3";
+        case kCodecAac: return "aac";
+        case kCodecOgg: return "ogg";
+        case kCodecM4a: return "m4a";
+        case kCodecFlac: return "flac";
+        case kCodecOpus: return "opus";
+        case kCodecUnknown: return "none";
         default: return "(unknown)";
     }
 }

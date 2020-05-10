@@ -3,15 +3,7 @@
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 #include <esp_log.h>
-#include "equalizer.h"
-#include "esp_peripherals.h"
-#include "bluetooth_service.h"
 #include <esp_system.h>
-#include <esp_bt_device.h>
-#include <esp_bt.h>
-#include <esp_bt_main.h>
-#include <esp_gap_bt_api.h>
-#include <a2dp_stream.h>
 #include "utils.hpp"
 #include "audioPlayer.hpp"
 #include "httpNode.hpp"
@@ -34,6 +26,7 @@ const uint16_t AudioPlayer::equalizerFreqs[10] = {
 
 void AudioPlayer::createOutputA2dp()
 {
+    /*
     assert(!mStreamOut);
     ESP_LOGI(TAG, "Creating a2dp output source");
     ESP_LOGI(TAG, "\tCreating Bluetooth service");
@@ -42,16 +35,15 @@ void AudioPlayer::createOutputA2dp()
     cfg.mode = BLUETOOTH_A2DP_SOURCE;
     cfg.remote_name = "DL-LINK";
     ESP_ERROR_CHECK(bluetooth_service_start(&cfg));
-/* Doesn't compile anymore
     ESP_LOGI(TAG, "\tCreating bluetooth sink element");
     mStreamOut = bluetooth_service_create_stream();
     assert(mStreamOut);
-*/
     const uint8_t* addr = esp_bt_dev_get_address();
     char strAddr[13];
     binToHex(addr, 6, strAddr);
     ESP_LOGW("BT", "Own BT MAC: '%s'", strAddr);
 //  Move this to execute only once
+    */
 }
 
 AudioPlayer::AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, bool useEq)
