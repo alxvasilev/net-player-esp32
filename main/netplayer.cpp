@@ -97,6 +97,17 @@ void blinkLedProgress(int dur, int periodMs)
     }
 }
 
+void initNvs()
+{
+    /* Initialize NVS — it is used to store PHY calibration data */
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(err);
+}
+
 void mountSpiffs()
 {
     ESP_LOGI(TAG, "Initializing SPIFFS");
@@ -154,19 +165,12 @@ extern "C" void app_main(void)
     esp_log_level_set("*", ESP_LOG_DEBUG);
 //    esp_log_level_set(TAG, ESP_LOG_DEBUG);
 //    esp_log_level_set("HTTP_NODE", ESP_LOG_DEBUG);
-    player->setLogLevel(ESP_LOG_DEBUG);
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
-    }
+    initNvs();
     configGpios();
 
     mountSpiffs();
-    tcpip_adapter_init();
     rollbackCheckUserForced();
     rollbackConfirmAppIsWorking();
-    esp_wifi_set_ps(WIFI_PS_NONE);
 
     if (!gpio_get_level(kPinButton)) {
         ESP_LOGW(TAG, "Button pressed at boot, start as access point for configuration");
@@ -183,7 +187,7 @@ extern "C" void app_main(void)
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
 // ====
-#if 1
+#if 0
     auto before = xPortGetFreeHeapSize();
     BluetoothStack::disableCompletely();
     ESP_LOGW(TAG, "Releasing Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
@@ -198,7 +202,7 @@ extern "C" void app_main(void)
         country.schan, country.nchan,
         country.max_tx_power, (int)country.policy);
 #else
-    player.reset(new AudioPlayer(AudioNode::kTypeA2dpIn, AudioNode::kTypeI2sOut));
+    player.reset(new AudioPlayer(AudioNode::kTypeA2dpIn, AudioNode::kTypeI2sOut, false));
     player->play();
 #endif
     ESP_LOGI(TAG, "player started");
