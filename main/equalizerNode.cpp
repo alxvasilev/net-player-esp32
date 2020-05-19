@@ -52,6 +52,16 @@ void EqualizerNode::setAllGains(const float* gains)
         }
     }
 }
+void EqualizerNode::zeroAllGains()
+{
+    MutexLocker locker(mMutex);
+    memset(mGains, 0, sizeof(mGains));
+    if (mEqualizer) {
+        for (int i = 0; i < kBandCount; i++) {
+            updateBandGain(i);
+        }
+    }
+}
 
 float EqualizerNode::bandGain(uint8_t band)
 {

@@ -13,6 +13,15 @@
 
 #define rbassert myassert
 
+class RingBuf;
+struct ReadBuf
+{
+    RingBuf* ringBuf;
+    char* buf = nullptr;
+    int size;
+    inline ~ReadBuf();
+};
+
 class RingBuf
 {
 protected:
@@ -23,6 +32,9 @@ protected:
     char* mWritePtr;
     char* mReadPtr;
     Mutex mMutex;
+    // Prevents clearing the ringbuffer while someone is using the
+    // buffer returned by contigRead()
+    Mutex mReadBufMutex;
     int mDataSize;
     EventGroup mEvents;
     int bufSize() const { return mBufEnd - mBuf; }
@@ -42,10 +54,12 @@ protected:
     int maxPossibleContigReadSize() { return mBufEnd - mReadPtr; }
     int availableForContigWrite()
     {
-        if (mWritePtr >= mReadPtr) {
+        if (mWritePtr > mReadPtr) {
             return mBufEnd - mWritePtr;
-        } else {
+        } else if (mWritePtr < mReadPtr){
             return mReadPtr - mWritePtr; // Removed: artificially leave 1 byte to distinguish between empty and full
+        } else { // empty or full
+            return (mDataSize == 0) ? (mBufEnd - mWritePtr) : 0;
         }
     }
     void doCommitContigRead(int size)
@@ -68,7 +82,8 @@ protected:
     {
         rbassert(size <= availableForContigWrite());
         mWritePtr += size;
-        if (mWritePtr == mBufEnd) {
+        if (mWritePtr >= mBufEnd) {
+            myassert(mWritePtr == mBufEnd);
             mWritePtr = mBuf;
         } else {
             rbassert(mWritePtr < mBufEnd);
@@ -108,34 +123,22 @@ protected:
     int contigWrite(char* buf, int size)
     {
         int wlen = std::min(size, availableForContigWrite());
+        myassert(mWritePtr+wlen <= mBufEnd);
         memcpy(mWritePtr, buf, wlen);
         commitContigWrite(wlen);
         return wlen;
     }
-    int totalDataAvail_nolock()
-    {
-        int result;
-        if (mReadPtr < mWritePtr) {
-            result = mWritePtr - mReadPtr;
-        } else if (mReadPtr > mWritePtr) {
-            result = (mBufEnd - mReadPtr) + (mWritePtr - mBuf);
-        } else { // either empty or full
-            result = (mEvents.get() & kFlagHasEmpty) ? 0 : (mBufEnd - mBuf);
-        }
-        myassert(result == mDataSize);
-        return result;
-    }
     int totalEmptySpace_nolock()
     {
-        return (mBufEnd - mBuf) - totalDataAvail_nolock();
+        return size() - mDataSize;
     }
     void doClear()
     {
         mDataSize = 0;
         mWritePtr = mReadPtr = mBuf;
         mEvents.clearBits(0xff);
-        mEvents.setBits(kFlagHasEmpty|kFlagIsEmpty);
-        assert(mEvents.get() == (kFlagHasEmpty|kFlagIsEmpty));
+        mEvents.setBits(kFlagHasEmpty|kFlagIsEmpty|kFlagReadOp);
+        assert(mEvents.get() == (kFlagHasEmpty|kFlagIsEmpty|kFlagReadOp));
     }
 public:
     // If user wants to keep some external state in sync with the ringbuffer,
@@ -151,15 +154,23 @@ public:
         mBufEnd = mBuf + bufSize;
         doClear();
     }
+    ~RingBuf()
+    {
+        if (mBuf) {
+            free(mBuf);
+        }
+    }
+    int size() const { return mBufEnd - mBuf; }
     void clear()
     {
         MutexLocker locker(mMutex);
+        MutexLocker locker2(mReadBufMutex);
         doClear();
     }
     int totalDataAvail()
     {
         MutexLocker locker(mMutex);
-        return totalDataAvail_nolock();
+        return mDataSize;
     }
     int totalEmptySpace()
     {
@@ -218,7 +229,7 @@ public:
         if (msTimeout < 0) {
             while ((avail = availableForContigRead()) < 1) {
                 MutexUnlocker unlocker(mMutex);
-                if (waitFor(kFlagWriteOp, -1) <= 0) {
+                if (waitForWriteOp(-1) <= 0) {
                     return -1;
                 }
             }
@@ -226,7 +237,7 @@ public:
             while ((avail = availableForContigRead()) < 1) {
                 int64_t tsStart = esp_timer_get_time();
                 MutexUnlocker unlocker(mMutex);
-                int ret = waitFor(kFlagWriteOp, msTimeout);
+                int ret = waitForWriteOp(msTimeout);
                 msTimeout -= (esp_timer_get_time() - tsStart) / 1000;
                 if (ret < 0) {
                     return ret;
@@ -236,16 +247,27 @@ public:
                 }
             }
         }
+        mReadBufMutex.lock();
         buf = mReadPtr;
         return avail > maxSize ? maxSize : avail;
+    }
+    void contigRead(ReadBuf& readBuf, int msTimeout)
+    {
+        readBuf.ringBuf = this;
+        int ret = contigRead(readBuf.buf, readBuf.size, msTimeout);
+        readBuf.size = ret;
+        if (ret <= 0) {
+            readBuf.buf = nullptr;
+        }
     }
     bool write(char* buf, int size)
     {
         for (;;) {
             mMutex.lock();
-            if (totalEmptySpace() >= size) {
+            if (totalEmptySpace_nolock() >= size) {
                 break;
             }
+
             mMutex.unlock();
             if (waitAndReset(kFlagReadOp, -1) < 0) {
                 return false;
@@ -253,10 +275,12 @@ public:
         }
         // mutex is locked here
         auto written = contigWrite(buf, size);
+
         if (written < size) {
             buf += written;
             size -= written;
             written = contigWrite(buf, size);
+
             rbassert(written == size);
         }
         mMutex.unlock();
@@ -270,19 +294,18 @@ public:
             reqSize = maxPossible;
         }
         for (;;) {
+            auto contig = availableForContigWrite();
+            if (contig >= reqSize) {
+                buf = mWritePtr;
+                return contig;
+            }
             {
                 MutexUnlocker unlocker(mMutex);
-                auto ret = waitFor(kFlagHasEmpty, -1);
+                auto ret = waitForReadOp(-1);
                 if (ret <= 0) {
                     return -1;
                 }
             }
-            auto contig = availableForContigWrite();
-            if (contig < reqSize) {
-                continue;
-            }
-            buf = mWritePtr;
-            return contig;
         }
     }
     void commitWrite(int size) {
@@ -291,8 +314,11 @@ public:
     }
     void commitContigRead(int size)
     {
-        MutexLocker locker(mMutex);
-        doCommitContigRead(size);
+        {
+            MutexLocker locker(mMutex);
+            doCommitContigRead(size);
+        }
+        mReadBufMutex.unlock();
     }
     void setStopSignal()
     {
@@ -317,5 +343,12 @@ public:
     int8_t waitForWriteOp(int msTimeout) { return waitAndReset(kFlagWriteOp, msTimeout); }
     int8_t waitForReadOp(int msTimeout) { return waitAndReset(kFlagReadOp, msTimeout); }
 };
+
+inline ReadBuf::~ReadBuf()
+{
+    if (buf) {
+        ringBuf->commitContigRead(size);
+    }
+}
 
 #endif

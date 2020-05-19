@@ -90,9 +90,8 @@ void A2dpInputNode::eventCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *
 
 void A2dpInputNode::dataCallback(const uint8_t* data, uint32_t len)
 {
-    ESP_LOGI(TAG, "Recv %d bytes, writing to ringbuf(%d)", len, gSelf->mRingBuf.totalDataAvail());
+//    ESP_LOGI(TAG, "Recv %d bytes, writing to ringbuf(%d)", len, gSelf->mRingBuf.totalDataAvail());
     gSelf->mRingBuf.write((char*)data, len);
-    ESP_LOGI(TAG, "Wrote to ringbuf(%d)", gSelf->mRingBuf.totalDataAvail());
 }
 
 A2dpInputNode::A2dpInputNode(const char* btName)
@@ -110,9 +109,12 @@ A2dpInputNode::A2dpInputNode(const char* btName)
 
 bool A2dpInputNode::doRun()
 {
-    esp_a2d_sink_register_data_callback(dataCallback);
     esp_a2d_register_callback(eventCallback);
+    esp_a2d_sink_register_data_callback(dataCallback);
     esp_a2d_sink_init();
+    /* set discoverable and connectable mode, wait to be connected */
+//    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+    esp_bt_gap_set_scan_mode(ESP_BT_SCAN_MODE_CONNECTABLE_DISCOVERABLE);
     setState(kStateRunning);
     return true;
 }
@@ -126,10 +128,10 @@ A2dpInputNode::~A2dpInputNode()
 }
 AudioNode::StreamError A2dpInputNode::pullData(DataPullReq& dpr, int timeout)
 {
-    dpr.fmt = mFormat;
     auto ret = mRingBuf.contigRead(dpr.buf, dpr.size, timeout);
     if (ret > 0) {
         dpr.size = ret;
+        dpr.fmt = mFormat;
         return kNoError;
     } else if (ret < 0) {
         return kStreamStopped;

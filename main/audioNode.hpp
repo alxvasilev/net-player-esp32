@@ -104,7 +104,7 @@ public:
     // Ideally each node class should have a static singleton that should be
     // initialized at runtime with an autoincremented global that is a static member
     // of this class
-    enum Type {
+    enum Type: uint8_t {
         kTypeUnknown = 0,
         kTypeHttpIn,
         kTypeI2sIn,

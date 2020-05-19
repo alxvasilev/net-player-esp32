@@ -42,22 +42,7 @@ void I2sOutputNode::nodeThreadFunc()
         myassert(mState == kStateRunning);
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
             DataPullReq dpr(10240); // read all available data
-#ifndef NDEBUG
-            auto tim = esp_timer_get_time();
-#endif
-            auto err = mPrev->pullData(dpr, mReadTimeout);
-#ifndef NDEBUG
-            tim = (esp_timer_get_time() - tim) / 1000;
-            if (err == kTimeout) {
-                if (abs(tim - mReadTimeout) > portTICK_PERIOD_MS) {
-                    ESP_LOGW(mTag, "pullData timed out with unexpected delay: took %lld ms, timeout was %d ms", tim, mReadTimeout);
-                }
-            } else if (err == kNoError) {
-                if (tim - mReadTimeout > 5) {
-                    ESP_LOGW(mTag, "pullData returned data but took more than specified by timeout: took %lld ms, timeout was %d ms", tim, mReadTimeout);
-                }
-            }
-#endif
+            auto err = mPrev->pullData(dpr, -1);
             if (err == kTimeout || err == kStreamFlush) {
                 ESP_LOGW(mTag, "Read timeout, sending silence");
                 i2s_zero_dma_buffer(mPort);

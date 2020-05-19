@@ -54,7 +54,7 @@ bool BluetoothStack::startInClassicMode(const char* discoName)
         ESP_LOGE(TAG, "Bluetooth alreay started");
         return false;
     }
-    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
+//    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
     esp_err_t err;
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     if ((err = esp_bt_controller_init(&bt_cfg)) != ESP_OK) {
@@ -86,7 +86,7 @@ bool BluetoothStack::startInClassicMode(const char* discoName)
     esp_avrc_ct_register_callback(avrcControllerCallback);
 
     /* set discoverable and connectable mode, wait to be connected */
-    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+//    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
     return true;
 }
 

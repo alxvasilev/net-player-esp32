@@ -24,7 +24,7 @@ void AudioNodeWithState::setState(State newState)
     if (newState == mState) {
         return;
     }
-    ESP_LOGD(mTag, "state change %d -> %d", mState, newState);
+    ESP_LOGI(mTag, "state change %d -> %d", mState, newState);
     mState = newState;
     mEvents.clearBits(kStateStopped|kStatePaused|kStateRunning);
     mEvents.setBits(newState);

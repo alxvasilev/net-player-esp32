@@ -35,8 +35,7 @@ protected:
     // Read mode dictates how the pullData() caller behaves. Since it may
     // need to wait for the read mode to change to a specific value, the enum values
     // are flags
-    enum ReadMode: uint8_t { kReadAllowed = 0, kReadPrefill = 1, kReadFlushReq = 2 };
-    enum: uint8_t { kEvtReadModeChange = kEvtLast << 1 };
+    enum: uint8_t { kEvtPrefillChange = kEvtLast << 1 };
     char* mUrl = nullptr;
     StreamFormat mStreamFormat;
     esp_http_client_handle_t mClient = nullptr;
@@ -44,7 +43,8 @@ protected:
     Playlist mPlaylist; /* media playlist */
     size_t mStackSize;
     RingBuf mRingBuf;
-    volatile ReadMode mReadMode = kReadPrefill;
+    volatile bool mWaitingPrefill = true;
+    volatile bool mFlushRequested = false;
     int mPrefillAmount;
     int64_t mBytesTotal;
     int mRecvSize = 2048;
@@ -61,8 +61,8 @@ protected:
     bool nextTrack();
     void recv();
     void send();
-    void setReadMode(ReadMode mode);
-    int8_t waitReadModeChange(int msTimeout);
+    void setWaitingPrefill(bool prefill);
+    int8_t waitPrefillChange(int msTimeout);
     void nodeThreadFunc();
     virtual bool dispatchCommand(Command &cmd);
     virtual void doStop();

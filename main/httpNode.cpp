@@ -119,9 +119,9 @@ bool HttpNode::connect(bool isReconnect)
     if (!isReconnect) {
         ESP_LOGI(mTag, "connect: Waiting for buffer to drain...");
         // Wait till buffer is drained before changing format descriptor
-        if (mReadMode == kReadPrefill && mRingBuf.hasData()) {
+        if (mWaitingPrefill && mRingBuf.hasData()) {
             ESP_LOGW(mTag, "Connect: Read state is kReadPrefill, but the buffer should be drained, allowing read");
-            setReadMode(kReadAllowed);
+            setWaitingPrefill(false);
         }
         bool ret = mRingBuf.waitForEmpty();
         if (!ret) {
@@ -288,8 +288,8 @@ void HttpNode::recv()
                 mRingBuf.commitWrite(rlen);
                 ESP_LOGI(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.totalDataAvail());
                 //TODO: Implement IceCast metadata support
-                if (mReadMode == kReadPrefill && mRingBuf.totalDataAvail() >= mPrefillAmount) {
-                    setReadMode(kReadAllowed);
+                if (mWaitingPrefill && mRingBuf.totalDataAvail() >= mPrefillAmount) {
+                    setWaitingPrefill(false);
                 }
                 return;
             }
@@ -342,14 +342,14 @@ bool HttpNode::dispatchCommand(Command &cmd)
     }
     switch(cmd.opcode) {
     case kCommandSetUrl:
+        destroyClient();
         doSetUrl((const char*)cmd.arg);
         free(cmd.arg);
         cmd.arg = nullptr;
-        setReadMode(kReadFlushReq);
+        mRingBuf.clear();
+        mFlushRequested = true; // request flush along the pipeline
+        setWaitingPrefill(true);
         setState(kStateRunning);
-        break;
-    case kCommandNotifyFlushed:
-        setReadMode(kReadPrefill);
         break;
     default: return false;
     }
@@ -404,26 +404,16 @@ HttpNode::HttpNode(size_t bufSize)
 AudioNode::StreamError HttpNode::pullData(DataPullReq& dp, int timeout)
 {
     ElapsedTimer tim;
-    while (mReadMode != kReadAllowed) {
-        if (mReadMode == kReadFlushReq) {
-            mRingBuf.clear();
-            mCmdQueue.post(kCommandNotifyFlushed);
-            do {
-                auto ret = waitReadModeChange(-1); // should not take long
-                if (ret < 0) {
-                    return kStreamStopped;
-                }
-                myassert(ret != 0);
-            } while (mReadMode == kReadFlushReq);
-            ESP_LOGI(mTag, "Ring buffer flush requested, buffer cleared, read mode is %d", mReadMode);
-            return kStreamFlush;
-        } else if (mReadMode == kReadPrefill) {
-            auto ret = waitReadModeChange(timeout);
-            if (ret < 0) {
-                return kStreamStopped;
-            } else if (ret == 0) {
-                return kTimeout;
-            }
+    if (mFlushRequested) {
+        mFlushRequested = false;
+        return kStreamFlush;
+    }
+    while (mWaitingPrefill) {
+        auto ret = waitPrefillChange(timeout);
+        if (ret < 0) {
+            return kStreamStopped;
+        } else if (ret == 0) {
+            return kTimeout;
         }
     }
     timeout -= tim.msElapsed();
@@ -460,18 +450,18 @@ void HttpNode::confirmRead(int size)
     mRingBuf.commitContigRead(size);
 }
 
-void HttpNode::setReadMode(ReadMode mode)
+void HttpNode::setWaitingPrefill(bool prefill)
 {
-    mReadMode = mode;
-    mEvents.setBits(kEvtReadModeChange);
+    mWaitingPrefill = prefill;
+    mEvents.setBits(kEvtPrefillChange);
 }
 
-int8_t HttpNode::waitReadModeChange(int msTimeout)
+int8_t HttpNode::waitPrefillChange(int msTimeout)
 {
-    auto bits = mEvents.waitForOneAndReset(kEvtReadModeChange|kEvtStopRequest, msTimeout);
+    auto bits = mEvents.waitForOneAndReset(kEvtPrefillChange|kEvtStopRequest, msTimeout);
     if (bits & kEvtStopRequest) {
         return -1;
-    } else if (bits & kEvtReadModeChange) {
+    } else if (bits & kEvtPrefillChange) {
         return 1;
     } else {
         return 0;

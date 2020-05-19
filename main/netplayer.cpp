@@ -23,6 +23,7 @@
 #include "audioPlayer.hpp"
 #include "wifi.hpp"
 #include "bluetooth.hpp"
+#include "taskList.hpp"
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
@@ -34,7 +35,8 @@ static const char* kStreamUrls[] = {
     "http://78.129.150.144/stream.mp3?ipport=78.129.150.144_5064",
     "http://stream01048.westreamradio.com:80/wsm-am-mp3",
     "https://mediaserv38.live-streams.nl:18030/stream",
-    "http://94.23.252.14:8067/player"
+    "http://94.23.252.14:8067/player",
+    "http://italo.italo.nu/live"
 };
 
         // "http://icestreaming.rai.it/12.mp3");
@@ -45,6 +47,7 @@ static const char* kStreamUrls[] = {
 httpd_handle_t gHttpServer = nullptr;
 std::unique_ptr<AudioPlayer> player;
 WifiClient wifiClient;
+TaskList taskList;
 
 void reconfigDhcpServer();
 void startWifiSoftAp();
@@ -187,57 +190,20 @@ extern "C" void app_main(void)
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
 // ====
-#if 0
-    auto before = xPortGetFreeHeapSize();
-    BluetoothStack::disableCompletely();
-    ESP_LOGW(TAG, "Releasing Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
-
-    player.reset(new AudioPlayer(AudioNode::kTypeHttpIn, AudioNode::kTypeI2sOut));
-    player->playUrl("https://mediaserv38.live-streams.nl:18030/stream");
-
-    wifi_country_t country;
-    esp_wifi_get_country(&country);
-    ESP_LOGW(TAG, "Current WiFi country: ccode: '%.3s', startChan: %d, nChans: %d, maxTx: %d, policy: %d",
-        country.cc,
-        country.schan, country.nchan,
-        country.max_tx_power, (int)country.policy);
-#else
-    player.reset(new AudioPlayer(AudioNode::kTypeA2dpIn, AudioNode::kTypeI2sOut, false));
-    player->play();
-#endif
+    player.reset(new AudioPlayer);
+    if (player->inputType() == AudioNode::kTypeHttpIn) {
+        ESP_LOGI(TAG, "Player input set to HTTP stream");
+        auto before = xPortGetFreeHeapSize();
+        BluetoothStack::disableCompletely();
+        ESP_LOGW(TAG, "Releasing Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
+        player->playUrl("https://mediaserv38.live-streams.nl:18030/stream");
+    } else if (player->inputType() == AudioNode::kTypeA2dpIn) {
+        ESP_LOGI(TAG, "Player input set to Bluetooth A2DP sink");
+        player->play();
+    }
     ESP_LOGI(TAG, "player started");
 }
 
-std::string getTaskStats()
-{
-    uint32_t totalRunTime;
-
-     // Take a snapshot of the number of tasks in case it changes while this
-     // function is executing.
-     auto nTasks = uxTaskGetNumberOfTasks();
-     std::vector<TaskStatus_t> tasks(nTasks);
-     // Generate raw status information about each task.
-     auto actual = uxTaskGetSystemState(tasks.data(), nTasks, &totalRunTime);
-     if (actual != nTasks) {
-         myassert(actual < nTasks);
-         tasks.resize(actual);
-     }
-     std::sort(tasks.begin(), tasks.end(), [](TaskStatus_t& a, TaskStatus_t& b) {
-         return a.ulRunTimeCounter > b.ulRunTimeCounter;
-     });
-     std::string result("name             cpu%  lowstk  prio  core\n");
-     char buf[32];
-     for (auto& task: tasks) {
-         auto nameLen = strlen(task.pcTaskName);
-         auto percent = task.ulRunTimeCounter * 100 / totalRunTime;
-         result.append(task.pcTaskName).append(std::string(18 - nameLen, ' '))
-               .append(itoa(percent, buf, 10)).append("\t")
-               .append(itoa(task.usStackHighWaterMark, buf, 10)). append("\t")
-               .append(itoa(task.uxBasePriority, buf, 10)).append("\t")
-               .append((task.xCoreID < 16) ? itoa(task.xCoreID, buf, 10) : "?")+= "\n";
-     }
-     return result;
-}
 static esp_err_t indexUrlHandler(httpd_req_t *req)
 {
     httpd_resp_sendstr_chunk(req, "<html><head /><body><h1 align='center'>NetPlayer HTTP inteface</h1><pre>Free heap memory: ");
@@ -261,7 +227,8 @@ static esp_err_t indexUrlHandler(httpd_req_t *req)
     );
     httpd_resp_send_chunk(req, buf.data(), buf.size());
     buf.clear();
-    auto stats = getTaskStats();
+    std::string stats;
+    taskList.update(&stats);
     httpd_resp_send_chunk(req, stats.c_str(), stats.size());
     httpd_resp_sendstr_chunk(req, "</pre></body></html>");
     httpd_resp_send_chunk(req, nullptr, 0);
@@ -362,7 +329,10 @@ static esp_err_t equalizerSetUrlHandler(httpd_req_t *req)
         player->equalizerSetGainsBulk(data.str, data.len);
         return ESP_OK;
     }
-
+    if (params.strParam("reset").str) {
+        player->equalizerSetGainsBulk(nullptr, 0);
+        return ESP_OK;
+    }
     auto band = params.intParam("band", -1);
     if (band < 0 || band > 9) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid 'band' parameter");
@@ -394,9 +364,9 @@ static esp_err_t equalizerDumpUrlHandler(httpd_req_t *req)
     DynBuffer buf(240);
     buf.printf("{");
     for (int i = 0; i < 10; i++) {
-        buf.printf("[%d,%.2f],", player->equalizerFreqs[i], levels[i]);
+        buf.printf("[%d,%.1f],", player->equalizerFreqs[i], levels[i]);
     }
-    buf[buf.size()-1] = '}';
+    buf[buf.size()-2] = '}';
     httpd_resp_send(req, buf.data(), buf.size());
     return ESP_OK;
 }

@@ -69,6 +69,8 @@ bool WifiClient::start(const char* ssid, const char* key, ConnGaveUpHandler onGa
         return err;
     }
 
+//    esp_wifi_set_ps(WIFI_PS_NONE);
+
     if ((err = esp_wifi_start()) != ESP_OK) {
         ESP_LOGE(TAG, "esp_wifi_start error %s", esp_err_to_name(err));
         return err;

@@ -23,6 +23,7 @@ public:
 public:
     void setBandGain(uint8_t band, float dbGain);
     void setAllGains(const float* gains);
+    void zeroAllGains();
     float bandGain(uint8_t band);
     const float* allGains() { return mGains; }
 };
