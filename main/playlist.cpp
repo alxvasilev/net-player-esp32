@@ -13,12 +13,20 @@ void Playlist::clear()
 }
 const char* Playlist::getNextTrack()
 {
-    if (mNextTrack >= size()) {
+    if (empty()) {
         return nullptr;
+    }
+    if (mNextTrack >= size()) {
+        mNextTrack = 0;
     }
     return at(mNextTrack++);
 }
 
+/** @returns pointer to first non-whitespace char, and pointer to the
+ *  char before the first non-whitespace char on the next line.
+ *  All chars after last char on line and before first char on next line
+ *  are set to NULL
+ */
 char* Playlist::readLine(char*& start)
 {
     for (;;start++) {
@@ -29,13 +37,13 @@ char* Playlist::readLine(char*& start)
            break;
         }
     }
-    char* end = start+1;
+    char* end = start + 1;
     for (;;end++) {
         char ch = *end;
         if (!ch) {
-            while (isspace(*(--end))) *end = 0;
+            while (isspace(*(--end))) *end = 0; // trim list right
             return nullptr;
-        } else if (ch == '\r' || ch == '\n') {
+        } else if (ch == '\r' || ch == '\n') { // trim line right
             *end = 0;
             while (isspace(*(--end))) *end = 0;
             return *end ? end+1 : end;

@@ -344,7 +344,7 @@ bool AudioPlayer::equalizerSetGainsBulk(char* str, size_t len)
     return ok;
 }
 
-const float* AudioPlayer::equalizerDumpGains()
+const float* AudioPlayer::equalizerGains()
 {
     if (!mEqualizer) {
         return nullptr;
@@ -367,4 +367,135 @@ void AudioPlayer::equalizerSaveGains()
 AudioPlayer::~AudioPlayer()
 {
     destroyPipeline();
+}
+
+esp_err_t AudioPlayer::playUrlHandler(httpd_req_t *req)
+{
+    auto self = static_cast<AudioPlayer*>(req->user_ctx);
+    MutexLocker locker(self->mutex);
+    UrlParams params(req);
+    auto urlParam = params.strParam("url");
+    const char* url;
+    if (!urlParam) {
+        url = self->playlist.getNextTrack();
+        if (!url) {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Playlist is empty");
+            return ESP_OK;
+        }
+    } else {
+        url = urlParam.str;
+    }
+    self->playUrl(url);
+    DynBuffer buf(128);
+    buf.printf("Changing stream url to '%s'", url);
+    httpd_resp_send(req, buf.data(), buf.size());
+    return ESP_OK;
+}
+
+esp_err_t AudioPlayer::pauseUrlHandler(httpd_req_t *req)
+{
+    auto self = static_cast<AudioPlayer*>(req->user_ctx);
+    MutexLocker locker(self->mutex);
+    if (self->isPlaying()) {
+        self->pause();
+        httpd_resp_sendstr(req, "Pause");
+    } else {
+        self->play();
+        httpd_resp_sendstr(req, "Play");
+    }
+    return ESP_OK;
+}
+
+void AudioPlayer::registerHttpGetHandler(httpd_handle_t server,
+    const char* path, esp_err_t(*handler)(httpd_req_t*))
+{
+    httpd_uri_t desc = {
+        .uri       = path,
+        .method    = HTTP_GET,
+        .handler   = handler,
+        .user_ctx  = this
+    };
+    httpd_register_uri_handler(server, &desc);
+}
+
+esp_err_t AudioPlayer::volumeUrlHandler(httpd_req_t *req)
+{
+    auto self = static_cast<AudioPlayer*>(req->user_ctx);
+    UrlParams params(req);
+    int newVol;
+    auto step = params.intParam("step", 0);
+    if (step) {
+        newVol = self->volumeChange(step);
+        if (newVol < 0) {
+            httpd_resp_send_err(req, HTTPD_501_METHOD_NOT_IMPLEMENTED, "Error setting volume");
+            return ESP_OK;
+        }
+    } else {
+        auto vol = params.intParam("vol", -1);
+        if (vol < 0) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Neither 'step' nor 'vol' parameter provided");
+            return ESP_OK;
+        }
+        self->volumeSet(vol);
+        newVol = self->volumeGet();
+    }
+    DynBuffer buf(24);
+    buf.printf("Volume set to %d", newVol);
+    httpd_resp_send(req, buf.data(), buf.size());
+    return ESP_OK;
+}
+
+esp_err_t AudioPlayer::equalizerSetUrlHandler(httpd_req_t *req)
+{
+    auto self = static_cast<AudioPlayer*>(req->user_ctx);
+    UrlParams params(req);
+    auto data = params.strParam("vals");
+    if (data.str) {
+        self->equalizerSetGainsBulk(data.str, data.len);
+        return ESP_OK;
+    }
+    if (params.strParam("reset").str) {
+        self->equalizerSetGainsBulk(nullptr, 0);
+        return ESP_OK;
+    }
+    auto band = params.intParam("band", -1);
+    if (band < 0 || band > 9) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid 'band' parameter");
+        return ESP_OK;
+    }
+    auto level = params.intParam("level", 0xff);
+    if (level == 0xff) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid 'level' parameter");
+        return ESP_OK;
+    }
+    if (self->equalizerSetBand(band, level)) {
+        httpd_resp_sendstr(req, "ok");
+    } else {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed setting equalizer band");
+    }
+    return ESP_OK;
+}
+
+esp_err_t AudioPlayer::equalizerDumpUrlHandler(httpd_req_t *req)
+{
+    auto self = static_cast<AudioPlayer*>(req->user_ctx);
+    MutexLocker locker(self->mutex);
+    auto levels = self->equalizerGains();
+    DynBuffer buf(240);
+    buf.printf("{");
+    for (int i = 0; i < 10; i++) {
+        buf.printf("[%d,%.1f],", self->equalizerFreqs[i], levels[i]);
+    }
+    buf[buf.size()-2] = '}';
+    httpd_resp_send(req, buf.data(), buf.size());
+    return ESP_OK;
+}
+
+void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
+{
+    registerHttpGetHandler(server, "/play", &playUrlHandler);
+    registerHttpGetHandler(server, "/pause", &pauseUrlHandler);
+    registerHttpGetHandler(server, "/vol", &volumeUrlHandler);
+    registerHttpGetHandler(server, "/eqget", &equalizerDumpUrlHandler);
+    registerHttpGetHandler(server, "/eqset", &equalizerSetUrlHandler);
 }

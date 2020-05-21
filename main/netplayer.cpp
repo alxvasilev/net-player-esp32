@@ -30,14 +30,14 @@ static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
 static constexpr gpio_num_t kPinLed = GPIO_NUM_2;
 
 static const char *TAG = "netplay";
-static const char* kStreamUrls[] = {
-    "http://streams.greenhost.nl:8080/live",
-    "http://78.129.150.144/stream.mp3?ipport=78.129.150.144_5064",
-    "http://stream01048.westreamradio.com:80/wsm-am-mp3",
-    "https://mediaserv38.live-streams.nl:18030/stream",
-    "http://94.23.252.14:8067/player",
-    "http://italo.italo.nu/live"
-};
+static const char gPlaylist[] =
+"http://streams.greenhost.nl:8080/live\n\
+http://78.129.150.144/stream.mp3?ipport=78.129.150.144_5064\n\
+http://stream01048.westreamradio.com:80/wsm-am-mp3\n\
+https://mediaserv38.live-streams.nl:18030/stream\n\
+http://94.23.252.14:8067/player\n\
+http://italo.italo.nu/live";
+
 
         // "http://icestreaming.rai.it/12.mp3");
         // "http://94.23.252.14:8067/player");
@@ -52,7 +52,7 @@ TaskList taskList;
 void reconfigDhcpServer();
 void startWifiSoftAp();
 void startWebserver(bool isAp=false);
-
+/*
 const char* getNextStreamUrl() {
     static int currStreamIdx = -1;
     currStreamIdx++;
@@ -61,7 +61,7 @@ const char* getNextStreamUrl() {
     }
     return kStreamUrls[currStreamIdx];
 }
-
+*/
 void configGpios()
 {
     gpio_pad_select_gpio(kPinButton);
@@ -191,6 +191,8 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "Log connection accepted, continuing");
 // ====
     player.reset(new AudioPlayer);
+    player->registerUrlHanlers(gHttpServer);
+    player->playlist.load((char*)std::string(gPlaylist).c_str());
     if (player->inputType() == AudioNode::kTypeHttpIn) {
         ESP_LOGI(TAG, "Player input set to HTTP stream");
         auto before = xPortGetFreeHeapSize();
@@ -244,139 +246,38 @@ static const httpd_uri_t indexUrl = {
     .user_ctx  = nullptr
 };
 
+static esp_err_t changeInputUrlHandler(httpd_req_t *req)
+{
+    UrlParams params(req);
+    auto type = params.strVal("mode");
+    if (!type) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No mode param");
+        return ESP_OK;
+    }
+    switch(type.str[0]) {
+        case 'b':
+            player->changeInput(AudioNode::kTypeA2dpIn);
+            httpd_resp_sendstr(req, "Switched to Bluetooth A2DP sink");
+            return ESP_OK;
+        case 'h':
+            player->changeInput(AudioNode::kTypeHttpIn);
+            httpd_resp_sendstr(req, "Switched to HTTP client");
+            return ESP_OK;
+        default:
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid mode param");
+            return ESP_OK;
+    }
+}
+static const httpd_uri_t changeInputUrl = {
+    .uri       = "/inmode",
+    .method    = HTTP_GET,
+    .handler   = changeInputUrlHandler,
+    /* Let's pass response string in user
+     * context to demonstrate it's usage */
+    .user_ctx  = nullptr
+};
+
 /* An HTTP GET handler */
-static esp_err_t playUrlHandler(httpd_req_t *req)
-{
-    UrlParams params(req);
-    auto urlParam = params.strParam("url");
-    const char* url;
-    if (!urlParam) {
-        url = getNextStreamUrl();
-    } else {
-        url = urlParam.str;
-    }
-    player->playUrl(url);
-    DynBuffer buf(128);
-    buf.printf("Changing stream url to '%s'", url);
-    httpd_resp_send(req, buf.data(), buf.size());
-    return ESP_OK;
-}
-
-static const httpd_uri_t play = {
-    .uri       = "/play",
-    .method    = HTTP_GET,
-    .handler   = playUrlHandler,
-    .user_ctx  = nullptr
-};
-
-static esp_err_t pauseUrlHandler(httpd_req_t *req)
-{
-    if (player->isPlaying()) {
-        player->pause();
-        httpd_resp_sendstr(req, "Pause");
-    } else {
-        player->play();
-        httpd_resp_sendstr(req, "Play");
-    }
-    return ESP_OK;
-}
-
-static const httpd_uri_t pauseUrl = {
-    .uri       = "/pause",
-    .method    = HTTP_GET,
-    .handler   = pauseUrlHandler,
-    .user_ctx  = nullptr
-};
-
-static esp_err_t volumeChangeUrlHandler(httpd_req_t *req)
-{
-    UrlParams params(req);
-    int newVol;
-    auto step = params.intParam("step", 0);
-    if (step) {
-        newVol = player->volumeChange(step);
-        if (newVol < 0) {
-            httpd_resp_send_err(req, HTTPD_501_METHOD_NOT_IMPLEMENTED, "Error setting volume");
-            return ESP_OK;
-        }
-    } else {
-        auto vol = params.intParam("vol", -1);
-        if (vol < 0) {
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Neither 'step' nor 'vol' parameter provided");
-            return ESP_OK;
-        }
-        player->volumeSet(vol);
-        newVol = player->volumeGet();
-    }
-    DynBuffer buf(24);
-    buf.printf("Volume set to %d", newVol);
-    httpd_resp_send(req, buf.data(), buf.size());
-    return ESP_OK;
-}
-
-static const httpd_uri_t volumeUrl = {
-    .uri       = "/vol",
-    .method    = HTTP_GET,
-    .handler   = volumeChangeUrlHandler,
-    .user_ctx  = nullptr
-};
-
-static esp_err_t equalizerSetUrlHandler(httpd_req_t *req)
-{
-    UrlParams params(req);
-    auto data = params.strParam("vals");
-    if (data.str) {
-        player->equalizerSetGainsBulk(data.str, data.len);
-        return ESP_OK;
-    }
-    if (params.strParam("reset").str) {
-        player->equalizerSetGainsBulk(nullptr, 0);
-        return ESP_OK;
-    }
-    auto band = params.intParam("band", -1);
-    if (band < 0 || band > 9) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid 'band' parameter");
-        return ESP_OK;
-    }
-    auto level = params.intParam("level", 0xff);
-    if (level == 0xff) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid 'level' parameter");
-        return ESP_OK;
-    }
-    if (player->equalizerSetBand(band, level)) {
-        httpd_resp_sendstr(req, "ok");
-    } else {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed setting equalizer band");
-    }
-    return ESP_OK;
-}
-
-static const httpd_uri_t eqSetUrl = {
-    .uri       = "/eqset",
-    .method    = HTTP_GET,
-    .handler   = equalizerSetUrlHandler,
-    .user_ctx  = nullptr
-};
-
-static esp_err_t equalizerDumpUrlHandler(httpd_req_t *req)
-{
-    auto levels = player->equalizerDumpGains();
-    DynBuffer buf(240);
-    buf.printf("{");
-    for (int i = 0; i < 10; i++) {
-        buf.printf("[%d,%.1f],", player->equalizerFreqs[i], levels[i]);
-    }
-    buf[buf.size()-2] = '}';
-    httpd_resp_send(req, buf.data(), buf.size());
-    return ESP_OK;
-}
-
-static const httpd_uri_t eqGetUrl = {
-    .uri       = "/eqget",
-    .method    = HTTP_GET,
-    .handler   = equalizerDumpUrlHandler,
-    .user_ctx  = nullptr
-};
 
 void stopWebserver() {
     /* Stop the web server */
@@ -410,11 +311,7 @@ void startWebserver(bool isAp)
     httpd_register_uri_handler(gHttpServer, &indexUrl);
     httpd_register_uri_handler(gHttpServer, &httpFsPut);
     httpd_register_uri_handler(gHttpServer, &httpFsGet);
-    httpd_register_uri_handler(gHttpServer, &play);
-    httpd_register_uri_handler(gHttpServer, &pauseUrl);
-    httpd_register_uri_handler(gHttpServer, &volumeUrl);
-    httpd_register_uri_handler(gHttpServer, &eqGetUrl);
-    httpd_register_uri_handler(gHttpServer, &eqSetUrl);
+    httpd_register_uri_handler(gHttpServer, &changeInputUrl);
 }
 
 
