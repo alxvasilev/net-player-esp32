@@ -34,9 +34,11 @@ public:
         }
     }
     void free() {
-        if (mPtr) {
-            ::free(mPtr);
+        if (!mPtr) {
+            return;
         }
+        ::free(mPtr);
+        mPtr = nullptr;
     }
     void freeAndReset(T* newPtr) {
         free();
