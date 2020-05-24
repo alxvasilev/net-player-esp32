@@ -113,8 +113,12 @@ bool A2dpInputNode::doRun()
     esp_a2d_sink_register_data_callback(dataCallback);
     esp_a2d_sink_init();
     /* set discoverable and connectable mode, wait to be connected */
-//    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
+    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+#else
+    // legacy API
     esp_bt_gap_set_scan_mode(ESP_BT_SCAN_MODE_CONNECTABLE_DISCOVERABLE);
+#endif
     setState(kStateRunning);
     return true;
 }

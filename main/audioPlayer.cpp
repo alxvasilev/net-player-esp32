@@ -499,3 +499,15 @@ void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
     registerHttpGetHandler(server, "/eqget", &equalizerDumpUrlHandler);
     registerHttpGetHandler(server, "/eqset", &equalizerSetUrlHandler);
 }
+
+bool AudioPlayer::onEvent(AudioNode *self, uint16_t event, void *buf, size_t bufSize)
+{
+    /*
+    if (self->type() == AudioNode::kTypeHttpIn) {
+        if (event == HttpNode::kEventTrackInfo) {
+            wsSendTrackTitle(buf);
+        }
+    }
+    */
+    return true;
+}

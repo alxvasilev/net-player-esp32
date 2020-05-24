@@ -15,8 +15,13 @@ esp_err_t WifiClient::eventHandler(void *ctx, system_event_t *event)
         esp_wifi_connect();
         break;
     case SYSTEM_EVENT_STA_GOT_IP:
+#if 0
+        ESP_LOGI(TAG, "Connected, got ip: " IPSTR,
+                 IP2STR(&event->event_info.got_ip.ip_info.ip));
+#else
         ESP_LOGI(TAG, "Connected, got ip: %s",
                  ip4addr_ntoa(&event->event_info.got_ip.ip_info.ip));
+#endif
         self->mRetryNum = 0;
         self->mEvents.setBits(kBitConnected);
         break;

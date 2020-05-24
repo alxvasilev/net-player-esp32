@@ -83,7 +83,7 @@ bool HttpNode::createClient()
     cfg.user_data = this;
     cfg.timeout_ms = kPollTimeoutMs;
     cfg.buffer_size = kClientBufSize;
-    cfg.method = mIsWriter ? HTTP_METHOD_POST : HTTP_METHOD_GET;
+    cfg.method = HTTP_METHOD_GET;
 
     mClient = esp_http_client_init(&cfg);
     if (!mClient)
@@ -98,15 +98,24 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
     if (evt->event_id != HTTP_EVENT_ON_HEADER) {
         return ESP_OK;
     }
-    if (strcasecmp(evt->header_key, "Content-Type") == 0) {
-        auto self = static_cast<HttpNode*>(evt->user_data);
+    auto self = static_cast<HttpNode*>(evt->user_data);
+    auto key = evt->header_key;
+    if (strcasecmp(key, "Content-Type") == 0) {
         self->mStreamFormat.codec = self->codecFromContentType(evt->header_value);
         ESP_LOGI(TAG, "Parsed content-type '%s' as %d", evt->header_value, self->mStreamFormat.codec);
-    } else if (strcasecmp(evt->header_key, "icy-metaint") == 0) {
+    } else if (strcasecmp(key, "icy-metaint") == 0) {
         auto self = static_cast<HttpNode*>(evt->user_data);
         self->mIcyInterval = atoi(evt->header_value);
         self->mIcyCtr = 0;
         ESP_LOGI(TAG, "Response contains ICY metadata with interval %d", self->mIcyInterval);
+    } else if (strcasecmp(key, "icy-name") == 0) {
+        self->mStationName.freeAndReset(strdup(evt->header_value));
+    } else if (strcasecmp(key, "icy-desciption") == 0) {
+        self->mStationDesc.freeAndReset(strdup(evt->header_value));
+    } else if (strcasecmp(key, "icy-genre") == 0) {
+        self->mStationGenre.freeAndReset(strdup(evt->header_value));
+    } else if (strcasecmp(key, "icy-url") == 0) {
+        self->mStationUrl.freeAndReset(strdup(evt->header_value));
     }
     return ESP_OK;
 }
@@ -131,6 +140,7 @@ bool HttpNode::connect(bool isReconnect)
         if (!ret) {
             return false;
         }
+        ESP_LOGI(mTag, "connect: Buffer drained");
         mStreamFormat.reset();
         mBytePos = 0;
     }
@@ -142,24 +152,21 @@ bool HttpNode::connect(bool isReconnect)
         }
     }
     // request IceCast stream metadata
+    clearAllIcyInfo();
     esp_http_client_set_header(mClient, "Icy-MetaData", "1");
-    mIcyCtr = mIcyRemaining = 0;
 
     if (mBytePos) { // we are resuming, send position
         char rang_header[32];
         snprintf(rang_header, 32, "bytes=%lld-", mBytePos);
         esp_http_client_set_header(mClient, "Range", rang_header);
     }
-    sendEvent(kEventOnRequest, mClient, 0);
+    sendEvent(kEventOnConnecting, nullptr, isReconnect);
 
-    if (mIsWriter) {
-        return esp_http_client_open(mClient, -1); // -1 for content length means chunked encoding
-    }
     for (int tries = 0; tries < 4; tries++) {
         auto err = esp_http_client_open(mClient, 0);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Failed to open http stream, error %s", esp_err_to_name(err));
-            return false;
+            continue;
         }
 
         mContentLen = esp_http_client_fetch_headers(mClient);
@@ -192,6 +199,10 @@ bool HttpNode::connect(bool isReconnect)
             doSetUrl(url);
             continue;
         }
+        if (!mIcyInterval) {
+            ESP_LOGW(TAG, "Source does not send ShoutCast metadata");
+        }
+        sendEvent(kEventOnConnected, nullptr, isReconnect);
         return true;
     }
     return false;
@@ -228,9 +239,6 @@ bool HttpNode::parseResponseAsPlaylist()
 
 void HttpNode::disconnect()
 {
-    if (mIsWriter) {
-        esp_http_client_fetch_headers(mClient);
-    }
     mPlaylist.clear();
     destroyClient();
 }
@@ -287,8 +295,6 @@ void HttpNode::recv()
             if (rlen > 0) {
                 if (mIcyInterval) {
                     rlen = icyProcessRecvData(buf, rlen);
-                } else {
-                    ESP_LOGW(TAG, "NO ICY INTERVAL");
                 }
                 mRingBuf.commitWrite(rlen);
                 ESP_LOGI(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.totalDataAvail());
@@ -314,7 +320,7 @@ void HttpNode::recv()
         }
         // Try next track
         mBytePos = 0;
-        sendEvent(kEventNewTrack, mUrl, 0);
+        sendEvent(kEventNextTrack, mUrl, 0);
         destroyClient(); // just in case
         connect();
     }
@@ -381,20 +387,28 @@ int HttpNode::icyProcessRecvData(char* buf, int rlen)
 }
 void HttpNode::icyParseMetaData()
 {
-    ESP_LOGW("ICY", "Metadata received(%d): '%s'", mIcyMetaBuf.dataSize(), mIcyMetaBuf.buf());
-    sendEvent(kEventIcyInfo);
-
-}
-void HttpNode::send()
-{
-/*
-    int wrlen = esp_http_client_write(mClient, buf.data, buf.size);
-    if (wrlen <= 0) {
-        ESP_LOGE(TAG, "Failed to write data to http stream, wrlen=%d, errno=%d", wrlen, errno);
+    const char kStreamTitlePrefix[] = "StreamTitle='";
+    auto start = strstr(mIcyMetaBuf.buf(), kStreamTitlePrefix);
+    if (!start) {
+        ESP_LOGW(TAG, "ICY parse error: StreamTitle= string not found");
+        return;
     }
-    return wrlen;
-*/
+    start += sizeof(kStreamTitlePrefix)-1; //sizeof(kStreamTitlePreix) incudes the terminating NULL
+    auto end = strchr(start, '\'');
+    int titleSize;
+    if (!end) {
+        ESP_LOGW(TAG, "ICY parse error: Closing quote of StreamTitle not found");
+        titleSize = mIcyMetaBuf.dataSize() - sizeof(kStreamTitlePrefix) - 1;
+    } else {
+        titleSize = end - start;
+    }
+    memmove(mIcyMetaBuf.buf(), start, titleSize);
+    mIcyMetaBuf[titleSize] = 0;
+    mIcyMetaBuf.setDataSize(titleSize + 1);
+    sendEvent(kEventTrackInfo, mIcyMetaBuf.buf(), mIcyMetaBuf.dataSize());
+    ESP_LOGW(TAG, "Stream title changed: '%s'", mIcyMetaBuf.buf());
 }
+
 void HttpNode::setUrl(const char* url)
 {
     if (!mTaskId) {
@@ -442,14 +456,8 @@ void HttpNode::nodeThreadFunc()
                 continue;
             }
         }
-        if (mIsWriter) {
-            while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
-                send();
-            }
-        } else {
-            while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
-                recv(); // retries and goes to new playlist track
-            }
+        while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
+            recv(); // retries and goes to new playlist track
         }
     }
 }
@@ -463,6 +471,7 @@ HttpNode::~HttpNode()
 {
     stop();
     destroyClient();
+    clearAllIcyInfo();
 }
 
 HttpNode::HttpNode(size_t bufSize)
@@ -536,4 +545,21 @@ int8_t HttpNode::waitPrefillChange(int msTimeout)
     } else {
         return 0;
     }
+}
+
+void HttpNode::clearAllIcyInfo()
+{
+    mIcyInterval = mIcyCtr = mIcyRemaining = 0;
+    mStationName.free();
+    mStationDesc.free();
+    mStationGenre.free();
+    mStationUrl.free();
+}
+
+const char* HttpNode::streamTitle() const
+{
+    if (!mIcyInterval || !mIcyMetaBuf) {
+        return nullptr;
+    }
+    return mIcyMetaBuf.buf();
 }

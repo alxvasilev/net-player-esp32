@@ -26,10 +26,11 @@ protected:
            kStackSize = 3600 };
     enum: uint16_t {
         kHttpEventType = kEventLastGeneric + 1,
-        kEventOnRequest,
-        kEventNewTrack,
+        kEventOnConnecting,
+        kEventOnConnected,
+        kEventNextTrack,
         kEventNoMoreTracks,
-        kEventIcyInfo
+        kEventTrackInfo
     };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1,
                     kCommandNotifyFlushed };
@@ -52,6 +53,11 @@ protected:
     int32_t mIcyCtr = 0;
     int32_t mIcyInterval = 0;
     int16_t mIcyRemaining = 0;
+    BufPtr<char> mStationName = nullptr;
+    BufPtr<char> mStationDesc = nullptr;
+    BufPtr<char> mStationGenre = nullptr;
+    BufPtr<char> mStationUrl = nullptr;
+    void clearAllIcyInfo();
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     static CodecType codecFromContentType(const char* content_type);
     bool isPlaylist();
@@ -66,7 +72,6 @@ protected:
     void destroyClient();
     bool nextTrack();
     void recv();
-    void send();
     void setWaitingPrefill(bool prefill);
     int8_t waitPrefillChange(int msTimeout);
     void nodeThreadFunc();
@@ -80,4 +85,9 @@ public:
     virtual void confirmRead(int size);
     void setUrl(const char* url);
     bool isConnected() const;
+    const char* stationName() const { return mStationName.ptr(); }
+    const char* stationDesc() const { return mStationDesc.ptr(); }
+    const char* stationGenre() const { return mStationGenre.ptr(); }
+    const char* stationUrl() const { return mStationUrl.ptr(); }
+    const char* streamTitle() const;
 };

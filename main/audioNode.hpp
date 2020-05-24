@@ -124,7 +124,6 @@ public:
 protected:
     const char* mTag;
     Mutex mMutex;
-    bool mIsWriter = false;
     AudioNode* mPrev = nullptr;
     int64_t mBytePos = 0;
     void* mUserp = nullptr;

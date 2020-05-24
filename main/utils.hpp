@@ -22,6 +22,7 @@ protected:
     BufPtr() {} // mPtr remains uninitialized, only for derived classes
 public:
     T* ptr() { return mPtr; }
+    const T* ptr() const { return mPtr; }
     BufPtr(T* ptr): mPtr(ptr){}
     BufPtr(BufPtr<T>&& other) {
         mPtr = other.mPtr;
@@ -56,6 +57,7 @@ protected:
     int mDataSize = 0;
 public:
     char* buf() { return mBuf; }
+    const char* buf() const { return mBuf; }
     int capacity() const { return mBufSize; }
     int dataSize() const { return mDataSize; }
     int freeSpace() const { return mBufSize - mDataSize; }
@@ -80,6 +82,7 @@ public:
         myassert(idx >= 0 && idx < mDataSize);
         return mBuf[idx];
     }
+    operator bool() const { return mBuf && mDataSize > 0; }
     void reserve(int newSize)
     {
         if (newSize <= mBufSize) {
@@ -118,6 +121,10 @@ public:
         myassert(newDataSize <= mBufSize);
         mDataSize = newDataSize;
     }
+    void setDataSize(int newSize)
+    {
+        mDataSize = (newSize > mBufSize) ? mBufSize : mDataSize;
+    }
     void append(char* data, int dataSize)
     {
         ensureFreeSpace(dataSize);
@@ -131,15 +138,16 @@ public:
     }
     int vprintf(const char *fmt, va_list args)
     {
-        int writeSize = 32;
+        int writeSize = std::max(freeSpace(), 8);
         for (;;) {
             int num = ::vsnprintf(appendPtr(writeSize), writeSize, fmt, args);
             if (num < 0) {
-                ESP_LOGE("DynBuffer", "printf: vsnprintf() returned error");
                 return num;
             } else if (num < writeSize) { // completely written
                 expandDataSize(num + 1);
                 return num;
+            } else {
+                writeSize <<= 1;
             }
         }
     }

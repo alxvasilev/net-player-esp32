@@ -221,7 +221,7 @@ static esp_err_t indexUrlHandler(httpd_req_t *req)
     httpd_resp_send_chunk(req, buf.buf(), buf.dataSize());
     buf.clear();
 
-    buf.printf("radio: WiFi%s%s\nflash size: %dMB\nflash type: %s\nTasks:\n",
+    buf.printf("radio: WiFi%s%s\nflash size: %dMB\nflash type: %s\n",
         (chip_info.features & CHIP_FEATURE_BT) ? "/BT" : "",
         (chip_info.features & CHIP_FEATURE_BLE) ? "/BLE" : "",
         spi_flash_get_chip_size() / (1024 * 1024),
@@ -229,6 +229,9 @@ static esp_err_t indexUrlHandler(httpd_req_t *req)
     );
     httpd_resp_send_chunk(req, buf.buf(), buf.dataSize());
     buf.clear();
+    buf.printf("ESP-IDF version: %d.%d.%d\n\nTasks:\n", ESP_IDF_VERSION_MAJOR, ESP_IDF_VERSION_MINOR, ESP_IDF_VERSION_PATCH);
+    httpd_resp_send_chunk(req, buf.buf(), buf.dataSize());
+
     std::string stats;
     taskList.update(&stats);
     httpd_resp_send_chunk(req, stats.c_str(), stats.size());

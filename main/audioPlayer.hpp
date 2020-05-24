@@ -11,7 +11,7 @@ namespace nvs {
     class NVSHandle;
 }
 
-class AudioPlayer
+class AudioPlayer: public AudioNode::EventHandler
 {
 public:
     static constexpr int kHttpBufSize = 20 * 1024;
@@ -74,6 +74,8 @@ public:
     // format is: bandIdx1=gain1;bandIdx2=gain2....
     bool equalizerSetGainsBulk(char* str, size_t len);
     void registerUrlHanlers(httpd_handle_t server);
+    // AudioNode::EventHandler interface
+    virtual bool onEvent(AudioNode *self, uint16_t type, void *buf, size_t bufSize) override;
 };
 
 #endif
