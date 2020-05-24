@@ -98,12 +98,16 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
     if (evt->event_id != HTTP_EVENT_ON_HEADER) {
         return ESP_OK;
     }
-    if (strcasecmp(evt->header_key, "Content-Type")) {
-        return ESP_OK;
+    if (strcasecmp(evt->header_key, "Content-Type") == 0) {
+        auto self = static_cast<HttpNode*>(evt->user_data);
+        self->mStreamFormat.codec = self->codecFromContentType(evt->header_value);
+        ESP_LOGI(TAG, "Parsed content-type '%s' as %d", evt->header_value, self->mStreamFormat.codec);
+    } else if (strcasecmp(evt->header_key, "icy-metaint") == 0) {
+        auto self = static_cast<HttpNode*>(evt->user_data);
+        self->mIcyInterval = atoi(evt->header_value);
+        self->mIcyCtr = 0;
+        ESP_LOGI(TAG, "Response contains ICY metadata with interval %d", self->mIcyInterval);
     }
-    auto self = static_cast<HttpNode*>(evt->user_data);
-    self->mStreamFormat.codec = self->codecFromContentType(evt->header_value);
-    ESP_LOGI(TAG, "Parsed content-type '%s' as %d", evt->header_value, self->mStreamFormat.codec);
     return ESP_OK;
 }
 
@@ -137,6 +141,9 @@ bool HttpNode::connect(bool isReconnect)
             return false;
         }
     }
+    // request IceCast stream metadata
+    esp_http_client_set_header(mClient, "Icy-MetaData", "1");
+    mIcyCtr = mIcyRemaining = 0;
 
     if (mBytePos) { // we are resuming, send position
         char rang_header[32];
@@ -155,14 +162,11 @@ bool HttpNode::connect(bool isReconnect)
             return false;
         }
 
-        int64_t contentLen = esp_http_client_fetch_headers(mClient);
-        if (!mBytePos) {
-            mBytesTotal = contentLen;
-        }
+        mContentLen = esp_http_client_fetch_headers(mClient);
 
         int status_code = esp_http_client_get_status_code(mClient);
-        ESP_LOGI(TAG, "Connected to '%s': http code: %d, content-length: %d",
-            mUrl, status_code, (int)mBytesTotal);
+        ESP_LOGI(TAG, "Connected to '%s': http code: %d, content-length: %u",
+            mUrl, status_code, mContentLen);
 
         if (status_code == 301 || status_code == 302) {
             ESP_LOGI(TAG, "Following redirect...");
@@ -192,29 +196,27 @@ bool HttpNode::connect(bool isReconnect)
     }
     return false;
 }
+
 bool HttpNode::parseResponseAsPlaylist()
 {
     if (!isPlaylist()) {
         ESP_LOGI(TAG, "Content length and url don't looke like a playlist");
         return false;
     }
-    int plLen = 0;
-    std::unique_ptr<char, decltype(::free)*> buf(nullptr, ::free);
-    int rlen;
+    std::unique_ptr<char, decltype(::free)*> buf((char*)malloc(mContentLen), ::free);
+    int bufLen = mContentLen;
     for (int retry = 0; retry < 4; retry++) {
-        if (mBytesTotal != plLen) {
-            plLen = mBytesTotal;
-            auto ptr = buf.release();
-            buf.reset((char*)(ptr ? realloc(ptr, plLen + 1) : malloc(plLen + 1)));
-            if (!buf.get()) {
-                ESP_LOGE(TAG, "Out of memory allocating buffer for playlist download");
-                return true;
-            }
+        if (!buf.get()) {
+            ESP_LOGE(TAG, "Out of memory allocating buffer for playlist download");
+            return true; // return empty playlist
         }
-        rlen = esp_http_client_read(mClient, buf.get(), plLen);
+        int rlen = esp_http_client_read(mClient, buf.get(), mContentLen);
         if (rlen < 0) {
             disconnect();
             connect();
+            if (mContentLen != bufLen) {
+                buf.reset((char*)realloc(buf.get(), mContentLen));
+            }
             continue;
         }
         buf.get()[rlen] = 0;
@@ -269,8 +271,6 @@ void HttpNode::recv()
 
             if (bufSize < 0) { // command queued
                 return;
-            } else if (bufSize > mRecvSize) {
-                bufSize = mRecvSize;
             }
             int rlen;
             for (;;) { // periodic timeout - check abort request flag
@@ -279,12 +279,17 @@ void HttpNode::recv()
                     if (errno == ETIMEDOUT) {
                         return;
                     }
-                    ESP_LOGW(TAG, "Error receiving http stream, errno: %d, rxBytes: %llu, rlen = %d",
-                        errno, mBytesTotal, rlen);
+                    ESP_LOGW(TAG, "Error receiving http stream, errno: %d, contentLen: %u, rlen = %d",
+                        errno, mContentLen, rlen);
                 }
                 break;
             }
             if (rlen > 0) {
+                if (mIcyInterval) {
+                    rlen = icyProcessRecvData(buf, rlen);
+                } else {
+                    ESP_LOGW(TAG, "NO ICY INTERVAL");
+                }
                 mRingBuf.commitWrite(rlen);
                 ESP_LOGI(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.totalDataAvail());
                 //TODO: Implement IceCast metadata support
@@ -314,7 +319,72 @@ void HttpNode::recv()
         connect();
     }
 }
+int HttpNode::icyProcessRecvData(char* buf, int rlen)
+{
+    if (mIcyRemaining) { // we are receiving metadata
+        myassert(mIcyMetaBuf.buf());
+        auto metaLen = std::min(rlen, (int)mIcyRemaining);
+        mIcyMetaBuf.append(buf, metaLen);
+        mIcyRemaining -= metaLen;
+        if (mIcyRemaining <= 0) { // meta data complete
+            myassert(mIcyRemaining == 0);
+            mIcyMetaBuf.appendChar(0);
+            mIcyCtr = rlen - metaLen;
+            if (mIcyCtr > 0) {
+                // there is stream data after end of metadata
+                memmove(buf, buf + metaLen, mIcyCtr);
+            } else { // no stream data after meta
+                myassert(mIcyCtr == 0);
+            }
+            icyParseMetaData();
+            return mIcyCtr;
+        } else { // metadata continues in next chunk
+            return 0; // all this chunk was metadata
+        }
+    } else { // not receiving metadata
+        if (mIcyCtr + rlen <= mIcyInterval) {
+            mIcyCtr += rlen;
+            return rlen; // no metadata in buffer
+        }
+        // metadata starts somewhere in our buffer
+        int metaOffset = mIcyInterval - mIcyCtr;
+        auto metaStart = buf + metaOffset;
+        int metaSize = (*metaStart << 4) + 1;
+        mIcyRemaining = metaSize; // includes the length byte
 
+        mIcyMetaBuf.clear();
+        mIcyMetaBuf.ensureFreeSpace(mIcyRemaining); // includes terminating null
+        int metaChunkSize = std::min(rlen - metaOffset, metaSize);
+        if (metaChunkSize > 1) {
+            mIcyMetaBuf.append(metaStart+1, metaChunkSize-1);
+        }
+        mIcyRemaining -= metaChunkSize;
+        if (mIcyRemaining > 0) { // metadata continues in next chunk
+            mIcyCtr = 0;
+            return metaOffset;
+        }
+        // meta starts and ends in our buffer
+        myassert(mIcyRemaining == 0);
+        mIcyMetaBuf.appendChar(0);
+        int remLen = rlen - metaOffset - metaSize;
+        mIcyCtr = remLen;
+        if (metaSize > 1) {
+            icyParseMetaData();
+        }
+        if (remLen > 0) { // we have stream data after the metadata
+            memmove(metaStart, metaStart + metaSize, remLen);
+            return metaOffset + remLen;
+        } else {
+            return metaOffset; // no stream data after metadata
+        }
+    }
+}
+void HttpNode::icyParseMetaData()
+{
+    ESP_LOGW("ICY", "Metadata received(%d): '%s'", mIcyMetaBuf.dataSize(), mIcyMetaBuf.buf());
+    sendEvent(kEventIcyInfo);
+
+}
 void HttpNode::send()
 {
 /*

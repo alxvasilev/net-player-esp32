@@ -48,26 +48,97 @@ public:
     }
 };
 
-class DynBuffer: public std::vector<char>
+class DynBuffer
 {
+protected:
+    char* mBuf;
+    int mBufSize;
+    int mDataSize = 0;
 public:
-    DynBuffer(size_t allocSize) { reserve(allocSize); }
+    char* buf() { return mBuf; }
+    int capacity() const { return mBufSize; }
+    int dataSize() const { return mDataSize; }
+    int freeSpace() const { return mBufSize - mDataSize; }
+    DynBuffer(size_t allocSize = 0)
+    {
+        if (!allocSize) {
+            mBuf = nullptr;
+            mBufSize = 0;
+            return;
+        }
+        mBuf = (char*)malloc(allocSize);
+        if (!mBuf) {
+            mBufSize = 0;
+            return;
+        }
+        mBufSize = allocSize;
+    }
+    ~DynBuffer() { if (mBuf) free(mBuf); }
+    void clear() { mDataSize = 0; }
+    char& operator[](int idx)
+    {
+        myassert(idx >= 0 && idx < mDataSize);
+        return mBuf[idx];
+    }
+    void reserve(int newSize)
+    {
+        if (newSize <= mBufSize) {
+            return;
+        }
+        auto newBuf = mBuf ? (char*)realloc(mBuf, newSize) : (char*)malloc(newSize);
+        if (!newBuf) {
+            ESP_LOGE("BUF", "reserve: Out of memory allocating %d bytes for buffer", newSize);
+            return;
+        }
+        mBuf = newBuf;
+        mBufSize = newSize;
+    }
+    void resize(int newDataSize)
+    {
+        if (newDataSize > mBufSize) {
+            reserve(newDataSize);
+        }
+        mDataSize = newDataSize;
+    }
+    void ensureFreeSpace(int amount)
+    {
+        auto needed = mDataSize + amount;
+        if (needed > mBufSize) {
+            reserve(needed);
+        }
+    }
+    char* appendPtr(int writeLen)
+    {
+        ensureFreeSpace(writeLen);
+        return mBuf + mDataSize;
+    }
+    void expandDataSize(int by)
+    {
+        auto newDataSize = mDataSize + by;
+        myassert(newDataSize <= mBufSize);
+        mDataSize = newDataSize;
+    }
+    void append(char* data, int dataSize)
+    {
+        ensureFreeSpace(dataSize);
+        memcpy(mBuf, data, dataSize);
+        mDataSize += dataSize;
+    }
+    void appendChar(char ch)
+    {
+        ensureFreeSpace(1);
+        mBuf[mDataSize++] = ch;
+    }
     int vprintf(const char *fmt, va_list args)
     {
-        size_t avail = capacity() - size();
-        if (avail < 2) {
-            reserve(capacity() + 64);
-            avail = capacity() - size();
-        }
-        auto oldSize = size();
-        resize(capacity());
+        int writeSize = 32;
         for (;;) {
-            int num = ::vsnprintf(data() + oldSize, avail, fmt, args);
+            int num = ::vsnprintf(appendPtr(writeSize), writeSize, fmt, args);
             if (num < 0) {
                 ESP_LOGE("DynBuffer", "printf: vsnprintf() returned error");
                 return num;
-            } else if (num < size()) {
-                resize(oldSize + num + 1);
+            } else if (num < writeSize) { // completely written
+                expandDataSize(num + 1);
                 return num;
             }
         }
@@ -98,7 +169,7 @@ char* numToHex(T val, char* str)
     *str = 0;
     return str;
 }
-
+std::string binToAscii(char* buf, int len, int lineLen=32);
 bool unescapeUrlParam(char* str, size_t len);
 
 uint8_t hexDigitVal(char digit);

@@ -28,7 +28,8 @@ protected:
         kHttpEventType = kEventLastGeneric + 1,
         kEventOnRequest,
         kEventNewTrack,
-        kEventNoMoreTracks
+        kEventNoMoreTracks,
+        kEventIcyInfo
     };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1,
                     kCommandNotifyFlushed };
@@ -46,11 +47,16 @@ protected:
     volatile bool mWaitingPrefill = true;
     volatile bool mFlushRequested = false;
     int mPrefillAmount;
-    int64_t mBytesTotal;
-    int mRecvSize = 2048;
+    uint32_t mContentLen;
+    DynBuffer mIcyMetaBuf;
+    int32_t mIcyCtr = 0;
+    int32_t mIcyInterval = 0;
+    int16_t mIcyRemaining = 0;
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     static CodecType codecFromContentType(const char* content_type);
     bool isPlaylist();
+    int icyProcessRecvData(char* buf, int len);
+    void icyParseMetaData();
     bool createClient();
     bool parseContentType();
     bool parseResponseAsPlaylist();

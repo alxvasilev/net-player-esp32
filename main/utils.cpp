@@ -26,6 +26,27 @@ uint8_t hexDigitVal(char digit) {
         return 0xff;
     }
 }
+std::string binToAscii(char* buf, int len, int lineLen)
+{
+    std::string result;
+    result.reserve(len);
+    for (int i = 0; i < len; i++) {
+        if (i % lineLen == 0) {
+            result += '\n';
+            char buf[12];
+            result.append(itoa(i, buf, 10));
+            result += '\t';
+            result += ':';
+        }
+        char ch = buf[i];
+        if (ch >= 32 && ch <= 126) {
+            result += ch;
+        } else {
+            result += '.';
+        }
+    }
+    return result;
+}
 
 bool unescapeUrlParam(char* str, size_t len)
 {

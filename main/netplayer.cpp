@@ -218,7 +218,7 @@ static esp_err_t indexUrlHandler(httpd_req_t *req)
         xPortGetFreeHeapSize(), CONFIG_IDF_TARGET,
         chip_info.cores, currentCpuFreq(), chip_info.revision
     );
-    httpd_resp_send_chunk(req, buf.data(), buf.size());
+    httpd_resp_send_chunk(req, buf.buf(), buf.dataSize());
     buf.clear();
 
     buf.printf("radio: WiFi%s%s\nflash size: %dMB\nflash type: %s\nTasks:\n",
@@ -227,7 +227,7 @@ static esp_err_t indexUrlHandler(httpd_req_t *req)
         spi_flash_get_chip_size() / (1024 * 1024),
         (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external"
     );
-    httpd_resp_send_chunk(req, buf.data(), buf.size());
+    httpd_resp_send_chunk(req, buf.buf(), buf.dataSize());
     buf.clear();
     std::string stats;
     taskList.update(&stats);

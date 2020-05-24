@@ -388,7 +388,7 @@ esp_err_t AudioPlayer::playUrlHandler(httpd_req_t *req)
     self->playUrl(url);
     DynBuffer buf(128);
     buf.printf("Changing stream url to '%s'", url);
-    httpd_resp_send(req, buf.data(), buf.size());
+    httpd_resp_send(req, buf.buf(), buf.dataSize());
     return ESP_OK;
 }
 
@@ -441,7 +441,7 @@ esp_err_t AudioPlayer::volumeUrlHandler(httpd_req_t *req)
     }
     DynBuffer buf(24);
     buf.printf("Volume set to %d", newVol);
-    httpd_resp_send(req, buf.data(), buf.size());
+    httpd_resp_send(req, buf.buf(), buf.dataSize());
     return ESP_OK;
 }
 
@@ -486,8 +486,8 @@ esp_err_t AudioPlayer::equalizerDumpUrlHandler(httpd_req_t *req)
     for (int i = 0; i < 10; i++) {
         buf.printf("[%d,%.1f],", self->equalizerFreqs[i], levels[i]);
     }
-    buf[buf.size()-2] = '}';
-    httpd_resp_send(req, buf.data(), buf.size());
+    buf[buf.dataSize()-2] = '}';
+    httpd_resp_send(req, buf.buf(), buf.dataSize());
     return ESP_OK;
 }
 
