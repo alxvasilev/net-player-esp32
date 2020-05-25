@@ -138,9 +138,17 @@ public:
         ensureFreeSpace(1);
         mBuf[mDataSize++] = ch;
     }
+    void truncateChar(int num=1)
+    {
+        int newDataSize = mDataSize - num;
+        mDataSize = (newDataSize < 0) ? 0 : newDataSize;
+    }
     int vprintf(const char *fmt, va_list args)
     {
-        int writeSize = std::max(freeSpace(), 8);
+        if ((mDataSize > 0) && (mBuf[mDataSize - 1] == 0)) {
+            mDataSize--;
+        }
+        int writeSize = freeSpace();
         for (;;) {
             int num = ::vsnprintf(appendPtr(writeSize), writeSize, fmt, args);
             if (num < 0) {
@@ -149,7 +157,7 @@ public:
                 expandDataSize(num + 1);
                 return num;
             } else {
-                writeSize <<= 1;
+                writeSize = num + 1;
             }
         }
     }

@@ -211,16 +211,14 @@ bool AudioPlayer::isStopped() const
     return mStreamIn->state() == AudioNode::kStateStopped ||
            mStreamOut->state() == AudioNode::kStateStopped;
 }
-bool AudioPlayer::isPaused() const
-{
-    return mStreamIn->state() <= AudioNode::kStatePaused ||
-           mStreamOut->state() <= AudioNode::kStatePaused;
-}
-
 bool AudioPlayer::isPlaying() const
 {
+    if (!mStreamIn || !mStreamOut) {
+        return false;
+    }
     return mStreamIn->state() == AudioNode::kStateRunning ||
            mStreamOut->state() == AudioNode::kStateRunning;
+
 }
 
 void AudioPlayer::play()
@@ -491,6 +489,43 @@ esp_err_t AudioPlayer::equalizerDumpUrlHandler(httpd_req_t *req)
     return ESP_OK;
 }
 
+esp_err_t AudioPlayer::getStatusUrlHandler(httpd_req_t* req)
+{
+    auto self = static_cast<AudioPlayer*>(req->user_ctx);
+    MutexLocker locker(self->mutex);
+    DynBuffer buf;
+    auto in = self->mStreamIn.get();
+    if (!in) {
+        buf.reserve(32);
+        buf.printf("{\"state\":0,\"fmem\":%d}", xPortGetFreeHeapSize());
+        httpd_resp_sendstr(req, buf.buf());
+        return ESP_OK;
+    }
+    buf.printf("{\"state\":%d,\"src\":\"%s\"", in->state(), in->tag());
+    if (in->state() == AudioNode::kStateRunning &&
+        in->type() == AudioNode::kTypeHttpIn) {
+            auto http = static_cast<HttpNode*>(in);
+            if (http->stationName()) {
+                buf.printf(",\"sname\":\"%s\"", http->stationName());
+            }
+            if (http->stationDesc()) {
+                buf.printf(",\"sdesc\":\"%s\"", http->stationDesc());
+            }
+            if (http->stationGenre()) {
+                buf.printf(",\"sgenre\":\"%s\"", http->stationGenre());
+            }
+            if (http->stationUrl()) {
+                buf.printf(",\"surl\":\"%s\"", http->stationUrl());
+            }
+            if (http->trackName()) {
+                buf.printf(",\"track\":\"%s\"", http->trackName());
+            }
+    }
+    buf.printf("}");
+    httpd_resp_sendstr(req, buf.buf());
+    return ESP_OK;
+}
+
 void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
 {
     registerHttpGetHandler(server, "/play", &playUrlHandler);
@@ -498,6 +533,7 @@ void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
     registerHttpGetHandler(server, "/vol", &volumeUrlHandler);
     registerHttpGetHandler(server, "/eqget", &equalizerDumpUrlHandler);
     registerHttpGetHandler(server, "/eqset", &equalizerSetUrlHandler);
+    registerHttpGetHandler(server, "/status", &getStatusUrlHandler);
 }
 
 bool AudioPlayer::onEvent(AudioNode *self, uint16_t event, void *buf, size_t bufSize)

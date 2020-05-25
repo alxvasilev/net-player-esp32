@@ -89,5 +89,5 @@ public:
     const char* stationDesc() const { return mStationDesc.ptr(); }
     const char* stationGenre() const { return mStationGenre.ptr(); }
     const char* stationUrl() const { return mStationUrl.ptr(); }
-    const char* streamTitle() const;
+    const char* trackName() const;
 };

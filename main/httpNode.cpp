@@ -91,18 +91,24 @@ bool HttpNode::createClient()
         ESP_LOGE(TAG, "Error creating http client, probably out of memory");
         return false;
     };
+    esp_http_client_set_header(mClient, "User-Agent", "curl/7.65.3");
+    esp_http_client_set_header(mClient, "Icy-MetaData", "1");
     return true;
 }
+
 esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
 {
     if (evt->event_id != HTTP_EVENT_ON_HEADER) {
         return ESP_OK;
     }
+    ESP_LOGW(TAG, "hdr: '%s': '%s'", evt->header_key, evt->header_value);
+
     auto self = static_cast<HttpNode*>(evt->user_data);
     auto key = evt->header_key;
     if (strcasecmp(key, "Content-Type") == 0) {
         self->mStreamFormat.codec = self->codecFromContentType(evt->header_value);
-        ESP_LOGI(TAG, "Parsed content-type '%s' as %d", evt->header_value, self->mStreamFormat.codec);
+        ESP_LOGI(TAG, "Parsed content-type '%s' as %s", evt->header_value,
+            codecTypeToStr(self->mStreamFormat.codec));
     } else if (strcasecmp(key, "icy-metaint") == 0) {
         auto self = static_cast<HttpNode*>(evt->user_data);
         self->mIcyInterval = atoi(evt->header_value);
@@ -110,7 +116,7 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
         ESP_LOGI(TAG, "Response contains ICY metadata with interval %d", self->mIcyInterval);
     } else if (strcasecmp(key, "icy-name") == 0) {
         self->mStationName.freeAndReset(strdup(evt->header_value));
-    } else if (strcasecmp(key, "icy-desciption") == 0) {
+    } else if (strcasecmp(key, "icy-description") == 0) {
         self->mStationDesc.freeAndReset(strdup(evt->header_value));
     } else if (strcasecmp(key, "icy-genre") == 0) {
         self->mStationGenre.freeAndReset(strdup(evt->header_value));
@@ -153,7 +159,6 @@ bool HttpNode::connect(bool isReconnect)
     }
     // request IceCast stream metadata
     clearAllIcyInfo();
-    esp_http_client_set_header(mClient, "Icy-MetaData", "1");
 
     if (mBytePos) { // we are resuming, send position
         char rang_header[32];
@@ -357,12 +362,14 @@ int HttpNode::icyProcessRecvData(char* buf, int rlen)
         auto metaStart = buf + metaOffset;
         int metaSize = (*metaStart << 4) + 1;
         mIcyRemaining = metaSize; // includes the length byte
-
-        mIcyMetaBuf.clear();
-        mIcyMetaBuf.ensureFreeSpace(mIcyRemaining); // includes terminating null
         int metaChunkSize = std::min(rlen - metaOffset, metaSize);
-        if (metaChunkSize > 1) {
-            mIcyMetaBuf.append(metaStart+1, metaChunkSize-1);
+
+        if (metaSize > 1) {
+            mIcyMetaBuf.clear();
+            mIcyMetaBuf.ensureFreeSpace(mIcyRemaining); // includes terminating null
+            if (metaChunkSize > 1) {
+                mIcyMetaBuf.append(metaStart+1, metaChunkSize-1);
+            }
         }
         mIcyRemaining -= metaChunkSize;
         if (mIcyRemaining > 0) { // metadata continues in next chunk
@@ -371,10 +378,10 @@ int HttpNode::icyProcessRecvData(char* buf, int rlen)
         }
         // meta starts and ends in our buffer
         myassert(mIcyRemaining == 0);
-        mIcyMetaBuf.appendChar(0);
         int remLen = rlen - metaOffset - metaSize;
         mIcyCtr = remLen;
         if (metaSize > 1) {
+            mIcyMetaBuf.appendChar(0);
             icyParseMetaData();
         }
         if (remLen > 0) { // we have stream data after the metadata
@@ -406,7 +413,7 @@ void HttpNode::icyParseMetaData()
     mIcyMetaBuf[titleSize] = 0;
     mIcyMetaBuf.setDataSize(titleSize + 1);
     sendEvent(kEventTrackInfo, mIcyMetaBuf.buf(), mIcyMetaBuf.dataSize());
-    ESP_LOGW(TAG, "Stream title changed: '%s'", mIcyMetaBuf.buf());
+    ESP_LOGW(TAG, "Track name changed: '%s'", mIcyMetaBuf.buf());
 }
 
 void HttpNode::setUrl(const char* url)
@@ -434,6 +441,7 @@ bool HttpNode::dispatchCommand(Command &cmd)
         mFlushRequested = true; // request flush along the pipeline
         setWaitingPrefill(true);
         setState(kStateRunning);
+        ESP_LOGI(TAG, "Url set, switched to running state");
         break;
     default: return false;
     }
@@ -556,10 +564,7 @@ void HttpNode::clearAllIcyInfo()
     mStationUrl.free();
 }
 
-const char* HttpNode::streamTitle() const
+const char* HttpNode::trackName() const
 {
-    if (!mIcyInterval || !mIcyMetaBuf) {
-        return nullptr;
-    }
-    return mIcyMetaBuf.buf();
+    return mIcyInterval ? mIcyMetaBuf.buf() : nullptr;
 }

@@ -17,6 +17,7 @@ public:
     static void disable(esp_bt_mode_t mode);
     static void disableCompletely() { disable(ESP_BT_MODE_BTDM); }
     static void disableBLE() { disable(ESP_BT_MODE_BLE); }
+    static void becomeDiscoverableAndConnectable();
 };
 
 #endif
