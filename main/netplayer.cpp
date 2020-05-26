@@ -24,6 +24,7 @@
 #include "wifi.hpp"
 #include "bluetooth.hpp"
 #include "taskList.hpp"
+#include <st7735.hpp>
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
@@ -48,6 +49,7 @@ httpd_handle_t gHttpServer = nullptr;
 std::unique_ptr<AudioPlayer> player;
 WifiClient wifiClient;
 TaskList taskList;
+ST7735Display lcd;
 
 void reconfigDhcpServer();
 void startWifiSoftAp();
@@ -190,6 +192,17 @@ extern "C" void app_main(void)
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
 // ====
+    ST7735Display::PinCfg lcdPins = {
+        .spiHost = VSPI_HOST,
+        .clk = GPIO_NUM_18,
+        .mosi = GPIO_NUM_23,
+        .cs = GPIO_NUM_5,
+        .dc = GPIO_NUM_33, // data/command
+        .rst = GPIO_NUM_4
+    };
+
+    lcd.init(128, 128, lcdPins);
+//    lcd.clear(lcd.mkcolor(0, 0xff, 0x44));
     player.reset(new AudioPlayer);
     player->registerUrlHanlers(gHttpServer);
     player->playlist.load((char*)std::string(gPlaylist).c_str());
