@@ -166,70 +166,87 @@ void ST7735Display::displayReset()
   msDelay(100);
 
   sendCmd(ST77XX_SWRESET);
-  msDelay(200);
+  msDelay(50);
 
   sendCmd(ST77XX_SLPOUT);     // Sleep out, booster on
-  msDelay(200);
+  msDelay(500);
 
   sendCmd(ST77XX_COLMOD),
   sendData({0x05});
+  msDelay(10);
 
   sendCmd(ST7735_FRMCTR1);     // Frame rate control
   sendData({
-      0x01,   //     fastest refresh
-      0x2c,   //     6 lines front porch
-      0x2d    //     3 lines back porch
+      0x00,   //     fastest refresh
+      0x06,   //     6 lines front porch
+      0x03,   //     3 lines back porch
   });
-
-  sendCmd(ST7735_FRMCTR2);     // Frame rate control
-  sendData({
-      0x01,   //     fastest refresh
-      0x2c,   //     6 lines front porch
-      0x2d    //     3 lines back porch
-  });
-
-  sendCmd(ST7735_FRMCTR3);     // Frame rate control
-  sendData({ 0x01, 0x2c, 0x2d, 0x01, 0x2c, 0x2d });
-
-  sendCmd(ST7735_INVCTR); // inversion control
-  sendData({0x07}); // Line inversion
-
-  sendCmd(ST7735_PWCTR1); // power control
-  sendData({
-      0xa2,
-      0x02,
-      0x84
-  });
-
-  sendCmd(ST7735_PWCTR2);
-  sendData({0xc5});
-
-  sendCmd(ST7735_PWCTR3);
-  sendData({
-      0x0a,
-      0x00
-  });
-
-  sendCmd(ST7735_PWCTR4);
-  sendData({
-      0x8a,
-      0x2a
-  });
-  sendCmd(ST7735_PWCTR5);
-  sendData({
-      0x8a,
-      0xee
-  });
-
-  sendCmd(ST7735_VMCTR1);
-  sendData({ 0x0e });
   msDelay(10);
 
-  sendCmd(ST77XX_INVOFF);
   sendCmd(ST77XX_MADCTL);
-  sendData({0x00});
+  sendData({0x08});
+  sendCmd(ST7735_DISSET5);
+  sendData({
+      0x15,  // 1 clk cycle nonoverlap, 2 cycle gate rise, 3 cycle osc equalize
+      0x02   // Fix on VTL
+  });
+  sendCmd(ST7735_INVCTR); // inversion control
+  sendData({0x00}); // Line inversion
+  sendCmd(ST7735_PWCTR1); // power control
+  sendData({
+      0x02, //     GVDD = 4.7V
+      0x70  //     1.0uA
+  });
+  msDelay(10);
+  sendCmd(ST7735_PWCTR2);
+  sendData({0x05}); //     VGH = 14.7V, VGL = -7.35V
+  sendCmd(ST7735_PWCTR3);
+  sendData({
+      0x01, //     Opamp current small
+      0x02, //     Boost frequency
+  });
+  sendCmd(ST7735_VMCTR1);
+  sendData({
+      0x3C, //     VCOMH = 4V
+      0x38  //     VCOML = -1.1V
+  });
+  msDelay(10);
+
+  sendCmd(ST7735_PWCTR6);
+  sendData({0x11, 0x15});
+
+  sendCmd(ST7735_GMCTRP1); // Gamma Adjustments (pos. polarity), 16 args + delay:
+  sendData({
+      0x09, 0x16, 0x09, 0x20,       //     (Not entirely necessary, but provides
+      0x21, 0x1B, 0x13, 0x19,       //      accurate colors)
+      0x17, 0x15, 0x1E, 0x2B,
+      0x04, 0x05, 0x02, 0x0E
+  });
+  sendCmd(ST7735_GMCTRN1); // Gamma Adjustments (neg. polarity), 16 args + delay:
+  sendData({
+      0x0B, 0x14, 0x08, 0x1E,       //     (Not entirely necessary, but provides
+      0x22, 0x1D, 0x18, 0x1E,       //      accurate colors)
+      0x1B, 0x1A, 0x24, 0x2B,
+      0x06, 0x06, 0x02, 0x0F
+  });
+  msDelay(10);
+
+  sendCmd(ST77XX_CASET);   // 15: Column addr set, 4 args, no delay:
+  sendData({
+    0x00, 0x02,            //     XSTART = 2
+    0x00, 0x81             //     XEND = 129
+  });
+
+  sendCmd(ST77XX_RASET);   // 16: Row addr set, 4 args, no delay:
+  sendData({
+    0x00, 0x02,            //     XSTART = 1
+    0x00, 0x81,            //     XEND = 160
+  });
+  sendCmd(ST77XX_NORON);   // 17: Normal display on, no args, w/delay
+  msDelay(10);
 
   sendCmd(ST77XX_DISPON); // 18: Main screen turn on, no args, delay
+  msDelay(500);
 //setOrientation(kOrientNormal);
 }
 
