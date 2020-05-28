@@ -1,6 +1,7 @@
 #include "st7735.hpp"
 #include <driver/gpio.h>
 #include <esp_timer.h>
+#include <esp_log.h>
 
 #define ST77XX_NOP 0x00
 #define ST77XX_SWRESET 0x01
@@ -77,6 +78,13 @@ void ST7735Display::init(int16_t width, int16_t height, PinCfg& pins)
     mHeight = height;
     mDcPin = pins.dc;
     mRstPin = pins.rst;
+
+    //Initialize non-SPI GPIOs
+    gpio_pad_select_gpio((gpio_num_t)mDcPin);
+    gpio_set_direction((gpio_num_t)mDcPin, GPIO_MODE_OUTPUT);
+    gpio_pad_select_gpio((gpio_num_t)mRstPin);
+    gpio_set_direction((gpio_num_t)mRstPin, GPIO_MODE_OUTPUT);
+    // init SPI bus and device
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
     spi_bus_config_t buscfg = {
         .mosi_io_num=pins.mosi,
@@ -86,23 +94,21 @@ void ST7735Display::init(int16_t width, int16_t height, PinCfg& pins)
         .quadhd_io_num=-1,
         .max_transfer_sz = width * 2 * 4 // 4 lines
     };
-    spi_device_interface_config_t devcfg = {
-        .mode=0,                                //SPI mode 0
-        .clock_speed_hz=10 * 1000 * 1000,       //Clock out at 10 MHz
-        .spics_io_num=pins.cs,                  //CS pin
-        .queue_size=7,                          //We want to be able to queue 7 transactions at a time
-        .pre_cb = preTransferCallback           //Specify pre-transfer callback to handle D/C line
-    };
     //Initialize the SPI bus
     auto ret = spi_bus_initialize(pins.spiHost, &buscfg, 1);
     ESP_ERROR_CHECK(ret);
+
+    spi_device_interface_config_t devcfg = {
+        .mode = 0,                                //SPI mode 0
+        .clock_speed_hz = 27 * 1000 * 1000,       //Clock out at 10 MHz
+        .spics_io_num = pins.cs,                  //CS pin
+        .queue_size = 20,                          //We want to be able to queue 7 transactions at a time
+        .pre_cb = preTransferCallback           //Specify pre-transfer callback to handle D/C line
+    };
     //Attach the LCD to the SPI bus
     ret = spi_bus_add_device(pins.spiHost, &devcfg, &mSpi);
     ESP_ERROR_CHECK(ret);
 
-    //Initialize non-SPI GPIOs
-    gpio_set_direction((gpio_num_t)mDcPin, GPIO_MODE_OUTPUT);
-    gpio_set_direction((gpio_num_t)mRstPin, GPIO_MODE_OUTPUT);
     displayReset();
 }
 
@@ -158,95 +164,108 @@ uint16_t ST7735Display::mkcolor(uint8_t R,uint8_t G,uint8_t B)
 
 void ST7735Display::displayReset()
 {
-  setRstLevel(1);
-  msDelay(100);
   setRstLevel(0);
-  msDelay(100);
+  msDelay(10);
   setRstLevel(1);
-  msDelay(100);
+  msDelay(200);
 
   sendCmd(ST77XX_SWRESET);
-  msDelay(50);
-
+  msDelay(200);
   sendCmd(ST77XX_SLPOUT);     // Sleep out, booster on
-  msDelay(500);
-
-  sendCmd(ST77XX_COLMOD),
-  sendData({0x05});
-  msDelay(10);
+  msDelay(200);
 
   sendCmd(ST7735_FRMCTR1);     // Frame rate control
   sendData({
-      0x00,   //     fastest refresh
-      0x06,   //     6 lines front porch
-      0x03,   //     3 lines back porch
+      0x01,   //     fastest refresh
+      0x2c,   //     6 lines front porch
+      0x2d,   //     3 lines back porch
   });
-  msDelay(10);
 
-  sendCmd(ST77XX_MADCTL);
-  sendData({0x08});
-  sendCmd(ST7735_DISSET5);
+  sendCmd(ST7735_FRMCTR2);     // Frame rate control
   sendData({
-      0x15,  // 1 clk cycle nonoverlap, 2 cycle gate rise, 3 cycle osc equalize
-      0x02   // Fix on VTL
+      0x01,   //     fastest refresh
+      0x2c,   //     6 lines front porch
+      0x2d,   //     3 lines back porch
   });
+  sendCmd(ST7735_FRMCTR3);     // Frame rate control
+  sendData({
+      0x01, 0x2c, 0x2d,
+      0x01, 0x2c, 0x2d
+  });
+
   sendCmd(ST7735_INVCTR); // inversion control
-  sendData({0x00}); // Line inversion
+  sendData({0x07}); // Line inversion
+
   sendCmd(ST7735_PWCTR1); // power control
   sendData({
-      0x02, //     GVDD = 4.7V
-      0x70  //     1.0uA
+      0xa2, //     GVDD = 4.7V
+      0x02,  //     1.0uA
+      0x84
   });
-  msDelay(10);
+
   sendCmd(ST7735_PWCTR2);
-  sendData({0x05}); //     VGH = 14.7V, VGL = -7.35V
+  sendData({0xc5});
+
   sendCmd(ST7735_PWCTR3);
   sendData({
-      0x01, //     Opamp current small
-      0x02, //     Boost frequency
+      0x0a,
+      0x00
+  });
+  sendCmd(ST7735_PWCTR4);
+  sendData({
+      0x8A,                         //     BCLK/2,
+      0x2A,                         //     opamp current small & medium low
+  });
+  sendCmd(ST7735_PWCTR5);
+  sendData({
+      0x8A, 0xEE
   });
   sendCmd(ST7735_VMCTR1);
-  sendData({
-      0x3C, //     VCOMH = 4V
-      0x38  //     VCOML = -1.1V
-  });
-  msDelay(10);
+  sendData({0x0e});
 
-  sendCmd(ST7735_PWCTR6);
-  sendData({0x11, 0x15});
-
-  sendCmd(ST7735_GMCTRP1); // Gamma Adjustments (pos. polarity), 16 args + delay:
-  sendData({
-      0x09, 0x16, 0x09, 0x20,       //     (Not entirely necessary, but provides
-      0x21, 0x1B, 0x13, 0x19,       //      accurate colors)
-      0x17, 0x15, 0x1E, 0x2B,
-      0x04, 0x05, 0x02, 0x0E
-  });
-  sendCmd(ST7735_GMCTRN1); // Gamma Adjustments (neg. polarity), 16 args + delay:
-  sendData({
-      0x0B, 0x14, 0x08, 0x1E,       //     (Not entirely necessary, but provides
-      0x22, 0x1D, 0x18, 0x1E,       //      accurate colors)
-      0x1B, 0x1A, 0x24, 0x2B,
-      0x06, 0x06, 0x02, 0x0F
-  });
-  msDelay(10);
-
+  sendCmd(ST77XX_INVOFF);
+  sendCmd(ST77XX_MADCTL);
+  sendData({0xc8});
+  sendCmd(ST77XX_COLMOD);
+  sendData({0x05});
+/*
+// 2nd stage - addressing
   sendCmd(ST77XX_CASET);   // 15: Column addr set, 4 args, no delay:
   sendData({
-    0x00, 0x02,            //     XSTART = 2
-    0x00, 0x81             //     XEND = 129
+    0x00, 0x00,
+    0x00, 0x7f
   });
 
   sendCmd(ST77XX_RASET);   // 16: Row addr set, 4 args, no delay:
   sendData({
-    0x00, 0x02,            //     XSTART = 1
-    0x00, 0x81,            //     XEND = 160
+    0x00, 0x00,
+    0x00, 0x9f
   });
+*/
+/*
+// 3rd stage - gamma
+  sendCmd(ST7735_GMCTRP1); // Gamma Adjustments (pos. polarity), 16 args + delay:
+  sendData({
+      0x02, 0x1c, 0x07, 0x12,       //     (Not entirely necessary, but provides
+      0x37, 0x32, 0x29, 0x2d,       //      accurate colors)
+      0x29, 0x25, 0x2B, 0x39,
+      0x00, 0x01, 0x03, 0x10
+  });
+  sendCmd(ST7735_GMCTRN1); // Gamma Adjustments (neg. polarity), 16 args + delay:
+  sendData({
+      0x03, 0x1d, 0x07, 0x06,       //     (Not entirely necessary, but provides
+      0x2E, 0x2C, 0x29, 0x2D,       //      accurate colors)
+      0x2E, 0x2E, 0x37, 0x3F,
+      0x00, 0x00, 0x02, 0x10,
+  });
+*/
+//===
   sendCmd(ST77XX_NORON);   // 17: Normal display on, no args, w/delay
   msDelay(10);
 
   sendCmd(ST77XX_DISPON); // 18: Main screen turn on, no args, delay
-  msDelay(500);
+  msDelay(200);
+
 //setOrientation(kOrientNormal);
 }
 
@@ -274,23 +293,23 @@ void ST7735Display::setOrientation(Orientation orientation)
 
 void ST7735Display::setWriteWindow(uint16_t XS, uint16_t YS, uint16_t XE, uint16_t YE)
 {
-  sendCmd(0x2a); // Column address set
+  sendCmd(ST77XX_CASET); // Column address set
   sendData({
       (uint8_t)(XS >> 8),
-      (uint8_t)XS,
+      (uint8_t)(XS & 0xff),
       (uint8_t)(XE >> 8),
-      (uint8_t)XE
+      (uint8_t)(XE & 0xff)
   });
 
-  sendCmd(0x2b); // Row address set
+  sendCmd(ST77XX_RASET); // Row address set
   sendData({
       (uint8_t)(YS >> 8),
-      (uint8_t)YS,
+      (uint8_t)(YS & 0xff),
       (uint8_t)(YE >> 8),
-      (uint8_t)YE
+      (uint8_t)(YE & 0xff)
    });
 
-  sendCmd(0x2c); // Memory write
+  sendCmd(ST77XX_RAMWR); // Memory write
 }
 
 void ST7735Display::fillRect(int16_t x0, int16_t y0, int16_t x1,
@@ -323,6 +342,12 @@ void ST7735Display::fillRect(int16_t x0, int16_t y0, int16_t x1,
 
 void ST7735Display::clear(uint16_t color)
 {
+    for (int x = 0; x < 128; x++) {
+        for (int y = 0; y < 128; y++) {
+            setPixel(x, y, color);
+        }
+    }
+    return;
     fillRect(0, 0, mWidth-1, mHeight-1, color);
 }
 

@@ -202,7 +202,9 @@ extern "C" void app_main(void)
     };
 
     lcd.init(128, 128, lcdPins);
-    lcd.clear(ST77XX_BLACK);
+    lcd.clear(0x00ff00);
+    return;
+
     player.reset(new AudioPlayer);
     player->registerUrlHanlers(gHttpServer);
     player->playlist.load((char*)std::string(gPlaylist).c_str());
