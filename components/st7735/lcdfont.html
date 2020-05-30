@@ -1,0 +1,942 @@
+<html>
+<head>
+<style>
+
+.glyph {
+    display: inline-block;
+    float: left;
+    vertical-align: top;
+}
+#main {
+    display: flex;
+    flex-flow: row;
+}
+#menu {
+    display: flex;
+    flex-flow: row;
+    border-bottom: 1px solid #eeeeee;
+    flex: 0 0 40px;
+}
+#pageDiv {
+    display: flex;
+    flex-flow: column;
+    height: 100%;
+    user-select: none;
+    cursor: default;
+}
+#editorGroup {
+    flex: 0 0 auto;
+    display: flex;
+    flex-flow: column;
+    border-right: 1px solid #eeeeee;
+}
+#editor {
+   flex: 0 0 auto;
+   border-bottom: 1px solid #eeeeee;
+   border-left: 1px solid #eeeeee;
+}
+#typingArea {
+    flex: 0 0 auto;
+    border: 0px;
+    border-bottom: 1px solid #eeeeee;
+    background-color: #f0f0f0;
+    height: 80px;
+}
+#lcd {
+ height: 128px;
+ width:256px;
+ background: linear-gradient(to bottom, #f1f7de 0%,#cfd9b0 100%);
+ overflow: hidden;
+}
+
+#glyphs {
+    flex: 1 1 auto;
+    display: flex;
+    flex-flow: row;
+    flex-wrap: wrap;
+    align-self: stretch;
+    overflow: auto;
+}
+#spacer {
+    flex: 0 0 10px;
+}
+.glyph {
+    flex: 0 0 auto;
+    border: 1px solid #eeeeee;
+    margin: 4px;
+}
+.openCaption {
+    text-align: center;
+    font-size: 44px;
+    flex: 0 0 auto;
+    padding-top: 15px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #eeeeee;
+}
+
+.openBtnPanel {
+    flex: 0 0 auto;
+    display: flex;
+    flex-flow: row;
+}
+
+.openModeSection {
+    flex: 1 1 50%;
+    flex-flow: column;
+    justify-content: space-around;
+}
+
+.openBtn {
+    flex: 0 0 auto;
+    flex-flow: row;
+    align-self: center;
+    text-align: center;
+    border-radius: 8px;
+    border: 2px solid #eeeeee;
+    padding: 10px;
+    cursor: hand;
+    font-size: 20px;
+}
+.openBtn:hover {
+    background: lightblue;
+}
+.openOptions {
+    flex: 0 0 auto;
+    align-self: center;
+    display: flex;
+    flex-flow: column;
+}
+.fontSelect {
+    flex: 0 0 auto;
+    align-self: center;
+}
+.borderBottomRight {
+   border-bottom: 1px solid #eeeeee;
+   border-right: 1px solid #eeeeee;
+}
+.ctxMenu {
+    position: absolute;
+    z-index:1000;
+    border: 1px solid black;
+    padding: 2px;
+    opacity: 1;
+    background-color: white;
+    cursor: hand;
+    border-radius: 6px;
+}
+.ctxMenu tr:hover {
+    background-color: lightblue
+}
+</style>
+</head>
+<body id=page>
+</body>
+
+<script language=javascript>
+const kColorFg = "black";
+const kColorBg = "white";
+var blackThresh = (localStorage.blackThresh === undefined)
+    ? 170 : parseInt(localStorage.blackThresh);
+
+var gConfig = {
+    spaceWidth: 1,
+    targetFontHeight: 10
+}
+
+function loadConfig() {
+    for (var k in gConfig) {
+        var strVal = localStorage[k];
+        if (strVal !== undefined) {
+            var val = parseInt(strVal);
+            console.log("Config override from localStorage:", k, ":", gConfig[k], "->", val);
+            gConfig[k] = val;
+        }
+    }
+}
+var gMonospaceFont = false;
+function GlyphModel(w, h, ch)
+{
+    this.width = w;
+    this.height = h;
+    this.char = ch;
+    this.allocate();
+    this.listeners = new Array();
+}
+var gmProto = GlyphModel.prototype;
+var UndoOp = Object.freeze({
+    kSetPixel: 1,
+    kDeleteCol: 2,
+    kInsertCol: 3
+});
+
+gmProto.allocate = function()
+{
+    var h = this.height;
+    var w = this.width;
+    this.rows = new Array(h);
+    for (var r=0; r<h; r++) {
+        var row = this.rows[r] = new Array(w);
+        for (var c=0; c<w; c++) {
+           row[c] = false;
+        }
+    }
+}
+//accessor function to lazily create the undo buffer
+gmProto.undoBuf = function() {
+    var buf = this._undoBuf;
+    if (!buf) {
+        buf = this._undoBuf = [];
+    }
+    return buf;
+}
+
+gmProto.flip = function(x, y, isUndo)
+{
+    var row = this.rows[y];
+    var curr = row[x];
+    var val = row[x] = !curr;
+    var count = this.listeners.length;
+    for (var i=0; i<count; i++) {
+        this.listeners[i].onPixelChanged(x, y, val);
+    }
+    if (!isUndo) {
+        this.undoBuf().push([UndoOp.kSetPixel, x, y, curr]);
+    }
+    return curr;
+}
+
+gmProto.set = function(x, y, val, isUndo)
+{
+    var row = this.rows[y];
+    var oldVal = row[x];
+    if (val === oldVal)
+        return undefined;
+    row[x] = val;
+    var count = this.listeners.length;
+    for (var i=0; i<count; i++) {
+        this.listeners[i].onPixelChanged(x, y, val);
+    }
+    if (!isUndo) {
+        this.undoBuf().push([UndoOp.kSetPixel, x, y, oldVal]);
+    }
+    return oldVal;
+}
+gmProto.deleteColumn = function(x, isUndo)
+{
+    var oldCol = [];
+    var h = this.height;
+    for (var r = 0; r < h; r++) {
+        var row = this.rows[r];
+        oldCol.push(row[x]);
+        row.splice(x, 1);
+    }
+    this.width--;
+    if (!isUndo) {
+        this.undoBuf().push([UndoOp.kInsertCol, x, oldCol]);
+    }
+    this.notifyDimensionsChanged();
+}
+
+gmProto.notifyDimensionsChanged = function()
+{
+    var count = this.listeners.length;
+    for (var i=0; i<count; i++) {
+        this.listeners[i].onDimensionsChanged();
+    }
+}
+
+gmProto.insertColumn = function(x, undoCol)
+{
+    var oldModel = this.clone();
+    var h = this.height;
+    if (x === this.width) {
+        for (var r = 0; r < h; r++) {
+            this.rows[r].push(undoCol ? undoCol[r] : false);
+        }
+    } else {
+        for (var r = 0; r < h; r++) {
+            this.rows[r].splice(x, 0, undoCol ? undoCol[r] : false);
+        }
+    }
+    this.width++;
+    if (!undoCol) {
+        this.undoBuf().push([UndoOp.kDeleteCol, x]);
+    }
+    this.notifyDimensionsChanged();
+}
+
+gmProto.addListener = function(obj)
+{
+    this.listeners.push(obj);
+}
+gmProto.removeListener = function(obj) {
+    var idx = this.listeners.indexOf(obj);
+    if (idx < 0)
+        return false;
+    this.listeners.splice(idx, 1);
+    return true;
+}
+gmProto.loadFromImgData = function(data) {
+    var w = data.width;
+    var h = data.height;
+    if (w != this.width || h != this.height)
+        throw new Error("Canvas has dimensions different than these of the model");
+    data = data.data;
+    for (var r = 0; r<h; r++) {
+        var row = this.rows[r];
+        for (var x = 0; x<w; x++) {
+            row[x] = data[(r*w+x)*4] < blackThresh;
+        }
+    }
+}
+gmProto.clear = function()
+{
+   this.allocate();
+   var count = this.listeners.length;
+   for (var i=0; i<count; i++) {
+       this.listeners[i].onModelUpdated();
+   }
+}
+gmProto.clone = function() {
+    var result = new GlyphModel(this.width, this.height, this.char);
+    var w = this.width;
+    var h = this.height;
+    var drows = result.rows;
+    var rows = this.rows;
+    for (var y = 0; y<h; y++) {
+        var drow = drows[y];
+        var row = rows[y];
+        for (var x = 0; x<w; x++) {
+            drow[x] = row[x];
+        }
+    }
+    return result;
+}
+gmProto.migrateListeners = function(newModel)
+{
+//the listeners will detach from us when changeModel() is called,
+//so we can't use a for loop
+    var listeners = this.listeners;
+    while (listeners.length) {
+        listeners[0].changeModel(newModel);
+    }
+}
+
+var gDragged = null;
+var gCtxMenu = null;
+function GlyphView(model, psize, opts)
+{
+    this.model = model;
+    this.psize = psize;
+    this.opts = opts;
+    this.fg = opts.fg || kColorFg;
+    this.bg = opts.bg || kColorBg;
+    this.widget = document.createElement('table');
+    this.createGui();
+    model.addListener(this);
+    if (!opts.active) {
+        this.updateToolTip();
+    }
+}
+var gvProto = GlyphView.prototype;
+gvProto.createGui = function() {
+    var self = this;
+    var view = self.widget;
+    self.setPixelSpacing(this.opts.pixSpacing);
+    var rows = self.model.rows;
+    var rowCnt = rows.length;
+    var colCnt = rows[0].length;
+    var palette = this.opts.palette ? this.opts.palette : null;
+    for (var y = 0; y < rowCnt; y++) {
+        var row = view.insertRow(-1);
+        row.style.height = self.psize;
+        var rowData = rows[y];
+        for (var x = 0; x < colCnt; x++) {
+            var cell = row.insertCell(-1);
+            var cellData = rowData[x];
+            var style = cell.style;
+            style.width = self.psize;
+            if (palette) {
+                style.backgroundColor = palette[cellData];
+            } else {
+                style.backgroundColor = cellData ? self.fg : self.bg;
+            }
+            style.padding = 0;
+            var border = this.opts.border;
+            if (border === true) {
+                style.border = '1px solid #eeeeee';
+            } else if (border) {
+                style.border = border;
+            } else {
+                style.border = '0px';
+            }
+            cell.x = x;
+            cell.y = y;
+            if (this.opts.active) {
+                cell.onclick = function(event) {
+                    var c = event.target;
+                    var old = self.model.flip(c.x, c.y);
+                }
+                cell.ondragstart = function(event) {
+                    // store a ref. on the dragged elem
+                    gDragged = event.target;
+                    // make it half transparent
+                };
+                cell.ondragover = function(event) {
+                    if (!gDragged)
+                        return;
+                    var val = (gDragged.style.backgroundColor === self.bg) ? 0 : 1;
+                    var target = event.target;
+                    var old = self.model.set(target.x, target.y, val);
+                }
+
+                cell.oncontextmenu = function(event) {
+                    self.ctxMenu(event);
+                }
+            }
+        }
+    }
+}
+gvProto.ctxMenu = function(event) {
+    if (gCtxMenu) {
+        return;
+    }
+    var self = this;
+    var cell = event.target;
+    event.preventDefault();
+    var m = gCtxMenu = document.createElement('div');
+    gCtxMenu.className = 'ctxMenu';
+    gCtxMenu.style.top = event.pageY + "px";
+    gCtxMenu.style.left = event.pageX + "px";
+    var html = '<table>';
+    if (!gMonospaceFont) {
+        html+=
+           '<tr><td id=ctxDelCol>Delete column</td></tr>\
+            <tr><td id=ctxInsertColLeft>Insert Column on Left</td></tr>\
+            <tr><td id=ctxInsertColRight>Insert Column on Right</td></tr>';
+    }
+    html+=
+        '<tr><td id=ctxClearGlyph>Clear glyph</td></tr>\
+        </table>';
+    m.innerHTML = html;
+
+    m.querySelector("#ctxClearGlyph").onclick = function(event) {
+        self.clear();
+    };
+
+    if (!gMonospaceFont) {
+        m.querySelector("#ctxDelCol").onclick = function(event) {
+            if (self.model.width <= 1)
+                return;
+            self.model.deleteColumn(cell.x);
+        };
+        m.querySelector("#ctxInsertColLeft").onclick = function(event) {
+            self.model.insertColumn(cell.x);
+        };
+        m.querySelector("#ctxInsertColRight").onclick = function(event) {
+            self.model.insertColumn(cell.x+1);
+        };
+    }
+    document.body.appendChild(gCtxMenu);
+    var clickHandler = function(event) {
+        document.removeEventListener("click", clickHandler);
+        if (event.target.className && event.target.className === 'ctxMenu') {
+            alert("menu clicked");
+        }
+        document.body.removeChild(gCtxMenu);
+        gCtxMenu = null;
+    };
+    document.addEventListener("click", clickHandler);
+}
+
+gvProto.updateToolTip = function()
+{
+    var model = this.model;
+    this.widget.setAttribute('title',
+        "Char: '"+this.model.char+"'\ncode: "+model.char.charCodeAt(0)+
+        '\nwidth: '+model.width+"\nheight: "+model.height);
+}
+
+gvProto.onPixelChanged = function(x,y,val) {
+    var row = this.widget.rows[y];
+    row.cells[x].style.backgroundColor = val ? this.fg : this.bg;
+}
+gvProto.onDimensionsChanged = function() {
+    this.widget.innerHTML = '';
+    this.createGui();
+    this.updateToolTip();
+}
+gvProto.onModelUpdated = function() {
+    this.widget.innerHTML = '';
+    this.createGui();
+}
+gvProto.changeModel = function(model) {
+    if (model === this.model) {
+        return;
+    }
+    this.model.removeListener(this);
+    model.addListener(this);
+    this.model = model;
+
+    var h = this.widget.rows.length;
+    var w = this.widget.rows[0].cells.length;
+    if (h !== model.height || w !== model.width) {
+        this.onDimensionsChanged();
+    } else {
+        this.onModelUpdated();
+    }
+}
+
+gvProto.setPixelSpacing = function(n) {
+    if (n === undefined) {
+        n = 0;
+    }
+    this.widget.style.borderSpacing = n+'px';
+}
+
+gmProto.undo = function() {
+    if (!this._undoBuf || this._undoBuf.length < 1) {
+        console.log("No more undo history");
+        return false;
+    }
+    var op = this._undoBuf.pop();
+    switch(op[0])
+    {
+        case UndoOp.kSetPixel: //pixel change
+            this.set(op[1], op[2], op[3], true);
+            break;
+        case UndoOp.kDeleteCol:
+            this.deleteColumn(op[1], true);
+            break;
+        case UndoOp.kInsertCol:
+            this.insertColumn(op[1], op[2]);
+            break;
+        default:
+            throw new Error("Unknown undo operation");
+    }
+    return true;
+}
+
+var lcdLetters = [];
+var gEditor = null;
+var editorHtml =
+"<div id=pageDiv>\
+   <div id=menu>menu</div>\
+   <div id=main>\
+     <div id=editorGroup>\
+       <div id=editor></div>\
+       <div align=center>LCD preview:</div>\
+       <div style='position:relative'>\
+       <div id=lcd></div>\
+       </div>\
+       <textarea id=typingArea></textarea>\
+     </div>\
+   <div id= spacer></div>\
+   <div id= glyphs></div>\
+ </div>\
+</div>";
+
+var loadGui =
+"<div id=pageDiv>\
+  <div class=openCaption>Load font:</div>\
+  <div style='flex: 0 0 10%'> </div>\
+  <table width=100%>\
+    <tr>\
+      <td style='width:50%'>\
+        <label class=openBtn>\
+          <span style=''>Local file...</span>\
+          <input type=file style='visibility:hidden;' onchange='loadLocalFile(event);' />\
+        </label></td>\
+      <td style='width:50%'>\
+        <div class=openBtn onclick='fontSelectGui();'>Capture</div>\
+      </td>\
+    </tr>\
+    <tr>\
+      <td><div></div>\
+      <td><div id=captureOptions class=openOptions></div>\
+    </tr>\
+  </table>";
+
+function loadEditor(models) {
+    document.getElementById('page').innerHTML = editorHtml;
+    glyphCont = document.getElementById('glyphs');
+    var glyphCount = models.length;
+    var editorCont = document.getElementById('editor');
+
+    for (var i = 0; i < glyphCount; i++) {
+        var model = models[i];
+        var view = new GlyphView(model, 8, {active: false, bg: 'rgba(255,255,255,0)'});
+        var widget = view.widget;
+        widget.model = model; //make the model accessible from the onclick handler
+        widget.className = 'glyph';
+        glyphCont.appendChild(view.widget);
+        view.widget.onclick = function(event) {
+            gEditor.changeModel(event.currentTarget.model);
+        };
+    }
+    gEditor = new GlyphView(models[0], 16, {active: true});
+    gEditor.widget.setAttribute('id', 'glyphEditor');
+    document.addEventListener("keydown", function(event) {
+        if (event.keyCode == 90 && event.ctrlKey) {
+            gEditor.model.undo();
+        }
+    });
+    editorCont.appendChild(gEditor.widget);
+    var txtInput = document.getElementById('typingArea');
+    txtInput.onkeypress = function(event) {
+        var idx = event.charCode - 32;
+        if (idx < 0 || idx >= glyphs.length)
+            return;
+        var bitmap = models[idx];
+        var letter = new GlyphView(bitmap, 2, {active: false, bg: 'rgba(255,255,255,0)'});
+        var widget = letter.widget;
+        var style = widget.style;
+        style.display = "inline-block";
+        style.borderRight='2px solid transparent';
+        lcd.appendChild(letter.widget);
+   }
+   txtInput.onkeydown = function(event) {
+       if (event.keyCode === 8) { //backspace
+           var child = lcd.lastChild;
+           if (child)
+               lcd.removeChild(child);
+           return;
+       }
+   }
+}
+
+function fontOpenGui() {
+    document.getElementById("page").innerHTML = loadGui;
+}
+
+var standardFonts = ['arial', 'serif', 'sans-serif', 'monospace', 'Monaco, Lucida Console, monospace'];
+/*
+//Sans serif
+'Arial, 'Arial Black', 'Tahoma', 'Trebuchet MS',
+'Century Gothic', 'Geneva', 'Lucida','Lucida Sans', 'Lucida Grande',
+//Serif
+'Georgia', 'Times', 'Times New Roman',
+'MS Serif', 'New York', 'Palatino', 'Palatino Linotype', 'Verdana',
+//monospace
+'Courier', 'Courier New', 'Lucida Console', 'Monaco'
+*/
+
+function fontSelectGui() {
+   var cont = document.getElementById('captureOptions');
+   while (cont.firstChild)
+       cont.removeChild(cont.firstChild);
+   cont.innerHTML =
+   "<table width=100% style='table-layout:fixed'>\
+   <tr>\
+       <td id=localFont width=50% class=borderBottomRight></td>\
+       <td id=remoteFont width=50% class=borderBottomRight></td></tr>\
+   <tr><td colspan=2>\
+        <table width=100%>\
+         <tr>\
+          <td><canvas id=capture style='border: 1px solid #0000ff;\
+           width:200; height: 200; align-senf: center' /></td>\
+           <td id=glyph></td>\
+          <td width=33% style='word-wrap:break-word' id=chars></td>\
+         </tr>\
+        </table>\
+   </td></tr>"
+   var table = document.createElement("table");
+   table.className = 'fontSelect';
+   var len = standardFonts.length;
+   for (var i=0; i<len; i++) {
+       var n = standardFonts[i];
+       var cell = table.insertRow(-1).insertCell(-1);
+       cell.style.fontFamily = n;
+       cell.onclick = function(event) {
+           captureFont(event.currentTarget.style.fontFamily);
+       }
+       cell.appendChild(document.createTextNode(n));
+   }
+   document.getElementById('localFont').appendChild(table);
+   var button = document.createElement('input');
+   button.type = 'button';
+   button.value = "Font from URL...";
+   button.onclick = loadRemoteFont;
+   document.getElementById('remoteFont').appendChild(button);
+}
+
+var remoteFontUrl = '';
+function loadRemoteFont() {
+    remoteFontUrl = prompt("Enter font URL", remoteFontUrl);
+}
+
+function loadLocalFile(event)
+{
+  var file = event.target.files[0];
+  if (!file) {
+    return;
+  }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    parseFontCSource(e.target.result);
+  };
+  reader.readAsText(file);
+}
+function parseFontCSource(contents)
+{
+    var m = contents.match(/Font\s+?[^\s]+?\(\d+\s*?,\s*?(\d+)\s*,/m);
+    var fontHeight;
+    if (m && m.length === 2) {
+        fontHeight = parseInt(m[1]);
+    };
+    while(isNaN(fontHeight)) {
+        hstr = prompt("Can't detect font height, please enter it");
+        if (!hstr) {
+            return;
+        }
+        fontHeight = parseInt(hstr);
+    };
+    //var bytesPerCol = ((fontHeight+7)/8)|0;
+    var models = [];
+    var lines = contents.match(/(0x[0-9a-fA-F]+[,\s]*){4,}/gm);
+    var ll = lines.length;
+    for (var l=0; l<ll; l++) {
+        var line = lines[l];
+        var bytes = line.match(/(0x[0-9a-fA-F]+)/g);
+        models.push(loadModelFromSourceLine(line, width, fontHeight));
+    }
+    loadEditor(models);
+}
+
+function loadModelFromSourceLineHScan(line, lineNo, bytes, fontHeight) {
+    var width = bytes.length;
+    var model = new GlyphModel(fontHeight, width, String.fromCharCode(lineNo+32));
+
+    for (var col = 0; col < width; col++) {
+        var byte = parseInt(bytes[col]);
+        for (var i = 0; i < fontHeight; i++, byte >>= 1) {
+            var row = model.rows[col];
+            row[i] = (byte & 1) ? true : false;
+        }
+    }
+}
+function loadModelFromSourceLineHScan(line, lineNo, bytes, fontHeight) {
+    var width = bytes.length;
+    var model = new GlyphModel(width, fontHeight, String.fromCharCode(lineNo+32));
+
+    for (var col = 0; col < width; col++) {
+        var byte = parseInt(bytes[col]);
+        for (var i = 0; i < fontHeight; i++, byte >>= 1) {
+            var row = model.rows[i];
+            row[col] = (byte & 1) ? true : false;
+        }
+    }
+}
+//var canvas = document.getElementById('capture');
+//var glyph = document.getElementById('glyph');
+function captureFont(font)
+{
+    var cap = new FontCapturer(font, gConfig.targetFontHeight,
+        document.getElementById('capture'));
+    var models = cap.capture();
+    loadEditor(models);
+}
+
+function FontCapturer(font, height, canvas)
+{
+    this.font = font;
+    this.targetFontHeight = height;
+    this.canvas = canvas;
+    canvas.width = 200;
+    canvas.height = 200;
+    var ctx = this.ctx = canvas.getContext("2d");
+    ctx.font = height +"px "+font;
+    this.drawnFontSize = parseInt(ctx.font.match(/(\d+)[^\d]+/)[1]);
+    assert(this.drawnFontSize);
+}
+
+var capProto = FontCapturer.prototype;
+
+capProto.capture = function()
+{
+    this.detectFontTop();
+    this.detectFontBottom();
+    this.drawFontHeight = this.fontBottom-this.fontTop+1;
+    this.ratio = this.drawFontHeight / this.targetFontHeight;
+    if (this.ratio > 1.0) {
+        console.log("Draw font height is not the same as the target one, capturer will scale the image", this.ratio, "times");
+    }
+    var models = [];
+    for (var ch=32; ch < 127; ch++) {
+        models.push(this.captureGlyph(String.fromCharCode(ch)));
+    };
+    return models;
+}
+
+capProto.clearCanvas = function() {
+    this.ctx.fillStyle = 'white';
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.fillStyle = 'black';
+}
+
+capProto.drawGlyph = function(ch)
+{
+    this.clearCanvas();
+    var baseline = this.drawnFontSize*2; //make sure we have enought space above the baseline
+    this.ctx.fillText(ch, 2, baseline);
+    return this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
+}
+
+var bottomChars = ["g", "j", "p", "q", "y"];
+//don't include '|', as it may be the only char that high - we want to use as many rows as possible
+var topChars = ["h", "d", "t", "l", "]", "/", "^", "!", "O", "A", "8", "#", "%"];
+var medChars = ["x", "v", "w", "z"];
+
+capProto.detectFontBottom = function()
+{
+    var bottom = 0;
+    var len = bottomChars.length;
+    for (var i=0; i<len; i++) {
+        var data = this.drawGlyph(bottomChars[i]);
+        var b = scanBottomBorder(data);
+        if (b > bottom) {
+            bottom = b;
+        }
+        console.log('letter', bottomChars[i], 'bottom:', b);
+    }
+    this.fontBottom = bottom;
+}
+
+capProto.detectFontTop = function()
+{
+    var top = 0xffff;
+    var len = topChars.length;
+    for (var i=0; i<len; i++) {
+        var data = this.drawGlyph(topChars[i]);
+        var t = scanTopBorder(data);
+        if (t < top) {
+            top = t;
+        }
+    }
+    this.fontTop = top;
+}
+
+capProto.captureGlyph = function(ch)
+{
+    assert(this.fontBottom);
+    assert(this.fontTop !== undefined);
+    var data = this.drawGlyph(ch);
+    //scan width
+    var l = scanLeftBorder(data);
+    var r = scanRightBorder(data);
+    if (l < 0) { //space
+        assert(r < 0);
+        l = 0;
+        r = gConfig.spaceWidth-1;
+    }
+    var actualWidth = r-l+1;
+    data = this.ctx.getImageData(l, this.fontTop, actualWidth, this.drawFontHeight);
+    var width = data.width;
+    var height = data.height;
+    assert(height === this.drawFontHeight);
+    var ratio = this.ratio;
+    if (ratio > 1.00) {
+        this.ctx.putImageData(data, 0, 0);
+        while(ratio > 1.0) {
+            console.log("iter("+ch+"): height=", height, " ratio=", ratio, "req fontsize:", this.targetFontHeight, "actual:", this.drawFontHeight);
+            //select target height that is at most 2 times smaller
+            var newHeight = (ratio >= 2.0)
+                ? ((height+1)/2)|0 //round upward, so that the ratio is always <=2
+                : this.targetFontHeight;
+            var iterRatio = height / newHeight;
+            assert(iterRatio <= 2.0);
+            var newWidth = Math.round(width / iterRatio);
+            this.ctx.drawImage(this.canvas, 0, 0, width, height, 0, 0, newWidth, newHeight);
+            width = newWidth;
+            height = newHeight;
+            ratio = height / this.targetFontHeight;
+        }
+        assert(ratio == 1.0);
+        data = this.ctx.getImageData(0, 0, width, height);
+    }
+    else // not (ratio > 1.0)
+    {
+        assert(ratio == 1.0);
+        console.log("ratio is as expected, height=", height);
+    }
+    var canv = document.createElement("canvas");
+    canv.width = data.width;
+    canv.height = data.height;
+    canv.getContext("2d").putImageData(data, 0, 0);
+
+    this.ctx.drawImage(this.canvas, 0, 0, data.width, data.height, 0, 0,
+        this.canvas.width, this.canvas.height);
+
+    var model = new GlyphModel(data.width, data.height, ch);
+    model.loadFromImgData(data);
+    return model;
+}
+
+function assert(cond) {
+    if (!cond)
+        throw new Error("assertion failed");
+}
+
+function scanRightBorder(data) {
+    var w = data.width;
+    var h = data.height;
+    data = data.data;
+    for (var x = w-1; x >= 0; x--)
+        for (var y = 0; y<h; y++) {
+            if (data[(y*w+x)<<2] < blackThresh)
+                return x;
+        }
+    return -1;
+}
+
+function scanLeftBorder(data) {
+    var w = data.width;
+    var h = data.height;
+    data = data.data;
+    for (var x=0; x<w; x++)
+        for (var y=0; y<h; y++) {
+            if (data[(y*w+x)<<2] < blackThresh)
+                return x;
+        }
+    return -1;
+}
+
+function scanTopBorder(data) {
+    var w = data.width;
+    var h = data.height;
+    data = data.data;
+    for (var y = 0; y<h; y++)
+        for (var x=0; x<w; x++) {
+            if (data[(y*w+x)<<2] < blackThresh)
+                return y;
+        }
+    return -1;
+}
+
+function scanBottomBorder(data) {
+    var w = data.width;
+    var h = data.height;
+    data = data.data;
+    for (var y=h-1; y>=0; y--) {
+        for (var x=0; x<w; x++) {
+            if (data[(y*w+x)<<2] < blackThresh)
+                return y;
+        }
+    }
+    return -1;
+}
+
+/*
+@font-face {
+  font-family: "Kimberley";
+  src: url(http://www.princexml.com/fonts/larabie/kimberle.ttf) format("truetype");
+}
+
+font-family: "Kimberley", sans-serif;
+*/
+window.onload = function() {
+    loadConfig();
+    fontOpenGui(); //loadEditor();
+}
+</script>
+</html>

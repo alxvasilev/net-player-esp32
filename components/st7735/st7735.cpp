@@ -2,74 +2,84 @@
 #include <driver/gpio.h>
 #include <esp_timer.h>
 #include <esp_log.h>
+#include <algorithm>
+#include "stdfonts.hpp"
 
-#define ST77XX_NOP 0x00
-#define ST77XX_SWRESET 0x01
-#define ST77XX_RDDID 0x04
-#define ST77XX_RDDST 0x09
+enum: uint8_t {
+    ST77XX_NOP = 0x00,
+    ST77XX_SWRESET = 0x01,
+    ST77XX_RDDID = 0x04,
+    ST77XX_RDDST = 0x09,
+    ST77XX_SLPIN = 0x10,
+    ST77XX_SLPOUT = 0x11,
+    ST77XX_PTLON = 0x12,
+    ST77XX_NORON = 0x13,
 
-#define ST77XX_SLPIN 0x10
-#define ST77XX_SLPOUT 0x11
-#define ST77XX_PTLON 0x12
-#define ST77XX_NORON 0x13
+    ST77XX_INVOFF = 0x20,
+    ST77XX_INVON = 0x21,
+    ST77XX_DISPOFF = 0x28,
+    ST77XX_DISPON = 0x29,
+    ST77XX_CASET = 0x2A,
+    ST77XX_RASET = 0x2B,
+    ST77XX_RAMWR = 0x2C,
+    ST77XX_RAMRD = 0x2E,
 
-#define ST77XX_INVOFF 0x20
-#define ST77XX_INVON 0x21
-#define ST77XX_DISPOFF 0x28
-#define ST77XX_DISPON 0x29
-#define ST77XX_CASET 0x2A
-#define ST77XX_RASET 0x2B
-#define ST77XX_RAMWR 0x2C
-#define ST77XX_RAMRD 0x2E
+    ST77XX_PTLAR = 0x30,
+    ST77XX_TEOFF = 0x34,
+    ST77XX_TEON = 0x35,
+    ST77XX_MADCTL = 0x36,
+    ST77XX_COLMOD = 0x3A,
 
-#define ST77XX_PTLAR 0x30
-#define ST77XX_TEOFF 0x34
-#define ST77XX_TEON 0x35
-#define ST77XX_MADCTL 0x36
-#define ST77XX_COLMOD 0x3A
+    ST77XX_MADCTL_MY = 0x80,
+    ST77XX_MADCTL_MX = 0x40,
+    ST77XX_MADCTL_MV = 0x20,
+    ST77XX_MADCTL_ML = 0x10,
+    ST77XX_MADCTL_RGB = 0x00,
 
-#define ST77XX_MADCTL_MY 0x80
-#define ST77XX_MADCTL_MX 0x40
-#define ST77XX_MADCTL_MV 0x20
-#define ST77XX_MADCTL_ML 0x10
-#define ST77XX_MADCTL_RGB 0x00
+    ST77XX_RDID1 = 0xDA,
+    ST77XX_RDID2 = 0xDB,
+    ST77XX_RDID3 = 0xDC,
+    ST77XX_RDID4 = 0xDD,
 
-#define ST77XX_RDID1 0xDA
-#define ST77XX_RDID2 0xDB
-#define ST77XX_RDID3 0xDC
-#define ST77XX_RDID4 0xDD
+    //====
+    // Some register settings
+    ST7735_MADCTL_BGR = 0x08,
+    ST7735_MADCTL_MH = 0x04,
 
-//====
-// Some register settings
-#define ST7735_MADCTL_BGR 0x08
-#define ST7735_MADCTL_MH 0x04
+    ST7735_FRMCTR1 = 0xB1,
+    ST7735_FRMCTR2 = 0xB2,
+    ST7735_FRMCTR3 = 0xB3,
+    ST7735_INVCTR = 0xB4,
+    ST7735_DISSET5 = 0xB6,
 
-#define ST7735_FRMCTR1 0xB1
-#define ST7735_FRMCTR2 0xB2
-#define ST7735_FRMCTR3 0xB3
-#define ST7735_INVCTR 0xB4
-#define ST7735_DISSET5 0xB6
+    ST7735_PWCTR1 = 0xC0,
+    ST7735_PWCTR2 = 0xC1,
+    ST7735_PWCTR3 = 0xC2,
+    ST7735_PWCTR4 = 0xC3,
+    ST7735_PWCTR5 = 0xC4,
+    ST7735_VMCTR1 = 0xC5,
 
-#define ST7735_PWCTR1 0xC0
-#define ST7735_PWCTR2 0xC1
-#define ST7735_PWCTR3 0xC2
-#define ST7735_PWCTR4 0xC3
-#define ST7735_PWCTR5 0xC4
-#define ST7735_VMCTR1 0xC5
+    ST7735_PWCTR6 = 0xFC,
 
-#define ST7735_PWCTR6 0xFC
-
-#define ST7735_GMCTRP1 0xE0
-#define ST7735_GMCTRN1 0xE1
+    ST7735_GMCTRP1 = 0xE0,
+    ST7735_GMCTRN1 = 0xE1,
+};
 
 void ST7735Display::usDelay(uint32_t us)
 {
     auto end = esp_timer_get_time() + us;
     while (esp_timer_get_time() < end);
 }
+
 void ST7735Display::msDelay(uint32_t ms)
 {
     usDelay(ms * 1000);
+}
+
+ST7735Display::ST7735Display()
+{
+    memset(&mTrans, 0, sizeof(mTrans));
+    mTrans.user = this;
 }
 
 void ST7735Display::init(int16_t width, int16_t height, PinCfg& pins)
@@ -99,11 +109,11 @@ void ST7735Display::init(int16_t width, int16_t height, PinCfg& pins)
     ESP_ERROR_CHECK(ret);
 
     spi_device_interface_config_t devcfg = {
-        .mode = 0,                                //SPI mode 0
-        .clock_speed_hz = 27 * 1000 * 1000,       //Clock out at 10 MHz
-        .spics_io_num = pins.cs,                  //CS pin
-        .queue_size = 20,                          //We want to be able to queue 7 transactions at a time
-        .pre_cb = preTransferCallback           //Specify pre-transfer callback to handle D/C line
+        .mode = 0,
+        .clock_speed_hz = SPI_MASTER_FREQ_26M,
+        .spics_io_num = pins.cs,
+        .queue_size = 4,
+        .pre_cb = preTransferCallback  //Specify pre-transfer callback to handle D/C line
     };
     //Attach the LCD to the SPI bus
     ret = spi_bus_add_device(pins.spiHost, &devcfg, &mSpi);
@@ -119,14 +129,11 @@ void ST7735Display::setRstLevel(int level)
 
 void ST7735Display::sendCmd(uint8_t opcode)
 {
-    esp_err_t ret;
-    spi_transaction_t t;
-    memset(&t, 0, sizeof(t));         //Zero out the transaction
-    t.flags = SPI_TRANS_USE_TXDATA;   //D/C needs to be set to 0
-    t.length = 8;                     //Command is 8 bits
-    t.tx_data[0] = opcode;            //The data is the cmd itself
-    t.user = this;
-    ret=spi_device_polling_transmit(mSpi, &t);  //Transmit!
+    mTrans.flags = SPI_TRANS_USE_TXDATA;   //D/C needs to be set to 0
+    mTrans.length = 8;                     //Command is 8 bits
+    mTrans.tx_data[0] = opcode;            //The data is the cmd itself
+    mTrans.cmd = 0;
+    esp_err_t ret = spi_device_polling_transmit(mSpi, &mTrans);  //Transmit!
     assert(ret == ESP_OK);            //Should have had no issues.
 }
 
@@ -135,25 +142,40 @@ void ST7735Display::sendData(const uint8_t* data, int len)
     if (len == 0) {
         return;
     }
-    esp_err_t ret;
-    spi_transaction_t t;
-    memset(&t, 0, sizeof(t));       //Zero out the transaction
-    t.length = len * 8;             //Len is in bytes, transaction length is in bits.
-    t.tx_buffer = data;             //Data
-    t.user = this;
-    t.flags = SPI_TRANS_SET_CD;       //D/C needs to be set to 1
-    ret = spi_device_polling_transmit(mSpi, &t);  //Transmit!
+
+    mTrans.flags = 0;
+    mTrans.length = len << 3;             //Len is in bytes, transaction length is in bits.
+    mTrans.tx_buffer = data;             //Data
+    mTrans.cmd = 1; // D/C needs to be set to 1
+
+    esp_err_t ret = spi_device_polling_transmit(mSpi, &mTrans);  //Transmit!
     assert(ret == ESP_OK);            //Should have had no issues.
 }
-void ST7735Display::sendData(const std::vector<uint8_t>& data)
+
+void ST7735Display::prepareSendPixels()
 {
-    sendData(data.data(), data.size());
+    mTrans.flags = 0;
+    mTrans.length = 16;
+    mTrans.cmd = 1; // D/C needs to be set to 1
 }
 
-void ST7735Display::preTransferCallback(spi_transaction_t *t)
+void ST7735Display::sendNextPixel(uint16_t pixel)
+{
+    // WARNING: Requires prepareSendPixels() to have been called before
+    mTrans.tx_buffer = &pixel;
+    spi_device_polling_transmit(mSpi, &mTrans);
+}
+
+void ST7735Display::sendCmd(uint8_t opcode, const std::initializer_list<uint8_t>& data)
+{
+    sendCmd(opcode);
+    sendData(data);
+}
+
+IRAM_ATTR void ST7735Display::preTransferCallback(spi_transaction_t *t)
 {
     auto self = static_cast<ST7735Display*>(t->user);
-    gpio_set_level((gpio_num_t)self->mDcPin, (t->flags & SPI_TRANS_SET_CD) ? 1 : 0);
+    gpio_set_level((gpio_num_t)self->mDcPin, t->cmd);
 }
 
 uint16_t ST7735Display::mkcolor(uint8_t R,uint8_t G,uint8_t B)
@@ -165,107 +187,23 @@ uint16_t ST7735Display::mkcolor(uint8_t R,uint8_t G,uint8_t B)
 void ST7735Display::displayReset()
 {
   setRstLevel(0);
-  msDelay(10);
+  msDelay(50);
   setRstLevel(1);
-  msDelay(200);
-
-  sendCmd(ST77XX_SWRESET);
-  msDelay(200);
+  msDelay(140);
   sendCmd(ST77XX_SLPOUT);     // Sleep out, booster on
-  msDelay(200);
-
-  sendCmd(ST7735_FRMCTR1);     // Frame rate control
-  sendData({
-      0x01,   //     fastest refresh
-      0x2c,   //     6 lines front porch
-      0x2d,   //     3 lines back porch
-  });
-
-  sendCmd(ST7735_FRMCTR2);     // Frame rate control
-  sendData({
-      0x01,   //     fastest refresh
-      0x2c,   //     6 lines front porch
-      0x2d,   //     3 lines back porch
-  });
-  sendCmd(ST7735_FRMCTR3);     // Frame rate control
-  sendData({
-      0x01, 0x2c, 0x2d,
-      0x01, 0x2c, 0x2d
-  });
-
-  sendCmd(ST7735_INVCTR); // inversion control
-  sendData({0x07}); // Line inversion
-
-  sendCmd(ST7735_PWCTR1); // power control
-  sendData({
-      0xa2, //     GVDD = 4.7V
-      0x02,  //     1.0uA
-      0x84
-  });
-
-  sendCmd(ST7735_PWCTR2);
-  sendData({0xc5});
-
-  sendCmd(ST7735_PWCTR3);
-  sendData({
-      0x0a,
-      0x00
-  });
-  sendCmd(ST7735_PWCTR4);
-  sendData({
-      0x8A,                         //     BCLK/2,
-      0x2A,                         //     opamp current small & medium low
-  });
-  sendCmd(ST7735_PWCTR5);
-  sendData({
-      0x8A, 0xEE
-  });
-  sendCmd(ST7735_VMCTR1);
-  sendData({0x0e});
+  msDelay(140);
 
   sendCmd(ST77XX_INVOFF);
-  sendCmd(ST77XX_MADCTL);
-  sendData({0xc8});
-  sendCmd(ST77XX_COLMOD);
-  sendData({0x05});
-/*
-// 2nd stage - addressing
-  sendCmd(ST77XX_CASET);   // 15: Column addr set, 4 args, no delay:
-  sendData({
-    0x00, 0x00,
-    0x00, 0x7f
-  });
+  sendCmd(ST77XX_MADCTL, { 0x08 | ST77XX_MADCTL_MX | ST77XX_MADCTL_MV });
+  sendCmd(ST77XX_COLMOD, {0x05});
 
-  sendCmd(ST77XX_RASET);   // 16: Row addr set, 4 args, no delay:
-  sendData({
-    0x00, 0x00,
-    0x00, 0x9f
-  });
-*/
-/*
-// 3rd stage - gamma
-  sendCmd(ST7735_GMCTRP1); // Gamma Adjustments (pos. polarity), 16 args + delay:
-  sendData({
-      0x02, 0x1c, 0x07, 0x12,       //     (Not entirely necessary, but provides
-      0x37, 0x32, 0x29, 0x2d,       //      accurate colors)
-      0x29, 0x25, 0x2B, 0x39,
-      0x00, 0x01, 0x03, 0x10
-  });
-  sendCmd(ST7735_GMCTRN1); // Gamma Adjustments (neg. polarity), 16 args + delay:
-  sendData({
-      0x03, 0x1d, 0x07, 0x06,       //     (Not entirely necessary, but provides
-      0x2E, 0x2C, 0x29, 0x2D,       //      accurate colors)
-      0x2E, 0x2E, 0x37, 0x3F,
-      0x00, 0x00, 0x02, 0x10,
-  });
-*/
-//===
+  sendCmd(ST77XX_CASET, {0x00, 0x00, 0x00, 0x7F});
+  sendCmd(ST77XX_RASET, {0x00, 0x00, 0x00, 0x9F});
+
   sendCmd(ST77XX_NORON);   // 17: Normal display on, no args, w/delay
-  msDelay(10);
-
+  clear(0x0000);
   sendCmd(ST77XX_DISPON); // 18: Main screen turn on, no args, delay
-  msDelay(200);
-
+  msDelay(100);
 //setOrientation(kOrientNormal);
 }
 
@@ -293,20 +231,18 @@ void ST7735Display::setOrientation(Orientation orientation)
 
 void ST7735Display::setWriteWindow(uint16_t XS, uint16_t YS, uint16_t XE, uint16_t YE)
 {
-  sendCmd(ST77XX_CASET); // Column address set
-  sendData({
+  sendCmd(ST77XX_CASET, {
       (uint8_t)(XS >> 8),
-      (uint8_t)(XS & 0xff),
+      (uint8_t)XS,
       (uint8_t)(XE >> 8),
-      (uint8_t)(XE & 0xff)
+      (uint8_t)XE
   });
 
-  sendCmd(ST77XX_RASET); // Row address set
-  sendData({
+  sendCmd(ST77XX_RASET, {
       (uint8_t)(YS >> 8),
-      (uint8_t)(YS & 0xff),
+      (uint8_t)(YS),
       (uint8_t)(YE >> 8),
-      (uint8_t)(YE & 0xff)
+      (uint8_t)(YE)
    });
 
   sendCmd(ST77XX_RAMWR); // Memory write
@@ -315,6 +251,7 @@ void ST7735Display::setWriteWindow(uint16_t XS, uint16_t YS, uint16_t XE, uint16
 void ST7735Display::fillRect(int16_t x0, int16_t y0, int16_t x1,
                              int16_t y1, uint16_t color)
 {
+    enum { kBufSize = 128 };
     if (x0 > x1) {
         std::swap(x0, x1);
     }
@@ -325,8 +262,8 @@ void ST7735Display::fillRect(int16_t x0, int16_t y0, int16_t x1,
     uint8_t cl = (uint8_t)color;
 
     setWriteWindow(x0, y0, x1, y1);
-    int num = (x1 - x0 + 1) * (y1 - y0 + 1);
-    int bufSize = std::min(num * 2, 128);
+    int num = (x1 - x0 + 1) * (y1 - y0 + 1) * 2;
+    int bufSize = std::min(num, (int)kBufSize);
     uint8_t* txbuf = (uint8_t*)alloca(bufSize);
     auto bufEnd = txbuf + bufSize;
     for (auto ptr = txbuf; ptr < bufEnd;) {
@@ -342,12 +279,6 @@ void ST7735Display::fillRect(int16_t x0, int16_t y0, int16_t x1,
 
 void ST7735Display::clear(uint16_t color)
 {
-    for (int x = 0; x < 128; x++) {
-        for (int y = 0; y < 128; y++) {
-            setPixel(x, y, color);
-        }
-    }
-    return;
     fillRect(0, 0, mWidth-1, mHeight-1, color);
 }
 
@@ -371,8 +302,6 @@ void ST7735Display::line(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_
 {
     int16_t dX = x2-x1;
     int16_t dY = y2-y1;
-    int16_t dXsym = (dX > 0) ? 1 : -1;
-    int16_t dYsym = (dY > 0) ? 1 : -1;
 
     if (dX == 0) {
         vLine(x1, y1, y2, color);
@@ -383,6 +312,8 @@ void ST7735Display::line(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_
         return;
     }
 
+    int16_t dXsym = (dX > 0) ? 1 : -1;
+    int16_t dYsym = (dY > 0) ? 1 : -1;
     dX *= dXsym;
     dY *= dYsym;
     int16_t dX2 = dX << 1;
@@ -427,154 +358,99 @@ void ST7735Display::rect(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uin
     vLine(x1, y1, y2, color);
     vLine(x2, y1, y2, color);
 }
-/*
-void ST7735Display::putChar5x7(uint8_t scale, uint16_t X, uint16_t Y, uint8_t chr, uint16_t color, uint16_t bgcolor)
+
+void ST7735Display::blitMonoHscan(int16_t sx, int16_t sy, int16_t w, int16_t h, const uint8_t* binData, bool bg)
 {
-  uint16_t i,j;
-  uint8_t buffer[5];
-  color = htons(color);
-  bgcolor = htons(bgcolor);
-
-  if ((chr >= 0x20) && (chr <= 0x7F))
-  {
-    // ASCII[0x20-0x7F]
-    memcpy(buffer,&Font5x7[(chr - 32) * 5], 5);
-  }
-  else if (chr >= 0xA0)
-  {
-    // CP1251[0xA0-0xFF]
-    memcpy(buffer,&Font5x7[(chr - 64) * 5], 5);
-  }
-  else
-  {
-    // unsupported symbol
-    memcpy(buffer,&Font5x7[160], 5);
-  }
-
-  // scale equals 1 drawing faster
-  if (scale == 1) {
-      setWriteWindow(X, Y, X + 5, Y + 7);
-      for (j = 0; j < 7; j++) {
-          for (i = 0; i < 5; i++) {
-              writeData(((buffer[i] >> j) & 0x01) ? &color : &bgcolor, 2);
-          }
-          // vertical spacing
-          writeData(&bgcolor, 2);
-      }
-
-    // horizontal spacing
-    for (i = 0; i < 6; i++)
-    {
-      ST7735_write(BCH);
-      ST7735_write(BCL);
+    setWriteWindow(sx, sy, sx+w-1, sy+h-1);
+    prepareSendPixels();
+    const uint8_t* bits = binData;
+    uint8_t mask = 0x80;
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            auto bit = (*bits) & mask;
+            if (bit) {
+                sendNextPixel(mFgColor);
+            } else if (bg) {
+                sendNextPixel(mBgColor);
+            }
+            mask >>= 1;
+            if (mask == 0) {
+                mask = 0x80;
+                bits++;
+            }
+        }
+        if (mask != 0x80) {
+            bits++;
+            mask = 0x80;
+        }
     }
-  }
-  else
-  {
-    A0_H();
-    for (j = 0; j < 7; j++)
-    {
-      for (i = 0; i < 5; i++)
-      {
-        // pixel group
-        ST7735_FillRect(X + (i * scale), Y + (j * scale), X + (i * scale) + scale - 1, Y + (j * scale) + scale - 1, ((buffer[i] >> j) & 0x01) ? color : bgcolor);
-      }
-      // vertical spacing
-//      ST7735_FillRect(X + (i * scale), Y + (j * scale), X + (i * scale) + scale - 1, Y + (j * scale) + scale - 1, V_SEP);
-      ST7735_FillRect(X + (i * scale), Y + (j * scale), X + (i * scale) + scale - 1, Y + (j * scale) + scale - 1, bgcolor);
+}
+void ST7735Display::blitMonoVscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
+    const uint8_t* binData, bool bg, int scale)
+{
+    // scan horizontally in display RAM, but vertically in char data
+    int16_t bitH = h / scale;
+    int16_t bitW = w / scale;
+    int8_t byteHeight = (bitH + 7) / 8;
+    setWriteWindow(sx, sy, (sx+w-1), (sy+h-1));
+    prepareSendPixels();
+    int rptY = 0;
+    uint8_t mask = 0x01;
+    for (int y = 0; y < h; y++) {
+        const uint8_t* bits = binData;
+        for (int x = 0; x < bitW; x++) {
+            auto fg = (*bits) & mask;
+            if (fg) {
+                for (int rptX = 0; rptX < scale; rptX++) {
+                    sendNextPixel(mFgColor);
+                }
+            } else if (bg) {
+                for (int rptX = 0; rptX < scale; rptX++) {
+                    sendNextPixel(mBgColor);
+                }
+            }
+            bits += byteHeight;
+        }
+        if (++rptY < scale) {
+            continue;
+        }
+        rptY = 0;
+        mask <<= 1;
+        if (mask == 0) {
+            mask = 0x01;
+            binData++;
+        }
     }
-    // horizontal spacing
-//    ST7735_FillRect(X, Y + (j * scale), X + (i * scale) + scale - 1, Y + (j * scale) + scale - 1, H_SEP);
-    ST7735_FillRect(X, Y + (j * scale), X + (i * scale) + scale - 1, Y + (j * scale) + scale - 1, bgcolor);
-  }
-  CS_H();
 }
 
-void ST7735_PutStr5x7(uint8_t scale, uint8_t X, uint8_t Y, char *str, uint16_t color, uint16_t bgcolor)
+bool ST7735Display::putc(uint8_t ch, bool bg)
 {
-  // scale equals 1 drawing faster
-  if (scale == 1)
-  {
-    while (*str)
-    {
-      ST7735_PutChar5x7(scale, X,Y,*str++,color,bgcolor);
-      if (X < scr_width - 6) { X += 6; } else if (Y < scr_height - 8) { X = 0; Y += 8; } else { X = 0; Y = 0; }
-    };
-  }
-  else
-  {
-    while (*str)
-    {
-      ST7735_PutChar5x7(scale, X,Y,*str++,color,bgcolor);
-      if (X < scr_width - (scale*5) + scale) { X += (scale * 5) + scale; } else if (Y < scr_height - (scale * 7) + scale) { X = 0; Y += (scale * 7) + scale; } else { X = 0; Y = 0; }
-    };
-  }
-}
-
-void ST7735_PutChar7x11(uint16_t X, uint16_t Y, uint8_t chr, uint16_t color, uint16_t bgcolor)
-{
-  uint16_t i,j;
-  uint8_t buffer[11];
-  uint8_t CH = color >> 8;
-  uint8_t CL = (uint8_t)color;
-  uint8_t BCH = bgcolor >> 8;
-  uint8_t BCL = (uint8_t)bgcolor;
-
-  if ((chr >= 0x20) && (chr <= 0x7F))
-  {
-    // ASCII[0x20-0x7F]
-    memcpy(buffer,&Font7x11[(chr - 32) * 11], 11);
-  }
-  else if (chr >= 0xA0)
-  {
-    // CP1251[0xA0-0xFF]
-    memcpy(buffer,&Font7x11[(chr - 64) * 11], 11);
-  }
-  else
-  {
-    // unsupported symbol
-    memcpy(buffer,&Font7x11[160], 11);
-  }
-
-  CS_L();
-  ST7735_AddrSet(X, Y, X + 7, Y + 11);
-  A0_H();
-  for (i = 0; i < 11; i++)
-  {
-    for (j = 0; j < 7; j++)
-    {
-      if ((buffer[i] >> j) & 0x01)
-      {
-        ST7735_write(CH);
-        ST7735_write(CL);
-      }
-      else
-      {
-        ST7735_write(BCH);
-        ST7735_write(BCL);
-      }
+    if (mCursorY > mHeight) {
+        return false;
     }
-    // vertical spacing
-    ST7735_write(BCH);
-    ST7735_write(BCL);
-  }
+    auto charData = mFont->getCharData(ch);
+    if (!charData) {
+        return false;
+    }
 
-  // horizontal spacing
-  for (i = 0; i < 8; i++)
-  {
-    ST7735_write(BCH);
-    ST7735_write(BCL);
-  }
+    auto width = ch * mFontScale;
+    auto height = mFont->height * mFontScale;
+    auto newCursorX = mCursorX + width + mFont->charSpacing * mFontScale;
+    if (newCursorX >= mWidth) {
+        mCursorX = 0;
+        mCursorY += height + mFont->lineSpacing * mFontScale;
+        newCursorX = width + mFont->charSpacing * mFontScale;
+    }
+    blitMonoVscan(mCursorX, mCursorY, width, height, charData, bg, mFontScale);
 
-  CS_H();
+    mCursorX = newCursorX;
+    return true;
 }
 
-void ST7735_PutStr7x11(uint8_t X, uint8_t Y, char *str, uint16_t color, uint16_t bgcolor)
+void ST7735Display::puts(const char* str, bool bg)
 {
-  while (*str)
-  {
-    ST7735_PutChar7x11(X,Y,*str++,color,bgcolor);
-    if (X < scr_width - 8) { X += 8; } else if (Y < scr_height - 12) { X = 0; Y += 12; } else { X = 0; Y = 0; }
-  };
+    while(*str) {
+        putc(*(str++), bg);
+    }
 }
-*/
+

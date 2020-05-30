@@ -25,6 +25,7 @@
 #include "bluetooth.hpp"
 #include "taskList.hpp"
 #include <st7735.hpp>
+#include <stdfonts.hpp>
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
@@ -183,15 +184,15 @@ extern "C" void app_main(void)
         startWebserver(true);
         return;
     }
-//== WIFI
+
+    //== WIFI
     wifiClient.start(CONFIG_WIFI_SSID, CONFIG_WIFI_PASSWORD);
     wifiClient.waitForConnect(-1);
 //====
 
     startWebserver();
-    netLogger.waitForLogConnection();
-    ESP_LOGI(TAG, "Log connection accepted, continuing");
 // ====
+// LCD test code
     ST7735Display::PinCfg lcdPins = {
         .spiHost = VSPI_HOST,
         .clk = GPIO_NUM_18,
@@ -202,7 +203,37 @@ extern "C" void app_main(void)
     };
 
     lcd.init(128, 128, lcdPins);
-    lcd.clear(0x00ff00);
+    for (int i = 0; i<128; i+=2) {
+        lcd.line(64, 0, i, 127, ST77XX_RED);
+    }
+//    lcd.msDelay(1000);
+    lcd.clear();
+    for (int i = 0; i<128; i+=2) {
+        lcd.line(64, 0, i, 127, ST77XX_GREEN);
+    }
+//    lcd.msDelay(1000);
+    lcd.clear();
+    for (int i = 0; i<128; i+=2) {
+        lcd.line(64, 0, i, 127, ST77XX_BLUE);
+    }
+//    lcd.msDelay(1000);
+    lcd.clear();
+    for (int i = 0; i < 128; i+=2) {
+        lcd.hLine(0, 127, i, i * (1 << 9));
+    }
+//    lcd.msDelay(1000);
+    lcd.clear();
+    for (int i = 0; i < 128; i+=2) {
+        lcd.vLine(i, 0, 127, i * (1 << 9));
+    }
+    lcd.clear();
+//    lcd.setCursor(0, 10);
+    lcd.setFont(Font_5x7, 2);
+
+//==
+    netLogger.waitForLogConnection();
+    ESP_LOGI(TAG, "Log connection accepted, continuing");
+    lcd.puts("Alex is the best! Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet.");
     return;
 
     player.reset(new AudioPlayer);
