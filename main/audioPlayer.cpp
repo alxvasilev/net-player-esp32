@@ -11,6 +11,7 @@
 #include "decoderNode.hpp"
 #include "equalizerNode.hpp"
 #include "a2dpInputNode.hpp"
+#include <stdfonts.hpp>
 
 constexpr float AudioPlayer::mEqGains[] = {
     8, 8, 4, 0, -2, -4, -4, -2, 4, 6
@@ -45,8 +46,10 @@ void AudioPlayer::createOutputA2dp()
 }
 
 AudioPlayer::AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, bool useEq)
-:mFlags(useEq ? kFlagUseEqualizer : (Flags)0), mNvsHandle("aplayer", NVS_READWRITE)
+:mFlags(useEq ? kFlagUseEqualizer : (Flags)0),
+ mNvsHandle("aplayer", NVS_READWRITE)
 {
+    lcdInit();
     mNvsHandle.enableAutoCommit(20000);
     createPipeline(inType, outType);
 }
@@ -54,6 +57,7 @@ AudioPlayer::AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, bool u
 AudioPlayer::AudioPlayer()
 :mFlags((Flags)0), mNvsHandle("aplayer", NVS_READWRITE)
 {
+    lcdInit();
     mNvsHandle.enableAutoCommit(20000);
     initFromNvs();
 }
@@ -68,6 +72,22 @@ void AudioPlayer::initFromNvs()
     createPipeline(inType, AudioNode::kTypeI2sOut);
 }
 
+void AudioPlayer::lcdInit()
+{
+    ST7735Display::PinCfg lcdPins = {
+        .spiHost = VSPI_HOST,
+        .clk = GPIO_NUM_18,
+        .mosi = GPIO_NUM_23,
+        .cs = GPIO_NUM_5,
+        .dc = GPIO_NUM_33, // data/command
+        .rst = GPIO_NUM_4
+    };
+    mLcd.init(128, 128, lcdPins);
+    mLcd.setFgColor(ST77XX_WHITE);
+    mLcd.line(0, 0, 127, 127, ST77XX_GREEN);
+    mLcd.putc('A', true, 0);
+}
+
 void AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType)
 {
     ESP_LOGI(TAG, "Creating audio pipeline");
@@ -75,6 +95,9 @@ void AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
     switch(inType) {
     case AudioNode::kTypeHttpIn:
         mStreamIn.reset(new HttpNode(kHttpBufSize));
+        mStreamIn->subscribeToEvents(HttpNode::kEventTrackInfo | HttpNode::kEventConnecting | HttpNode::kEventConnected);
+        mStreamIn->setEventHandler(this);
+
         mDecoder.reset(new DecoderNode);
         mDecoder->linkToPrev(mStreamIn.get());
         pcmSource = mDecoder.get();
@@ -114,6 +137,34 @@ void AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
     detectVolumeNode();
     ESP_LOGI(TAG, "Audio pipeline:\n%s", printPipeline().c_str());
     loadSettings();
+    lcdUpdateModeInfo();
+}
+
+void AudioPlayer::lcdUpdateModeInfo()
+{
+    mLcd.setFont(Font_5x7, 2);
+    mLcd.gotoXY(0, 0);
+    auto type = mStreamIn->type();
+    if (type == AudioNode::kTypeHttpIn) {
+        mLcd.putc('N');
+    } else if (type == AudioNode::kTypeA2dpIn) {
+        mLcd.putc('B');
+    } else {
+        mLcd.putc('?');
+    }
+    lcdUpdatePlayState();
+}
+
+void AudioPlayer::lcdUpdatePlayState()
+{
+    mLcd.gotoXY(mLcd.font()->width + 3, 0);
+    if (isPlaying()) {
+        mLcd.putc('>');
+    } else if (isStopped()) {
+        mLcd.putc('O');
+    } else {
+        mLcd.putc('\"');
+    }
 }
 
 std::string AudioPlayer::printPipeline()
@@ -226,6 +277,7 @@ void AudioPlayer::play()
     LOCK_PLAYER();
     mStreamIn->run();
     mStreamOut->run();
+    lcdUpdatePlayState();
 }
 
 void AudioPlayer::pause()
@@ -235,6 +287,7 @@ void AudioPlayer::pause()
     mStreamOut->pause();
     mStreamIn->waitForState(AudioNodeWithTask::kStatePaused);
     mStreamOut->waitForState(AudioNodeWithTask::kStatePaused);
+    lcdUpdatePlayState();
 }
 
 void AudioPlayer::resume()
@@ -249,6 +302,7 @@ void AudioPlayer::stop()
    mStreamOut->stop(false);
    mStreamIn->waitForStop();
    mStreamOut->waitForStop();
+   lcdUpdatePlayState();
 }
 
 bool AudioPlayer::volumeSet(uint16_t vol)
@@ -536,14 +590,17 @@ void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
     registerHttpGetHandler(server, "/status", &getStatusUrlHandler);
 }
 
-bool AudioPlayer::onEvent(AudioNode *self, uint16_t event, void *buf, size_t bufSize)
+bool AudioPlayer::onEvent(AudioNode *self, uint32_t event, void *buf, size_t bufSize)
 {
-    /*
     if (self->type() == AudioNode::kTypeHttpIn) {
         if (event == HttpNode::kEventTrackInfo) {
-            wsSendTrackTitle(buf);
+            LOCK_PLAYER();
+            lcdUpdateTrackTitle(buf, bufSize);
         }
     }
-    */
     return true;
+}
+
+void AudioPlayer::lcdUpdateTrackTitle(void* buf, size_t bufSize)
+{
 }

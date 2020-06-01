@@ -165,7 +165,7 @@ bool HttpNode::connect(bool isReconnect)
         snprintf(rang_header, 32, "bytes=%lld-", mBytePos);
         esp_http_client_set_header(mClient, "Range", rang_header);
     }
-    sendEvent(kEventOnConnecting, nullptr, isReconnect);
+    sendEvent(kEventConnecting, nullptr, isReconnect);
 
     for (int tries = 0; tries < 4; tries++) {
         auto err = esp_http_client_open(mClient, 0);
@@ -207,7 +207,7 @@ bool HttpNode::connect(bool isReconnect)
         if (!mIcyInterval) {
             ESP_LOGW(TAG, "Source does not send ShoutCast metadata");
         }
-        sendEvent(kEventOnConnected, nullptr, isReconnect);
+        sendEvent(kEventConnected, nullptr, isReconnect);
         return true;
     }
     return false;
@@ -401,19 +401,19 @@ void HttpNode::icyParseMetaData()
         return;
     }
     start += sizeof(kStreamTitlePrefix)-1; //sizeof(kStreamTitlePreix) incudes the terminating NULL
-    auto end = strchr(start, '\'');
+    auto end = strchr(start, ';');
     int titleSize;
     if (!end) {
         ESP_LOGW(TAG, "ICY parse error: Closing quote of StreamTitle not found");
         titleSize = mIcyMetaBuf.dataSize() - sizeof(kStreamTitlePrefix) - 1;
     } else {
+        end--; // move to closing quote
         titleSize = end - start;
     }
     memmove(mIcyMetaBuf.buf(), start, titleSize);
     mIcyMetaBuf[titleSize] = 0;
     mIcyMetaBuf.setDataSize(titleSize + 1);
     sendEvent(kEventTrackInfo, mIcyMetaBuf.buf(), mIcyMetaBuf.dataSize());
-    ESP_LOGW(TAG, "Track name changed: '%s'", mIcyMetaBuf.buf());
 }
 
 void HttpNode::setUrl(const char* url)

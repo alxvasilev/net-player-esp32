@@ -90,10 +90,10 @@ class IAudioVolume;
 class AudioNode
 {
 public:
-    enum EventType: uint16_t {
+    enum EventType: uint32_t {
         kEventStateChange = 1,
         kEventData = 2,
-        kEventLastGeneric = 15
+        kEventLastGeneric = 8
     };
     // we put here the state definitions only because the class name is shorter than AudioNodeWithTask
     enum State: uint8_t {
@@ -118,7 +118,7 @@ public:
     };
     struct EventHandler
     {
-        virtual bool onEvent(AudioNode* self, uint16_t type, void* buf, size_t bufSize) = 0;
+        virtual bool onEvent(AudioNode* self, uint32_t type, void* buf, size_t bufSize) = 0;
     };
     const char* tag() { return mTag; }
 protected:
@@ -127,8 +127,9 @@ protected:
     AudioNode* mPrev = nullptr;
     int64_t mBytePos = 0;
     void* mUserp = nullptr;
+    uint32_t mSubscribedEvents = 0;
     EventHandler* mEventHandler = nullptr;
-    inline void sendEvent(uint16_t type, void* buf=nullptr, int bufSize=0);
+    inline void sendEvent(uint32_t type, void* buf=nullptr, int bufSize=0);
     AudioNode(const char* tag): mTag(tag) {}
 public:
     virtual Type type() const = 0;
@@ -177,6 +178,13 @@ public:
             return kStreamStopped;
         }
     }
+    void subscribeToEvents(uint32_t events) {
+        mSubscribedEvents |= events;
+    }
+    void unsubscribeFromEvents(uint32_t events) {
+        mSubscribedEvents &= ~events;
+    }
+    void setEventHandler(EventHandler* handler) { mEventHandler = handler; }
 };
 
 class AudioNodeWithState: public AudioNode
@@ -255,11 +263,13 @@ public:
     virtual void setVolume(uint16_t vol) = 0;
 };
 
-inline void AudioNode::sendEvent(uint16_t type, void *buf, int bufSize)
+inline void AudioNode::sendEvent(uint32_t type, void *buf, int bufSize)
 {
     if (!mEventHandler) {
         return;
     }
-    mEventHandler->onEvent(this, type, buf, bufSize);
+    if (mSubscribedEvents & type) {
+        mEventHandler->onEvent(this, type, buf, bufSize);
+    }
 }
 #endif

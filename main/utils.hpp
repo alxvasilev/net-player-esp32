@@ -7,6 +7,7 @@
 #include <esp_log.h>
 #include <freertos/semphr.h>
 #include <memory>
+#include "mutex.hpp"
 
 #define myassert(cond) if (!(cond)) { \
     ESP_LOGE("RINGBUFFER", "Assertion failed: %s at %s:%d", #cond, __FILE__, __LINE__); \
@@ -239,34 +240,6 @@ static inline TaskHandle_t currentTaskHandle()
     extern volatile void * volatile pxCurrentTCB;
     return (TaskHandle_t)pxCurrentTCB;
 }
-
-class Mutex
-{
-    SemaphoreHandle_t mMutex;
-    StaticSemaphore_t mMutexMem;
-public:
-    Mutex() {
-        mMutex = xSemaphoreCreateRecursiveMutexStatic(&mMutexMem);
-    }
-    void lock() { xSemaphoreTakeRecursive(mMutex, portMAX_DELAY); }
-    void unlock() { xSemaphoreGiveRecursive(mMutex); }
-};
-
-class MutexLocker
-{
-    Mutex& mMutex;
-public:
-    MutexLocker(Mutex& aMutex): mMutex(aMutex) { mMutex.lock(); }
-    ~MutexLocker() { mMutex.unlock(); }
-};
-
-class MutexUnlocker
-{
-    Mutex& mMutex;
-public:
-    MutexUnlocker(Mutex& aMutex): mMutex(aMutex) { mMutex.unlock(); }
-    ~MutexUnlocker() { mMutex.lock(); }
-};
 
 template <class F, bool isOneShot>
 struct TimerCtx

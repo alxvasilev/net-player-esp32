@@ -423,27 +423,36 @@ void ST7735Display::blitMonoVscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
     }
 }
 
-bool ST7735Display::putc(uint8_t ch, bool bg)
+bool ST7735Display::putc(uint8_t ch, bool bg, uint8_t startCol)
 {
-    if (mCursorY > mHeight) {
+    if (cursorY > mHeight) {
         return false;
     }
-    auto charData = mFont->getCharData(ch);
+    uint8_t width = ch;
+    auto charData = mFont->getCharData(width);
     if (!charData) {
         return false;
     }
+    if (startCol) {
+        if (startCol >= width) {
+            return false;
+        }
+        auto byteHeight = (mFont->height + 7) / 8;
+        charData += byteHeight * startCol; // skip first columns
+        width -= startCol;
+    }
 
-    auto width = ch * mFontScale;
+    width *= mFontScale;
     auto height = mFont->height * mFontScale;
-    auto newCursorX = mCursorX + width + mFont->charSpacing * mFontScale;
+    auto newCursorX = cursorX + width + mFont->charSpacing * mFontScale;
     if (newCursorX >= mWidth) {
-        mCursorX = 0;
-        mCursorY += height + mFont->lineSpacing * mFontScale;
+        cursorX = 0;
+        cursorY += height + mFont->lineSpacing * mFontScale;
         newCursorX = width + mFont->charSpacing * mFontScale;
     }
-    blitMonoVscan(mCursorX, mCursorY, width, height, charData, bg, mFontScale);
+    blitMonoVscan(cursorX, cursorY, width, height, charData, bg, mFontScale);
 
-    mCursorX = newCursorX;
+    cursorX = newCursorX;
     return true;
 }
 
@@ -454,3 +463,11 @@ void ST7735Display::puts(const char* str, bool bg)
     }
 }
 
+void ST7735Display::gotoNextChar()
+{
+    cursorX += mFont->width * mFontScale + mFont->charSpacing;
+}
+void ST7735Display::gotoNextLine()
+{
+    cursorY += mFont->height * mFontScale + mFont->lineSpacing;
+}

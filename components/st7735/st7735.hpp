@@ -41,21 +41,22 @@ protected:
     spi_transaction_t mTrans;
     uint16_t mBgColor = 0x0000;
     uint16_t mFgColor = 0xffff;
-    int16_t mCursorX = 0;
-    int16_t mCursorY = 0;
     const Font* mFont = nullptr;
     uint8_t mFontScale = 1;
     static void preTransferCallback(spi_transaction_t *t);
     void setRstLevel(int level);
     void displayReset();
 public:
+    int16_t cursorX = 0;
+    int16_t cursorY = 0;
+    const Font* font() const { return mFont; }
     static void usDelay(uint32_t us);
     static void msDelay(uint32_t ms);
     static uint16_t mkcolor(uint8_t R, uint8_t G, uint8_t B);
     ST7735Display();
     void setFgColor(uint16_t color) { mFgColor = htobe16(color); }
     void setBgColor(uint16_t color) { mBgColor = htobe16(color); }
-    void setCursor(int16_t x, int16_t y) { mCursorX = x; mCursorY = y; }
+    void gotoXY(int16_t x, int16_t y) { cursorX = x; cursorY = y; }
     void init(int16_t width, int16_t height, PinCfg& pins);
     void sendCmd(uint8_t opcode);
     void sendCmd(uint8_t opcode, const std::initializer_list<uint8_t>& data);
@@ -77,8 +78,10 @@ public:
     void blitMonoHscan(int16_t sx, int16_t sy, int16_t w, int16_t h, const uint8_t* binData, bool bg=true);
     void blitMonoVscan(int16_t sx, int16_t sy, int16_t w, int16_t h, const uint8_t* binData, bool bg=true, int scale=1);
     void setFont(const Font& font, int8_t scale=1) { mFont = &font; mFontScale = scale; }
-    bool putc(uint8_t ch, bool bg=true);
+    bool putc(uint8_t ch, bool bg=true, uint8_t startCol=0);
     void puts(const char* str, bool bg=true);
+    void gotoNextChar();
+    void gotoNextLine();
 };
 
 // Some ready-made 16-bit ('565') color settings:

@@ -4,9 +4,12 @@
 #include "audioNode.hpp"
 #include "utils.hpp"
 #include "nvsHandle.hpp"
+#include <st7735.hpp>
 
 class DecoderNode;
 class EqualizerNode;
+class ST7735Display;
+
 namespace nvs {
     class NVSHandle;
 }
@@ -27,6 +30,7 @@ protected:
     IAudioVolume* mVolumeInterface = nullptr;
     static const float mEqGains[];
     NvsHandle mNvsHandle;
+    ST7735Display mLcd;
     void createInputA2dp();
     void createOutputA2dp();
 //==
@@ -38,6 +42,11 @@ protected:
     void initFromNvs();
     float equalizerDoSetBandGain(int band, float dbGain);
     void equalizerSaveGains();
+    void lcdInit();
+    void lcdUpdateModeInfo();
+    void lcdUpdatePlayState();
+    void lcdUpdateTrackTitle(void* buf, size_t bufSize);
+
     // web URL handlers
     static esp_err_t playUrlHandler(httpd_req_t *req);
     static esp_err_t pauseUrlHandler(httpd_req_t *req);
@@ -76,7 +85,7 @@ public:
     bool equalizerSetGainsBulk(char* str, size_t len);
     void registerUrlHanlers(httpd_handle_t server);
     // AudioNode::EventHandler interface
-    virtual bool onEvent(AudioNode *self, uint16_t type, void *buf, size_t bufSize) override;
+    virtual bool onEvent(AudioNode *self, uint32_t type, void *buf, size_t bufSize) override;
 };
 
 #endif

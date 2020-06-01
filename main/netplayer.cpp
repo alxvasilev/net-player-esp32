@@ -190,51 +190,10 @@ extern "C" void app_main(void)
     wifiClient.waitForConnect(-1);
 //====
 
-    startWebserver();
-// ====
-// LCD test code
-    ST7735Display::PinCfg lcdPins = {
-        .spiHost = VSPI_HOST,
-        .clk = GPIO_NUM_18,
-        .mosi = GPIO_NUM_23,
-        .cs = GPIO_NUM_5,
-        .dc = GPIO_NUM_33, // data/command
-        .rst = GPIO_NUM_4
-    };
-
-    lcd.init(128, 128, lcdPins);
-    for (int i = 0; i<128; i+=2) {
-        lcd.line(64, 0, i, 127, ST77XX_RED);
-    }
-//    lcd.msDelay(1000);
-    lcd.clear();
-    for (int i = 0; i<128; i+=2) {
-        lcd.line(64, 0, i, 127, ST77XX_GREEN);
-    }
-//    lcd.msDelay(1000);
-    lcd.clear();
-    for (int i = 0; i<128; i+=2) {
-        lcd.line(64, 0, i, 127, ST77XX_BLUE);
-    }
-//    lcd.msDelay(1000);
-    lcd.clear();
-    for (int i = 0; i < 128; i+=2) {
-        lcd.hLine(0, 127, i, i * (1 << 9));
-    }
-//    lcd.msDelay(1000);
-    lcd.clear();
-    for (int i = 0; i < 128; i+=2) {
-        lcd.vLine(i, 0, 127, i * (1 << 9));
-    }
-    lcd.clear();
-//    lcd.setCursor(0, 10);
-    lcd.setFont(Font_5x7, 2);
-
+    startWebserver();    
 //==
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
-    lcd.puts("Alex is the best! Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet.");
-    return;
 
     player.reset(new AudioPlayer);
     player->registerUrlHanlers(gHttpServer);

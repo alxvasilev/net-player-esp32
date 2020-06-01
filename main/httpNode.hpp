@@ -24,14 +24,6 @@ class HttpNode: public AudioNodeWithTask
 protected:
     enum { kPollTimeoutMs = 1000, kClientBufSize = 512, kReadSize = 1024,
            kStackSize = 3600 };
-    enum: uint16_t {
-        kHttpEventType = kEventLastGeneric + 1,
-        kEventOnConnecting,
-        kEventOnConnected,
-        kEventNextTrack,
-        kEventNoMoreTracks,
-        kEventTrackInfo
-    };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1,
                     kCommandNotifyFlushed };
     // Read mode dictates how the pullData() caller behaves. Since it may
@@ -78,6 +70,13 @@ protected:
     virtual bool dispatchCommand(Command &cmd);
     virtual void doStop();
 public:
+    enum: uint32_t {
+        kEventConnecting = kEventLastGeneric << 1,
+        kEventConnected = kEventLastGeneric << 2,
+        kEventNextTrack = kEventLastGeneric << 3,
+        kEventNoMoreTracks = kEventLastGeneric << 4,
+        kEventTrackInfo = kEventLastGeneric << 5
+    };
     HttpNode(size_t bufSize);
     virtual ~HttpNode();
     virtual Type type() const { return kTypeHttpIn; }
