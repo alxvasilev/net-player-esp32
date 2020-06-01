@@ -77,6 +77,7 @@ public:
         kEventNoMoreTracks = kEventLastGeneric << 4,
         kEventTrackInfo = kEventLastGeneric << 5
     };
+    Mutex infoMutex;
     HttpNode(size_t bufSize);
     virtual ~HttpNode();
     virtual Type type() const { return kTypeHttpIn; }

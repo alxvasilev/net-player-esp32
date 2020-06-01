@@ -128,6 +128,11 @@ public:
     {
         mDataSize = (newSize > mBufSize) ? mBufSize : mDataSize;
     }
+    void assign(const char* data, int size) {
+        resize(size);
+        memcpy(mBuf, data, size);
+        setDataSize(size);
+    }
     void append(char* data, int dataSize)
     {
         ensureFreeSpace(dataSize);

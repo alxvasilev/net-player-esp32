@@ -82,7 +82,7 @@ ST7735Display::ST7735Display()
     mTrans.user = this;
 }
 
-void ST7735Display::init(int16_t width, int16_t height, PinCfg& pins)
+void ST7735Display::init(int16_t width, int16_t height, const PinCfg& pins)
 {
     mWidth = width;
     mHeight = height;
@@ -137,7 +137,7 @@ void ST7735Display::sendCmd(uint8_t opcode)
     assert(ret == ESP_OK);            //Should have had no issues.
 }
 
-void ST7735Display::sendData(const uint8_t* data, int len)
+void ST7735Display::sendData(const void* data, int len)
 {
     if (len == 0) {
         return;
@@ -178,7 +178,7 @@ IRAM_ATTR void ST7735Display::preTransferCallback(spi_transaction_t *t)
     gpio_set_level((gpio_num_t)self->mDcPin, t->cmd);
 }
 
-uint16_t ST7735Display::mkcolor(uint8_t R,uint8_t G,uint8_t B)
+uint16_t ST7735Display::rgb(uint8_t R,uint8_t G,uint8_t B)
 {
   // RGB565
     return ((R >> 3) << 11) | ((G >> 2) << 5) | (B >> 3);
@@ -201,7 +201,7 @@ void ST7735Display::displayReset()
   sendCmd(ST77XX_RASET, {0x00, 0x00, 0x00, 0x9F});
 
   sendCmd(ST77XX_NORON);   // 17: Normal display on, no args, w/delay
-  clear(0x0000);
+  clear();
   sendCmd(ST77XX_DISPON); // 18: Main screen turn on, no args, delay
   msDelay(100);
 //setOrientation(kOrientNormal);
@@ -248,8 +248,7 @@ void ST7735Display::setWriteWindow(uint16_t XS, uint16_t YS, uint16_t XE, uint16
   sendCmd(ST77XX_RAMWR); // Memory write
 }
 
-void ST7735Display::fillRect(int16_t x0, int16_t y0, int16_t x1,
-                             int16_t y1, uint16_t color)
+void ST7735Display::fillRectRaw(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color)
 {
     enum { kBufSize = 128 };
     if (x0 > x1) {
@@ -258,57 +257,54 @@ void ST7735Display::fillRect(int16_t x0, int16_t y0, int16_t x1,
     if (y0 > y1) {
         std::swap(y0, y1);
     }
-    uint8_t ch = color >> 8;
-    uint8_t cl = (uint8_t)color;
-
+    color = htobe16(color);
     setWriteWindow(x0, y0, x1, y1);
     int num = (x1 - x0 + 1) * (y1 - y0 + 1) * 2;
     int bufSize = std::min(num, (int)kBufSize);
-    uint8_t* txbuf = (uint8_t*)alloca(bufSize);
-    auto bufEnd = txbuf + bufSize;
-    for (auto ptr = txbuf; ptr < bufEnd;) {
-        *(ptr++) = ch;
-        *(ptr++) = cl;
+    uint16_t* txbuf = (uint16_t*)alloca(bufSize);
+    auto bufEnd = (uint16_t*)((uint8_t*)txbuf + bufSize);
+    for (auto ptr = txbuf; ptr < bufEnd; ptr++) {
+        *ptr = color;
     }
     while (num > 0) {
         int txCount = std::min(num, bufSize);
-        sendData(txbuf, txCount);
+        sendData((uint8_t*)txbuf, txCount);
         num -= txCount;
     }
 }
 
-void ST7735Display::clear(uint16_t color)
+void ST7735Display::clear()
 {
-    fillRect(0, 0, mWidth-1, mHeight-1, color);
+    fillRectRaw(0, 0, mWidth-1, mHeight-1, mBgColor);
 }
 
-void ST7735Display::setPixel(uint16_t x, uint16_t y, uint16_t color)
+void ST7735Display::setPixelRaw(uint16_t x, uint16_t y, uint16_t color)
 {
     setWriteWindow(x, y, x, y);
-    sendData({(uint8_t)(color >> 8), (uint8_t)color});
+    sendData(&color, sizeof(color));
 }
 
-void ST7735Display::hLine(uint16_t x1, uint16_t x2, uint16_t y, uint16_t color)
+void ST7735Display::hLine(uint16_t x1, uint16_t x2, uint16_t y)
 {
-    fillRect(x1, y, x2, y, color);
+    fillRect(x1, y, x2, y);
 }
 
-void ST7735Display::vLine(uint16_t x, uint16_t y1, uint16_t y2, uint16_t color)
+void ST7735Display::vLine(uint16_t x, uint16_t y1, uint16_t y2)
 {
-    fillRect(x, y1, x, y2, color);
+    fillRect(x, y1, x, y2);
 }
 
-void ST7735Display::line(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t color)
+void ST7735Display::line(int16_t x1, int16_t y1, int16_t x2, int16_t y2)
 {
     int16_t dX = x2-x1;
     int16_t dY = y2-y1;
 
     if (dX == 0) {
-        vLine(x1, y1, y2, color);
+        vLine(x1, y1, y2);
         return;
     }
     if (dY == 0) {
-        hLine(x1, x2, y1, color);
+        hLine(x1, x2, y1);
         return;
     }
 
@@ -323,7 +319,7 @@ void ST7735Display::line(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_
     if (dX >= dY) {
         di = dY2 - dX;
         while (x1 != x2) {
-            setPixel(x1, y1, color);
+            setPixelRaw(x1, y1, mFgColor);
             x1 += dXsym;
             if (di < 0) {
                 di += dY2;
@@ -337,7 +333,7 @@ void ST7735Display::line(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_
     else {
         di = dX2 - dY;
         while (y1 != y2) {
-            setPixel(x1, y1, color);
+            setPixelRaw(x1, y1, mFgColor);
             y1 += dYsym;
             if (di < 0) {
                 di += dX2;
@@ -348,15 +344,15 @@ void ST7735Display::line(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_
             }
         }
     }
-    setPixel(x1, y1, color);
+    setPixelRaw(x1, y1, mFgColor);
 }
 
-void ST7735Display::rect(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t color)
+void ST7735Display::rect(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
 {
-    hLine(x1, x2, y1, color);
-    hLine(x1, x2, y2, color);
-    vLine(x1, y1, y2, color);
-    vLine(x2, y1, y2, color);
+    hLine(x1, x2, y1);
+    hLine(x1, x2, y2);
+    vLine(x1, y1, y2);
+    vLine(x2, y1, y2);
 }
 
 void ST7735Display::blitMonoHscan(int16_t sx, int16_t sy, int16_t w, int16_t h, const uint8_t* binData, bool bg)
@@ -425,6 +421,9 @@ void ST7735Display::blitMonoVscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
 
 bool ST7735Display::putc(uint8_t ch, bool bg, uint8_t startCol)
 {
+    if (!mFont) {
+        return false;
+    }
     if (cursorY > mHeight) {
         return false;
     }
@@ -459,7 +458,13 @@ bool ST7735Display::putc(uint8_t ch, bool bg, uint8_t startCol)
 void ST7735Display::puts(const char* str, bool bg)
 {
     while(*str) {
-        putc(*(str++), bg);
+        char ch = *(str++);
+        if (ch == '\n') {
+            cursorX = 0;
+            cursorY += (mFont->height + mFont->lineSpacing) * mFontScale;
+        } else if (ch != '\r') {
+            putc(ch, bg);
+        }
     }
 }
 

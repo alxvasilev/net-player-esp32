@@ -45,17 +45,17 @@ void AudioPlayer::createOutputA2dp()
     */
 }
 
-AudioPlayer::AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, bool useEq)
+AudioPlayer::AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, ST7735Display& lcd, bool useEq)
 :mFlags(useEq ? kFlagUseEqualizer : (Flags)0),
- mNvsHandle("aplayer", NVS_READWRITE)
+ mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd)
 {
     lcdInit();
     mNvsHandle.enableAutoCommit(20000);
     createPipeline(inType, outType);
 }
 
-AudioPlayer::AudioPlayer()
-:mFlags((Flags)0), mNvsHandle("aplayer", NVS_READWRITE)
+AudioPlayer::AudioPlayer(ST7735Display& lcd)
+:mFlags((Flags)0), mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd)
 {
     lcdInit();
     mNvsHandle.enableAutoCommit(20000);
@@ -74,18 +74,9 @@ void AudioPlayer::initFromNvs()
 
 void AudioPlayer::lcdInit()
 {
-    ST7735Display::PinCfg lcdPins = {
-        .spiHost = VSPI_HOST,
-        .clk = GPIO_NUM_18,
-        .mosi = GPIO_NUM_23,
-        .cs = GPIO_NUM_5,
-        .dc = GPIO_NUM_33, // data/command
-        .rst = GPIO_NUM_4
-    };
-    mLcd.init(128, 128, lcdPins);
-    mLcd.setFgColor(ST77XX_WHITE);
-    mLcd.line(0, 0, 127, 127, ST77XX_GREEN);
-    mLcd.putc('A', true, 0);
+    mLcd.clear();
+    mLcd.setFgColor(mLcd.rgb(2,2,2));
+    mLcd.hLine(0, 127, 14);
 }
 
 void AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType)
@@ -157,7 +148,7 @@ void AudioPlayer::lcdUpdateModeInfo()
 
 void AudioPlayer::lcdUpdatePlayState()
 {
-    mLcd.gotoXY(mLcd.font()->width + 3, 0);
+    mLcd.gotoXY(mLcd.font()->width * 2 + 3, 0);
     if (isPlaying()) {
         mLcd.putc('>');
     } else if (isStopped()) {
@@ -603,4 +594,6 @@ bool AudioPlayer::onEvent(AudioNode *self, uint32_t event, void *buf, size_t buf
 
 void AudioPlayer::lcdUpdateTrackTitle(void* buf, size_t bufSize)
 {
+    mTrackTitle.assign(buf, bufSize);
+    mTrackTitleScroll = 0;
 }

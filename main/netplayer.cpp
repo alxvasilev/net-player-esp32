@@ -165,18 +165,27 @@ bool rollbackCheckUserForced()
     setOtherPartitionBootableAndRestart();
     return true;
 }
+static constexpr ST7735Display::PinCfg lcdPins = {
+    .spiHost = VSPI_HOST,
+    .clk = GPIO_NUM_18,
+    .mosi = GPIO_NUM_23,
+    .cs = GPIO_NUM_5,
+    .dc = GPIO_NUM_33, // data/command
+    .rst = GPIO_NUM_4
+};
 
 extern "C" void app_main(void)
 {
     esp_log_level_set("*", ESP_LOG_DEBUG);
-//    esp_log_level_set(TAG, ESP_LOG_DEBUG);
-//    esp_log_level_set("HTTP_NODE", ESP_LOG_DEBUG);
-    initNvs();
     configGpios();
 
-    mountSpiffs();
     rollbackCheckUserForced();
     rollbackConfirmAppIsWorking();
+
+    lcd.init(128, 128, lcdPins);
+    lcd.puts("Mounting storage...\n");
+    initNvs();
+    mountSpiffs();
 
     if (!gpio_get_level(kPinButton)) {
         ESP_LOGW(TAG, "Button pressed at boot, start as access point for configuration");
@@ -185,17 +194,20 @@ extern "C" void app_main(void)
         return;
     }
 
+    lcd.puts("Connecting to WiFi...\n");
+
     //== WIFI
     wifiClient.start(CONFIG_WIFI_SSID, CONFIG_WIFI_PASSWORD);
     wifiClient.waitForConnect(-1);
-//====
 
+ //====
+    lcd.puts("Waiting log conn...\n");
     startWebserver();    
 //==
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
 
-    player.reset(new AudioPlayer);
+    player.reset(new AudioPlayer(lcd));
     player->registerUrlHanlers(gHttpServer);
     player->playlist.load((char*)std::string(gPlaylist).c_str());
     if (player->inputType() == AudioNode::kTypeHttpIn) {

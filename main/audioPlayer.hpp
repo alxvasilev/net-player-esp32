@@ -30,7 +30,7 @@ protected:
     IAudioVolume* mVolumeInterface = nullptr;
     static const float mEqGains[];
     NvsHandle mNvsHandle;
-    ST7735Display mLcd;
+    ST7735Display& mLcd;
     void createInputA2dp();
     void createOutputA2dp();
 //==
@@ -62,8 +62,8 @@ public:
     Mutex mutex;
     Playlist playlist;
     void setLogLevel(esp_log_level_t level) { esp_log_level_set(TAG, level); }
-    AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, bool useEq=true);
-    AudioPlayer();
+    AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, ST7735Display& lcd, bool useEq=true);
+    AudioPlayer(ST7735Display& lcd);
     ~AudioPlayer();
     AudioNode::Type inputType() const { return mStreamIn->type(); }
     AudioNode::Type outputType() const { return mStreamOut->type(); }
