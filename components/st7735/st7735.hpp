@@ -64,6 +64,7 @@ public:
     void setBgColor(uint16_t color) { mBgColor = htobe16(color); }
     void gotoXY(int16_t x, int16_t y) { cursorX = x; cursorY = y; }
     void init(int16_t width, int16_t height, const PinCfg& pins);
+    template<bool isFirst=false>
     void sendCmd(uint8_t opcode);
     void sendCmd(uint8_t opcode, const std::initializer_list<uint8_t>& data);
     void sendData(const void* data, int len);

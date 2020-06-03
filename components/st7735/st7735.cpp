@@ -126,15 +126,20 @@ void ST7735Display::setRstLevel(int level)
 {
     gpio_set_level((gpio_num_t)mRstPin, level);
 }
-
+template<bool isFirst>
 void ST7735Display::sendCmd(uint8_t opcode)
 {
+    esp_err_t ret;
+    if (!isFirst) {
+        ret = spi_device_polling_end(mSpi, portMAX_DELAY);
+        assert(ret == ESP_OK);
+    }
     mTrans.flags = SPI_TRANS_USE_TXDATA;   //D/C needs to be set to 0
     mTrans.length = 8;                     //Command is 8 bits
     mTrans.tx_data[0] = opcode;            //The data is the cmd itself
     mTrans.cmd = 0;
-    esp_err_t ret = spi_device_polling_transmit(mSpi, &mTrans);  //Transmit!
-    assert(ret == ESP_OK);            //Should have had no issues.
+    ret = spi_device_polling_start(mSpi, &mTrans, portMAX_DELAY);  //Transmit!
+    assert(ret == ESP_OK);
 }
 
 void ST7735Display::sendData(const void* data, int len)
@@ -142,18 +147,23 @@ void ST7735Display::sendData(const void* data, int len)
     if (len == 0) {
         return;
     }
+    esp_err_t ret = spi_device_polling_end(mSpi, portMAX_DELAY);
+    assert(ret == ESP_OK);
 
     mTrans.flags = 0;
     mTrans.length = len << 3;             //Len is in bytes, transaction length is in bits.
     mTrans.tx_buffer = data;             //Data
     mTrans.cmd = 1; // D/C needs to be set to 1
 
-    esp_err_t ret = spi_device_polling_transmit(mSpi, &mTrans);  //Transmit!
-    assert(ret == ESP_OK);            //Should have had no issues.
+    ret = spi_device_polling_start(mSpi, &mTrans, portMAX_DELAY);  //Transmit!
+    assert(ret == ESP_OK);
 }
 
 void ST7735Display::prepareSendPixels()
 {
+    esp_err_t ret = spi_device_polling_end(mSpi, portMAX_DELAY);
+    assert(ret == ESP_OK);
+
     mTrans.flags = 0;
     mTrans.length = 16;
     mTrans.cmd = 1; // D/C needs to be set to 1
@@ -161,9 +171,11 @@ void ST7735Display::prepareSendPixels()
 
 void ST7735Display::sendNextPixel(uint16_t pixel)
 {
+    esp_err_t ret = spi_device_polling_end(mSpi, portMAX_DELAY);
+    assert(ret == ESP_OK);
     // WARNING: Requires prepareSendPixels() to have been called before
     mTrans.tx_buffer = &pixel;
-    spi_device_polling_transmit(mSpi, &mTrans);
+    spi_device_polling_start(mSpi, &mTrans, portMAX_DELAY);
 }
 
 void ST7735Display::sendCmd(uint8_t opcode, const std::initializer_list<uint8_t>& data)
@@ -190,7 +202,7 @@ void ST7735Display::displayReset()
   msDelay(50);
   setRstLevel(1);
   msDelay(140);
-  sendCmd(ST77XX_SLPOUT);     // Sleep out, booster on
+  sendCmd<true>(ST77XX_SLPOUT);     // Sleep out, booster on
   msDelay(140);
 
   sendCmd(ST77XX_INVOFF);
