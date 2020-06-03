@@ -381,14 +381,29 @@ void ST7735Display::blitMonoHscan(int16_t sx, int16_t sy, int16_t w, int16_t h, 
         }
     }
 }
+/** @param bg if zero, no background (i.e. zero) pixels are drawn
+ *  if bg > 0, this amount of columns is drawn on the right of the
+ *  bitmap (for char spacing), and background pixels are drawn
+ *  if bg < 0, background pixels are drawn but no bg columns on the right
+ */
 void ST7735Display::blitMonoVscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
-    const uint8_t* binData, bool bg, int scale)
+    const uint8_t* binData, int8_t bgSpacing, int scale)
 {
+    if (sx + w >= mWidth) {
+        w = mWidth - sx;
+        if (w < 0) {
+            return;
+        }
+    }
     // scan horizontally in display RAM, but vertically in char data
     int16_t bitH = h / scale;
     int16_t bitW = w / scale;
     int8_t byteHeight = (bitH + 7) / 8;
-    setWriteWindow(sx, sy, (sx+w-1), (sy+h-1));
+    if (bgSpacing) {
+        setWriteWindow(sx, sy, sx+w-1 + bgSpacing, sy+h-1);
+    } else {
+        setWriteWindow(sx, sy, sx+w-1, sy+h-1);
+    }
     prepareSendPixels();
     int rptY = 0;
     uint8_t mask = 0x01;
@@ -400,12 +415,17 @@ void ST7735Display::blitMonoVscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
                 for (int rptX = 0; rptX < scale; rptX++) {
                     sendNextPixel(mFgColor);
                 }
-            } else if (bg) {
+            } else {
                 for (int rptX = 0; rptX < scale; rptX++) {
                     sendNextPixel(mBgColor);
                 }
             }
             bits += byteHeight;
+        }
+        if (bgSpacing) {
+            for (int rptBg = 0; rptBg < bgSpacing; rptBg++) {
+                sendNextPixel(mBgColor);
+            }
         }
         if (++rptY < scale) {
             continue;
@@ -419,7 +439,7 @@ void ST7735Display::blitMonoVscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
     }
 }
 
-bool ST7735Display::putc(uint8_t ch, bool bg, uint8_t startCol)
+bool ST7735Display::putc(uint8_t ch, uint8_t flags, uint8_t startCol)
 {
     if (!mFont) {
         return false;
@@ -432,30 +452,50 @@ bool ST7735Display::putc(uint8_t ch, bool bg, uint8_t startCol)
     if (!charData) {
         return false;
     }
+    auto height = mFont->height * mFontScale;
+    int charSpc = mFont->charSpacing;
     if (startCol) {
         if (startCol >= width) {
-            return false;
+            auto colsToDraw = startCol - width + 1;
+            if (colsToDraw > charSpc) {
+                return false;
+            }
+            colsToDraw *= mFontScale;
+            fillRectRaw(cursorX, cursorY, cursorX + colsToDraw - 1, cursorY + height - 1, mBgColor);
+            cursorX += colsToDraw;
+            return true;
         }
         auto byteHeight = (mFont->height + 7) / 8;
         charData += byteHeight * startCol; // skip first columns
         width -= startCol;
     }
-
     width *= mFontScale;
-    auto height = mFont->height * mFontScale;
-    auto newCursorX = cursorX + width + mFont->charSpacing * mFontScale;
-    if (newCursorX >= mWidth) {
-        cursorX = 0;
-        cursorY += height + mFont->lineSpacing * mFontScale;
-        newCursorX = width + mFont->charSpacing * mFontScale;
+    charSpc *= mFontScale;
+
+    // we need to calculate new cursor X in order to determine if we
+    // should increment cursorY. That's why we do the newCursorX gymnastics
+    int newCursorX;
+    if (cursorX >= mWidth) {
+        if ((flags & kFlagNoAutoNewline) == 0) {
+            cursorX = 0;
+            cursorY += height + mFont->lineSpacing * mFontScale;
+            newCursorX = width + charSpc;
+        } else {
+            return false;
+        }
+    } else {
+        newCursorX = cursorX + width + charSpc;
+        if (newCursorX > mWidth) {
+            newCursorX = mWidth;
+        }
     }
-    blitMonoVscan(cursorX, cursorY, width, height, charData, bg, mFontScale);
+    blitMonoVscan(cursorX, cursorY, width, height, charData, charSpc, mFontScale);
 
     cursorX = newCursorX;
     return true;
 }
 
-void ST7735Display::puts(const char* str, bool bg)
+void ST7735Display::puts(const char* str, uint8_t flags)
 {
     while(*str) {
         char ch = *(str++);
@@ -463,7 +503,20 @@ void ST7735Display::puts(const char* str, bool bg)
             cursorX = 0;
             cursorY += (mFont->height + mFont->lineSpacing) * mFontScale;
         } else if (ch != '\r') {
-            putc(ch, bg);
+            putc(ch, flags);
+        }
+    }
+}
+void ST7735Display::puts(const char* str, int len, uint8_t flags)
+{
+    auto end = str + len;
+    while(str < end) {
+        char ch = *(str++);
+        if (ch == '\n') {
+            cursorX = 0;
+            cursorY += (mFont->height + mFont->lineSpacing) * mFontScale;
+        } else if (ch != '\r') {
+            putc(ch, flags);
         }
     }
 }

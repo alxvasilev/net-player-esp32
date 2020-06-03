@@ -18,6 +18,7 @@ class AudioPlayer: public AudioNode::EventHandler
 {
 public:
     static constexpr int kHttpBufSize = 20 * 1024;
+    static constexpr int kTitleScrollTickPeriodMs = 100;
 protected:
     enum Flags: uint8_t
     { kFlagUseEqualizer = 1, kFlagListenerHooked = 2, kFlagNoWaitPrefill = 4 };
@@ -31,6 +32,12 @@ protected:
     static const float mEqGains[];
     NvsHandle mNvsHandle;
     ST7735Display& mLcd;
+    DynBuffer mTrackTitle;
+    int16_t mTitleScrollCharOffset = 0;
+    int8_t mTitleScrollPixOffset = 0;
+    CbTimer mTitleScrollTimer;
+    static void onTitleSrollTick(void* ctx);
+
     void createInputA2dp();
     void createOutputA2dp();
 //==
@@ -45,7 +52,7 @@ protected:
     void lcdInit();
     void lcdUpdateModeInfo();
     void lcdUpdatePlayState();
-    void lcdUpdateTrackTitle(void* buf, size_t bufSize);
+    void lcdUpdateTrackTitle(const char* buf, int size);
 
     // web URL handlers
     static esp_err_t playUrlHandler(httpd_req_t *req);

@@ -413,6 +413,7 @@ void HttpNode::icyParseMetaData()
     memmove(mIcyMetaBuf.buf(), start, titleSize);
     mIcyMetaBuf[titleSize] = 0;
     mIcyMetaBuf.setDataSize(titleSize + 1);
+    ESP_LOGW(TAG, "Track title changed to: '%s'", mIcyMetaBuf.buf());
     sendEvent(kEventTrackInfo, mIcyMetaBuf.buf(), mIcyMetaBuf.dataSize());
 }
 

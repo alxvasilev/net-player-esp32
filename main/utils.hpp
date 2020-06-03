@@ -7,175 +7,15 @@
 #include <esp_log.h>
 #include <freertos/semphr.h>
 #include <memory>
+#include "buffer.hpp"
 #include "mutex.hpp"
+#include "timer.hpp"
 
 #define myassert(cond) if (!(cond)) { \
-    ESP_LOGE("RINGBUFFER", "Assertion failed: %s at %s:%d", #cond, __FILE__, __LINE__); \
+    ESP_LOGE("ASSERT", "Assertion failed: %s at %s:%d", #cond, __FILE__, __LINE__); \
     *((int*)nullptr) = 0; }
 
 #define TRACE ESP_LOGI("TRC", "%s:%d", __FILE__, __LINE__);
-
-template<typename T>
-struct BufPtr
-{
-protected:
-    T* mPtr;
-    BufPtr() {} // mPtr remains uninitialized, only for derived classes
-public:
-    T* ptr() { return mPtr; }
-    const T* ptr() const { return mPtr; }
-    BufPtr(T* ptr): mPtr(ptr){}
-    BufPtr(BufPtr<T>&& other) {
-        mPtr = other.mPtr;
-        other.mPtr = nullptr;
-    }
-    ~BufPtr() {
-        if (mPtr) {
-            ::free(mPtr);
-        }
-    }
-    void free() {
-        if (!mPtr) {
-            return;
-        }
-        ::free(mPtr);
-        mPtr = nullptr;
-    }
-    void freeAndReset(T* newPtr) {
-        free();
-        mPtr = newPtr;
-    }
-    void* release() {
-        auto ret = mPtr;
-        mPtr = nullptr;
-        return ret;
-    }
-};
-
-class DynBuffer
-{
-protected:
-    char* mBuf;
-    int mBufSize;
-    int mDataSize = 0;
-public:
-    char* buf() { return mBuf; }
-    const char* buf() const { return mBuf; }
-    int capacity() const { return mBufSize; }
-    int dataSize() const { return mDataSize; }
-    int freeSpace() const { return mBufSize - mDataSize; }
-    DynBuffer(size_t allocSize = 0)
-    {
-        if (!allocSize) {
-            mBuf = nullptr;
-            mBufSize = 0;
-            return;
-        }
-        mBuf = (char*)malloc(allocSize);
-        if (!mBuf) {
-            mBufSize = 0;
-            return;
-        }
-        mBufSize = allocSize;
-    }
-    ~DynBuffer() { if (mBuf) free(mBuf); }
-    void clear() { mDataSize = 0; }
-    char& operator[](int idx)
-    {
-        myassert(idx >= 0 && idx < mDataSize);
-        return mBuf[idx];
-    }
-    operator bool() const { return mBuf && mDataSize > 0; }
-    void reserve(int newSize)
-    {
-        if (newSize <= mBufSize) {
-            return;
-        }
-        auto newBuf = mBuf ? (char*)realloc(mBuf, newSize) : (char*)malloc(newSize);
-        if (!newBuf) {
-            ESP_LOGE("BUF", "reserve: Out of memory allocating %d bytes for buffer", newSize);
-            return;
-        }
-        mBuf = newBuf;
-        mBufSize = newSize;
-    }
-    void resize(int newDataSize)
-    {
-        if (newDataSize > mBufSize) {
-            reserve(newDataSize);
-        }
-        mDataSize = newDataSize;
-    }
-    void ensureFreeSpace(int amount)
-    {
-        auto needed = mDataSize + amount;
-        if (needed > mBufSize) {
-            reserve(needed);
-        }
-    }
-    char* appendPtr(int writeLen)
-    {
-        ensureFreeSpace(writeLen);
-        return mBuf + mDataSize;
-    }
-    void expandDataSize(int by)
-    {
-        auto newDataSize = mDataSize + by;
-        myassert(newDataSize <= mBufSize);
-        mDataSize = newDataSize;
-    }
-    void setDataSize(int newSize)
-    {
-        mDataSize = (newSize > mBufSize) ? mBufSize : mDataSize;
-    }
-    void assign(const char* data, int size) {
-        resize(size);
-        memcpy(mBuf, data, size);
-        setDataSize(size);
-    }
-    void append(char* data, int dataSize)
-    {
-        ensureFreeSpace(dataSize);
-        memcpy(mBuf, data, dataSize);
-        mDataSize += dataSize;
-    }
-    void appendChar(char ch)
-    {
-        ensureFreeSpace(1);
-        mBuf[mDataSize++] = ch;
-    }
-    void truncateChar(int num=1)
-    {
-        int newDataSize = mDataSize - num;
-        mDataSize = (newDataSize < 0) ? 0 : newDataSize;
-    }
-    int vprintf(const char *fmt, va_list args)
-    {
-        if ((mDataSize > 0) && (mBuf[mDataSize - 1] == 0)) {
-            mDataSize--;
-        }
-        int writeSize = freeSpace();
-        for (;;) {
-            int num = ::vsnprintf(appendPtr(writeSize), writeSize, fmt, args);
-            if (num < 0) {
-                return num;
-            } else if (num < writeSize) { // completely written
-                expandDataSize(num + 1);
-                return num;
-            } else {
-                writeSize = num + 1;
-            }
-        }
-    }
-    int printf(const char *fmt, ...)
-    {
-        va_list args;
-        va_start(args, fmt);
-        int ret = vprintf(fmt, args);
-        va_end(args);
-        return ret;
-    }
-};
 
 char* binToHex(const uint8_t* data, size_t len, char* str);
 
@@ -244,39 +84,6 @@ static inline TaskHandle_t currentTaskHandle()
 {
     extern volatile void * volatile pxCurrentTCB;
     return (TaskHandle_t)pxCurrentTCB;
-}
-
-template <class F, bool isOneShot>
-struct TimerCtx
-{
-    typedef TimerCtx<F, isOneShot> Self;
-    F mUserCb;
-    esp_timer_handle_t mTimer;
-    virtual ~TimerCtx() { esp_timer_delete(mTimer); }
-    TimerCtx(F&& userCb): mUserCb(std::forward<F>(userCb)) {}
-    static void cFunc(void* ctx)
-    {
-        auto self = static_cast<Self*>(ctx);
-        self->mUserCb();
-        if (isOneShot) {
-            delete self;
-        }
-    }
-};
-
-template<class F>
-void setTimeout(uint32_t ms, F&& cb)
-{
-    esp_timer_create_args_t args = {};
-    args.dispatch_method = ESP_TIMER_TASK;
-    auto ctx = new TimerCtx<F, true>(std::forward<F>(cb));
-    args.callback = ctx->cFunc;
-    args.arg = ctx;
-    args.name = "userOneshotTimer";
-    esp_timer_handle_t timer;
-    ESP_ERROR_CHECK(esp_timer_create(&args, &timer));
-    ctx->mTimer = timer;
-    ESP_ERROR_CHECK(esp_timer_start_once(timer, ms * 1000));
 }
 
 class ElapsedTimer

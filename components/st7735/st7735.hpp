@@ -30,6 +30,10 @@ public:
       kOrientCCW    = 2,
       kOrient180    = 3
     };
+    enum DrawFlags
+    {
+        kFlagNoAutoNewline = 1
+    };
 protected:
     int16_t mWidth;
     int16_t mHeight;
@@ -49,6 +53,8 @@ protected:
 public:
     int16_t cursorX = 0;
     int16_t cursorY = 0;
+    int16_t width() const { return mWidth; }
+    int16_t height() const { return mHeight; }
     const Font* font() const { return mFont; }
     static void usDelay(uint32_t us);
     static void msDelay(uint32_t ms);
@@ -78,10 +84,15 @@ public:
     void rect(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2);
     void line(int16_t x1, int16_t y1, int16_t x2, int16_t y2);
     void blitMonoHscan(int16_t sx, int16_t sy, int16_t w, int16_t h, const uint8_t* binData, bool bg=true);
-    void blitMonoVscan(int16_t sx, int16_t sy, int16_t w, int16_t h, const uint8_t* binData, bool bg=true, int scale=1);
+    void blitMonoVscan(int16_t sx, int16_t sy, int16_t w, int16_t h, const uint8_t* binData, int8_t bgSpacing=0, int scale=1);
     void setFont(const Font& font, int8_t scale=1) { mFont = &font; mFontScale = scale; }
-    bool putc(uint8_t ch, bool bg=true, uint8_t startCol=0);
-    void puts(const char* str, bool bg=true);
+    void setFontScale(int8_t scale) { mFontScale = scale; }
+    uint8_t charWidth() const { return (mFont->width + mFont->charSpacing) * mFontScale; }
+    uint8_t charHeight() const { return mFont->height * mFontScale; }
+    bool putc(uint8_t ch, uint8_t flags = 0, uint8_t startCol=0);
+    void puts(const char* str, uint8_t flags = 0);
+    void puts(const char* str, int len, uint8_t flags = 0);
+
     void gotoNextChar();
     void gotoNextLine();
 };

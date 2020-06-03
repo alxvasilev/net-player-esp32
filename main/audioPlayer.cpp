@@ -77,6 +77,8 @@ void AudioPlayer::lcdInit()
     mLcd.clear();
     mLcd.setFgColor(mLcd.rgb(2,2,2));
     mLcd.hLine(0, 127, 14);
+    mLcd.setFont(Font_5x7, 2);
+    mLcd.setFgColor(0xffff);
 }
 
 void AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType)
@@ -586,14 +588,61 @@ bool AudioPlayer::onEvent(AudioNode *self, uint32_t event, void *buf, size_t buf
     if (self->type() == AudioNode::kTypeHttpIn) {
         if (event == HttpNode::kEventTrackInfo) {
             LOCK_PLAYER();
-            lcdUpdateTrackTitle(buf, bufSize);
+            lcdUpdateTrackTitle((const char*)buf, bufSize);
         }
     }
     return true;
 }
 
-void AudioPlayer::lcdUpdateTrackTitle(void* buf, size_t bufSize)
+void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int size)
 {
-    mTrackTitle.assign(buf, bufSize);
-    mTrackTitleScroll = 0;
+    mTrackTitle.reserve(size + 3);
+    mTrackTitle.assign(buf, size - 1);
+    mTrackTitle.append(" * ", 4);
+    mTitleScrollCharOffset = mTitleScrollPixOffset = 0;
+    onTitleSrollTick(this);
+    if (!mTitleScrollTimer.running()) {
+        mTitleScrollTimer.start(kTitleScrollTickPeriodMs, false, onTitleSrollTick, this);
+    }
 }
+void AudioPlayer::onTitleSrollTick(void* ctx)
+{
+    ElapsedTimer timer;
+    auto& self = *static_cast<AudioPlayer*>(ctx);
+    MutexLocker locker(self.mutex);
+    if (!self.mTrackTitle.dataSize()) {
+        return;
+    }
+    auto& lcd = self.mLcd;
+    lcd.setFont(Font_5x7, 2);
+    lcd.setFgColor(0xffff);
+    lcd.gotoXY(0, (lcd.height() - lcd.charHeight()) / 2);
+
+    auto title = self.mTrackTitle.buf() + self.mTitleScrollCharOffset;
+    auto titleEnd = self.mTrackTitle.buf() + self.mTrackTitle.dataSize() - 1; // without terminating null
+    if (title >= titleEnd) {
+        title = self.mTrackTitle.buf();
+        self.mTitleScrollCharOffset = self.mTitleScrollPixOffset = 0;
+    } else {
+        if (self.mTitleScrollPixOffset) {
+            lcd.putc(*(title++), lcd.kFlagNoAutoNewline, self.mTitleScrollPixOffset); // can advance to the terminating NULL
+        }
+        if (++self.mTitleScrollPixOffset >= lcd.font()->width + lcd.font()->charSpacing) {
+            self.mTitleScrollPixOffset = 0;
+            self.mTitleScrollCharOffset++;
+        }
+    }
+    for(;;) {
+        char ch = *title;
+        if (!ch) {
+            title = self.mTrackTitle.buf();
+            ch = *title;
+        }
+        title++;
+        if (!lcd.putc(ch, lcd.kFlagNoAutoNewline)) {
+            break;
+        }
+    }
+    ESP_LOGI("PL", "Scroll time: %d", timer.msElapsed());
+}
+
