@@ -7,7 +7,6 @@
 #include <esp_wifi.h>
 #include <nvs_flash.h>
 #include <esp_ota_ops.h>
-#include <esp_event_loop.h>
 #include <esp_log.h>
 #include <esp_system.h>
 #include <esp_http_server.h>
@@ -48,23 +47,12 @@ http://italo.italo.nu/live";
 
 httpd_handle_t gHttpServer = nullptr;
 std::unique_ptr<AudioPlayer> player;
-WifiClient wifiClient;
+std::unique_ptr<WifiBase> wifi;
 TaskList taskList;
 ST7735Display lcd;
 
-void reconfigDhcpServer();
-void startWifiSoftAp();
 void startWebserver(bool isAp=false);
-/*
-const char* getNextStreamUrl() {
-    static int currStreamIdx = -1;
-    currStreamIdx++;
-    if (currStreamIdx >= (sizeof(kStreamUrls) / sizeof(kStreamUrls[0]))) {
-        currStreamIdx = 0;
-    }
-    return kStreamUrls[currStreamIdx];
-}
-*/
+
 void configGpios()
 {
     gpio_pad_select_gpio(kPinButton);
@@ -189,7 +177,8 @@ extern "C" void app_main(void)
 
     if (!gpio_get_level(kPinButton)) {
         ESP_LOGW(TAG, "Button pressed at boot, start as access point for configuration");
-        startWifiSoftAp();
+        wifi.reset(new WifiAp);
+        static_cast<WifiAp*>(wifi.get())->start("netplayer", "net12player", 8);
         startWebserver(true);
         return;
     }
@@ -197,9 +186,15 @@ extern "C" void app_main(void)
     lcd.puts("Connecting to WiFi...\n");
 
     //== WIFI
-    wifiClient.start(CONFIG_WIFI_SSID, CONFIG_WIFI_PASSWORD);
-    wifiClient.waitForConnect(-1);
-
+    wifi.reset(new WifiClient);
+    static_cast<WifiClient*>(wifi.get())->start(CONFIG_WIFI_SSID, CONFIG_WIFI_PASSWORD);
+    if (!wifi->waitForConnect(20000)) {
+        lcd.puts("Timed out, starting AP\n");
+        lcd.puts("ssid: netplayer\n");
+        lcd.puts("key: alexisthebest\n");
+        wifi.reset(new WifiAp);
+        static_cast<WifiAp*>(wifi.get())->start("netplayer", "alexisthebest", 1);
+    }
  //====
     lcd.puts("Waiting log conn...\n");
     startWebserver();    
@@ -334,68 +329,4 @@ void startWebserver(bool isAp)
     httpd_register_uri_handler(gHttpServer, &changeInputUrl);
 }
 
-
-void reconfigDhcpServer()
-{
-    // stop DHCP server
-    ESP_ERROR_CHECK(tcpip_adapter_dhcps_stop(TCPIP_ADAPTER_IF_AP));
-    // assign a static IP to the network interface
-    tcpip_adapter_ip_info_t info;
-    memset(&info, 0, sizeof(info));
-
-    IP4_ADDR(&info.ip, 192, 168, 0, 1);
-    IP4_ADDR(&info.gw, 192, 168, 0, 1); //ESP acts as router, so gw addr will be its own addr
-    IP4_ADDR(&info.netmask, 255, 255, 255, 0);
-    ESP_ERROR_CHECK(tcpip_adapter_set_ip_info(TCPIP_ADAPTER_IF_AP, &info));
-    // start the DHCP server
-    ESP_ERROR_CHECK(tcpip_adapter_dhcps_start(TCPIP_ADAPTER_IF_AP));
-    printf("DHCP server started \n");
-}
-
-static esp_err_t apEventHandler(void *ctx, system_event_t *event)
-{
-    switch(event->event_id) {
-    case SYSTEM_EVENT_AP_STACONNECTED:
-        ESP_LOGI(TAG, "station:" MACSTR " join, AID=%d",
-                 MAC2STR(event->event_info.sta_connected.mac),
-                 event->event_info.sta_connected.aid);
-        break;
-    case SYSTEM_EVENT_AP_STADISCONNECTED:
-        ESP_LOGI(TAG, "station:" MACSTR "leave, AID=%d",
-                 MAC2STR(event->event_info.sta_disconnected.mac),
-                 event->event_info.sta_disconnected.aid);
-        break;
-    default:
-        break;
-    }
-    return ESP_OK;
-}
-void startWifiSoftAp()
-{
-    ESP_ERROR_CHECK(esp_event_loop_init(apEventHandler, NULL));
-
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    //ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-
-//  reconfigDhcpServer();
-
-    // configure the wifi connection and start the interface
-    wifi_config_t ap_config;
-    auto& ap = ap_config.ap;
-    strcpy((char*)ap.ssid, "NetPlayer");
-    strcpy((char*)ap.password, "net12player");
-    ap.ssid_len = 0;
-    ap.channel = 4;
-    ap.authmode = WIFI_AUTH_WPA2_PSK;
-    ap.ssid_hidden = 0;
-    ap.max_connection = 8;
-    ap.beacon_interval = 400;
-
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
-    ESP_ERROR_CHECK(esp_wifi_start());
-    printf("ESP WiFi started in AP mode \n");
-    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(20));
-}
 

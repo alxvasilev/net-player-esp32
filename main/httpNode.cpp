@@ -115,13 +115,17 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
         self->mIcyCtr = 0;
         ESP_LOGI(TAG, "Response contains ICY metadata with interval %d", self->mIcyInterval);
     } else if (strcasecmp(key, "icy-name") == 0) {
-        self->mStationName.freeAndReset(strdup(evt->header_value));
+        MutexLocker locker(self->icyInfo.mutex);
+        self->icyInfo.mStaName.freeAndReset(strdup(evt->header_value));
     } else if (strcasecmp(key, "icy-description") == 0) {
-        self->mStationDesc.freeAndReset(strdup(evt->header_value));
+        MutexLocker locker(self->icyInfo.mutex);
+        self->icyInfo.mStaDesc.freeAndReset(strdup(evt->header_value));
     } else if (strcasecmp(key, "icy-genre") == 0) {
-        self->mStationGenre.freeAndReset(strdup(evt->header_value));
+        MutexLocker locker(self->icyInfo.mutex);
+        self->icyInfo.mStaGenre.freeAndReset(strdup(evt->header_value));
     } else if (strcasecmp(key, "icy-url") == 0) {
-        self->mStationUrl.freeAndReset(strdup(evt->header_value));
+        MutexLocker locker(self->icyInfo.mutex);
+        self->icyInfo.mStaUrl.freeAndReset(strdup(evt->header_value));
     }
     return ESP_OK;
 }
@@ -206,6 +210,12 @@ bool HttpNode::connect(bool isReconnect)
         }
         if (!mIcyInterval) {
             ESP_LOGW(TAG, "Source does not send ShoutCast metadata");
+        }
+        {
+            MutexLocker locker(icyInfo.mutex);
+            if (!icyInfo.mStaUrl) {
+                icyInfo.mStaUrl.freeAndReset(strdup(mUrl));
+            }
         }
         sendEvent(kEventConnected, nullptr, isReconnect);
         return true;
@@ -302,7 +312,7 @@ void HttpNode::recv()
                     rlen = icyProcessRecvData(buf, rlen);
                 }
                 mRingBuf.commitWrite(rlen);
-                ESP_LOGI(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.totalDataAvail());
+                //ESP_LOGI(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.totalDataAvail());
                 //TODO: Implement IceCast metadata support
                 if (mWaitingPrefill && mRingBuf.totalDataAvail() >= mPrefillAmount) {
                     setWaitingPrefill(false);
@@ -333,13 +343,15 @@ void HttpNode::recv()
 int HttpNode::icyProcessRecvData(char* buf, int rlen)
 {
     if (mIcyRemaining) { // we are receiving metadata
-        myassert(mIcyMetaBuf.buf());
+        MutexLocker locker(icyInfo.mutex);
+        auto& icyMeta = icyInfo.mIcyMetaBuf;
+        myassert(icyMeta.buf());
         auto metaLen = std::min(rlen, (int)mIcyRemaining);
-        mIcyMetaBuf.append(buf, metaLen);
+        icyMeta.append(buf, metaLen);
         mIcyRemaining -= metaLen;
         if (mIcyRemaining <= 0) { // meta data complete
             myassert(mIcyRemaining == 0);
-            mIcyMetaBuf.appendChar(0);
+            icyMeta.appendChar(0);
             mIcyCtr = rlen - metaLen;
             if (mIcyCtr > 0) {
                 // there is stream data after end of metadata
@@ -364,11 +376,13 @@ int HttpNode::icyProcessRecvData(char* buf, int rlen)
         mIcyRemaining = metaSize; // includes the length byte
         int metaChunkSize = std::min(rlen - metaOffset, metaSize);
 
+        MutexLocker locker(icyInfo.mutex);
+        auto& icyMeta = icyInfo.mIcyMetaBuf;
         if (metaSize > 1) {
-            mIcyMetaBuf.clear();
-            mIcyMetaBuf.ensureFreeSpace(mIcyRemaining); // includes terminating null
+            icyMeta.clear();
+            icyMeta.ensureFreeSpace(mIcyRemaining); // includes terminating null
             if (metaChunkSize > 1) {
-                mIcyMetaBuf.append(metaStart+1, metaChunkSize-1);
+                icyMeta.append(metaStart+1, metaChunkSize-1);
             }
         }
         mIcyRemaining -= metaChunkSize;
@@ -381,7 +395,7 @@ int HttpNode::icyProcessRecvData(char* buf, int rlen)
         int remLen = rlen - metaOffset - metaSize;
         mIcyCtr = remLen;
         if (metaSize > 1) {
-            mIcyMetaBuf.appendChar(0);
+            icyMeta.appendChar(0);
             icyParseMetaData();
         }
         if (remLen > 0) { // we have stream data after the metadata
@@ -395,7 +409,8 @@ int HttpNode::icyProcessRecvData(char* buf, int rlen)
 void HttpNode::icyParseMetaData()
 {
     const char kStreamTitlePrefix[] = "StreamTitle='";
-    auto start = strstr(mIcyMetaBuf.buf(), kStreamTitlePrefix);
+    auto& icyMetaBuf = icyInfo.mIcyMetaBuf;
+    auto start = strstr(icyMetaBuf.buf(), kStreamTitlePrefix);
     if (!start) {
         ESP_LOGW(TAG, "ICY parse error: StreamTitle= string not found");
         return;
@@ -405,16 +420,16 @@ void HttpNode::icyParseMetaData()
     int titleSize;
     if (!end) {
         ESP_LOGW(TAG, "ICY parse error: Closing quote of StreamTitle not found");
-        titleSize = mIcyMetaBuf.dataSize() - sizeof(kStreamTitlePrefix) - 1;
+        titleSize = icyMetaBuf.dataSize() - sizeof(kStreamTitlePrefix) - 1;
     } else {
         end--; // move to closing quote
         titleSize = end - start;
     }
-    memmove(mIcyMetaBuf.buf(), start, titleSize);
-    mIcyMetaBuf[titleSize] = 0;
-    mIcyMetaBuf.setDataSize(titleSize + 1);
-    ESP_LOGW(TAG, "Track title changed to: '%s'", mIcyMetaBuf.buf());
-    sendEvent(kEventTrackInfo, mIcyMetaBuf.buf(), mIcyMetaBuf.dataSize());
+    memmove(icyMetaBuf.buf(), start, titleSize);
+    icyMetaBuf[titleSize] = 0;
+    icyMetaBuf.setDataSize(titleSize + 1);
+    ESP_LOGW(TAG, "Track title changed to: '%s'", icyMetaBuf.buf());
+    sendEvent(kEventTrackInfo, icyMetaBuf.buf(), icyMetaBuf.dataSize());
 }
 
 void HttpNode::setUrl(const char* url)
@@ -559,13 +574,14 @@ int8_t HttpNode::waitPrefillChange(int msTimeout)
 void HttpNode::clearAllIcyInfo()
 {
     mIcyInterval = mIcyCtr = mIcyRemaining = 0;
-    mStationName.free();
-    mStationDesc.free();
-    mStationGenre.free();
-    mStationUrl.free();
+    icyInfo.clear();
 }
 
-const char* HttpNode::trackName() const
+void HttpNode::IcyInfo::clear()
 {
-    return mIcyInterval ? mIcyMetaBuf.buf() : nullptr;
+    mStaName.free();
+    mStaDesc.free();
+    mStaGenre.free();
+    mStaUrl.free();
+    mIcyMetaBuf.clear();
 }

@@ -11,7 +11,6 @@ struct Font
     uint8_t lineSpacing: 4;
     const uint8_t* widths;
     const uint8_t* data;
-
     Font(uint8_t aWidth, uint8_t aHeight, uint8_t aCount, uint8_t charSp,
          uint8_t lineSp, const void* aData, const uint8_t* aWidths=nullptr)
     :width(aWidth), height(aHeight), charCount(aCount), charSpacing(charSp),

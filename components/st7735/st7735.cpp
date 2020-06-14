@@ -102,7 +102,7 @@ void ST7735Display::init(int16_t width, int16_t height, const PinCfg& pins)
         .sclk_io_num=pins.clk,
         .quadwp_io_num=-1,
         .quadhd_io_num=-1,
-        .max_transfer_sz = width * 2 * 4 // 4 lines
+        .max_transfer_sz = kMaxDmaLen + 32 // +32 just in case
     };
     //Initialize the SPI bus
     auto ret = spi_bus_initialize(pins.spiHost, &buscfg, 1);
@@ -112,8 +112,8 @@ void ST7735Display::init(int16_t width, int16_t height, const PinCfg& pins)
         .mode = 0,
         .clock_speed_hz = SPI_MASTER_FREQ_26M,
         .spics_io_num = pins.cs,
-        .queue_size = 4,
-        .pre_cb = preTransferCallback  //Specify pre-transfer callback to handle D/C line
+        .queue_size = 2,
+        .pre_cb = nullptr //preTransferCallback  //Specify pre-transfer callback to handle D/C line
     };
     //Attach the LCD to the SPI bus
     ret = spi_bus_add_device(pins.spiHost, &devcfg, &mSpi);
@@ -126,6 +126,12 @@ void ST7735Display::setRstLevel(int level)
 {
     gpio_set_level((gpio_num_t)mRstPin, level);
 }
+
+void ST7735Display::setDcPin(int level)
+{
+    gpio_set_level((gpio_num_t)mDcPin, level);
+}
+
 template<bool isFirst>
 void ST7735Display::sendCmd(uint8_t opcode)
 {
@@ -137,7 +143,8 @@ void ST7735Display::sendCmd(uint8_t opcode)
     mTrans.flags = SPI_TRANS_USE_TXDATA;   //D/C needs to be set to 0
     mTrans.length = 8;                     //Command is 8 bits
     mTrans.tx_data[0] = opcode;            //The data is the cmd itself
-    mTrans.cmd = 0;
+    setDcPin(0);
+
     ret = spi_device_polling_start(mSpi, &mTrans, portMAX_DELAY);  //Transmit!
     assert(ret == ESP_OK);
 }
@@ -151,10 +158,9 @@ void ST7735Display::sendData(const void* data, int len)
     assert(ret == ESP_OK);
 
     mTrans.flags = 0;
-    mTrans.length = len << 3;             //Len is in bytes, transaction length is in bits.
-    mTrans.tx_buffer = data;             //Data
-    mTrans.cmd = 1; // D/C needs to be set to 1
-
+    mTrans.length = len << 3; //Len is in bytes, transaction length is in bits.
+    mTrans.tx_buffer = data;
+    setDcPin(1);
     ret = spi_device_polling_start(mSpi, &mTrans, portMAX_DELAY);  //Transmit!
     assert(ret == ESP_OK);
 }
@@ -166,7 +172,7 @@ void ST7735Display::prepareSendPixels()
 
     mTrans.flags = 0;
     mTrans.length = 16;
-    mTrans.cmd = 1; // D/C needs to be set to 1
+    setDcPin(1);
 }
 
 void ST7735Display::sendNextPixel(uint16_t pixel)
@@ -183,14 +189,14 @@ void ST7735Display::sendCmd(uint8_t opcode, const std::initializer_list<uint8_t>
     sendCmd(opcode);
     sendData(data);
 }
-
+/*
 IRAM_ATTR void ST7735Display::preTransferCallback(spi_transaction_t *t)
 {
     auto self = static_cast<ST7735Display*>(t->user);
     gpio_set_level((gpio_num_t)self->mDcPin, t->cmd);
 }
-
-uint16_t ST7735Display::rgb(uint8_t R,uint8_t G,uint8_t B)
+*/
+uint16_t ST7735Display::rgb(uint8_t R, uint8_t G, uint8_t B)
 {
   // RGB565
     return ((R >> 3) << 11) | ((G >> 2) << 5) | (B >> 3);
@@ -260,37 +266,24 @@ void ST7735Display::setWriteWindow(uint16_t XS, uint16_t YS, uint16_t XE, uint16
   sendCmd(ST77XX_RAMWR); // Memory write
 }
 
-void ST7735Display::fillRectRaw(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color)
+void ST7735Display::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
 {
-    enum { kBufSize = 128 };
-    if (x0 > x1) {
-        std::swap(x0, x1);
-    }
-    if (y0 > y1) {
-        std::swap(y0, y1);
-    }
-    color = htobe16(color);
-    setWriteWindow(x0, y0, x1, y1);
-    int num = (x1 - x0 + 1) * (y1 - y0 + 1) * 2;
-    int bufSize = std::min(num, (int)kBufSize);
-    uint16_t* txbuf = (uint16_t*)alloca(bufSize);
-    auto bufEnd = (uint16_t*)((uint8_t*)txbuf + bufSize);
-    for (auto ptr = txbuf; ptr < bufEnd; ptr++) {
+    setWriteWindow(x, y, x + w - 1, y + h - 1);
+    int num = w * h * 2;
+    int bufSize = std::min(num, (int)kMaxDmaLen);
+    uint8_t* txbuf = (uint8_t*)alloca(bufSize);
+    auto bufEnd = (uint16_t*)(txbuf + bufSize);
+    for (auto ptr = (uint16_t*)txbuf; ptr < bufEnd; ptr++) {
         *ptr = color;
     }
-    while (num > 0) {
+    do {
         int txCount = std::min(num, bufSize);
-        sendData((uint8_t*)txbuf, txCount);
+        sendData(txbuf, txCount);
         num -= txCount;
-    }
+    } while (num > 0);
 }
 
-void ST7735Display::clear()
-{
-    fillRectRaw(0, 0, mWidth-1, mHeight-1, mBgColor);
-}
-
-void ST7735Display::setPixelRaw(uint16_t x, uint16_t y, uint16_t color)
+void ST7735Display::setPixel(uint16_t x, uint16_t y, uint16_t color)
 {
     setWriteWindow(x, y, x, y);
     sendData(&color, sizeof(color));
@@ -298,12 +291,12 @@ void ST7735Display::setPixelRaw(uint16_t x, uint16_t y, uint16_t color)
 
 void ST7735Display::hLine(uint16_t x1, uint16_t x2, uint16_t y)
 {
-    fillRect(x1, y, x2, y);
+    fillRect(x1, y, x2 - x1 + 1, 1);
 }
 
 void ST7735Display::vLine(uint16_t x, uint16_t y1, uint16_t y2)
 {
-    fillRect(x, y1, x, y2);
+    fillRect(x, y1, 1, y2 - y1 + 1);
 }
 
 void ST7735Display::line(int16_t x1, int16_t y1, int16_t x2, int16_t y2)
@@ -331,7 +324,7 @@ void ST7735Display::line(int16_t x1, int16_t y1, int16_t x2, int16_t y2)
     if (dX >= dY) {
         di = dY2 - dX;
         while (x1 != x2) {
-            setPixelRaw(x1, y1, mFgColor);
+            setPixel(x1, y1, mFgColor);
             x1 += dXsym;
             if (di < 0) {
                 di += dY2;
@@ -345,7 +338,7 @@ void ST7735Display::line(int16_t x1, int16_t y1, int16_t x2, int16_t y2)
     else {
         di = dX2 - dY;
         while (y1 != y2) {
-            setPixelRaw(x1, y1, mFgColor);
+            setPixel(x1, y1, mFgColor);
             y1 += dYsym;
             if (di < 0) {
                 di += dX2;
@@ -356,7 +349,7 @@ void ST7735Display::line(int16_t x1, int16_t y1, int16_t x2, int16_t y2)
             }
         }
     }
-    setPixelRaw(x1, y1, mFgColor);
+    setPixel(x1, y1, mFgColor);
 }
 
 void ST7735Display::rect(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
@@ -473,7 +466,7 @@ bool ST7735Display::putc(uint8_t ch, uint8_t flags, uint8_t startCol)
                 return false;
             }
             colsToDraw *= mFontScale;
-            fillRectRaw(cursorX, cursorY, cursorX + colsToDraw - 1, cursorY + height - 1, mBgColor);
+            fillRect(cursorX, cursorY, colsToDraw, height, mBgColor);
             cursorX += colsToDraw;
             return true;
         }
@@ -486,44 +479,46 @@ bool ST7735Display::putc(uint8_t ch, uint8_t flags, uint8_t startCol)
 
     // we need to calculate new cursor X in order to determine if we
     // should increment cursorY. That's why we do the newCursorX gymnastics
-    int newCursorX;
-    if (cursorX >= mWidth) {
-        if ((flags & kFlagNoAutoNewline) == 0) {
+    int16_t newCursorX = cursorX + width + charSpc;
+    if (newCursorX > mWidth) {
+        if (cursorX < mWidth && (flags & kFlagAllowPartial)) {
+            newCursorX = mWidth;
+        } else {
+            if (flags & kFlagNoAutoNewline) {
+                return false;
+            }
             cursorX = 0;
             cursorY += height + mFont->lineSpacing * mFontScale;
             newCursorX = width + charSpc;
-        } else {
-            return false;
-        }
-    } else {
-        newCursorX = cursorX + width + charSpc;
-        if (newCursorX > mWidth) {
-            newCursorX = mWidth;
         }
     }
     blitMonoVscan(cursorX, cursorY, width, height, charData, charSpc, mFontScale);
-
     cursorX = newCursorX;
     return true;
 }
 
 void ST7735Display::puts(const char* str, uint8_t flags)
 {
-    while(*str) {
-        char ch = *(str++);
+    char ch;
+    while((ch = *(str++))) {
         if (ch == '\n') {
             cursorX = 0;
             cursorY += (mFont->height + mFont->lineSpacing) * mFontScale;
         } else if (ch != '\r') {
+            ESP_LOGI("PUTS", "putc: x= %d, y= %d", cursorX, cursorY);
             putc(ch, flags);
         }
     }
 }
-void ST7735Display::puts(const char* str, int len, uint8_t flags)
+
+void ST7735Display::nputs(const char* str, int len, uint8_t flags)
 {
     auto end = str + len;
     while(str < end) {
         char ch = *(str++);
+        if (!ch) {
+            return;
+        }
         if (ch == '\n') {
             cursorX = 0;
             cursorY += (mFont->height + mFont->lineSpacing) * mFontScale;

@@ -6,7 +6,7 @@
 
 template <class T>
 T min(T a, T b) { return (a < b) ? a : b; }
-enum: int16_t { kOtaBufSize = 4096 };
+enum: int16_t { kOtaBufSize = 512 };
 bool rollbackIsPendingVerify()
 {
     const esp_partition_t *running = esp_ota_get_running_partition();

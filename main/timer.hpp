@@ -7,6 +7,7 @@ class Timer: public std::enable_shared_from_this<Timer>
 {
 protected:
     esp_timer_handle_t mTimer = nullptr;
+public:
     void cancel() {
         if (!mTimer) {
             return;
@@ -15,7 +16,6 @@ protected:
         esp_timer_delete(mTimer);
         mTimer = nullptr;
     }
-public:
     bool running() const { return mTimer != nullptr; }
     ~Timer() { cancel(); }
 };

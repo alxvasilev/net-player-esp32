@@ -40,6 +40,7 @@ public:
         mPtr = nullptr;
         return ret;
     }
+    operator bool() const { return mPtr != nullptr; }
 };
 
 class DynBuffer

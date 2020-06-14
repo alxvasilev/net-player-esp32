@@ -257,10 +257,29 @@ public:
 class IAudioVolume
 {
 public:
+    // The actual levels are in the range [0-256].
+    // The most significant 8 bits of the max sample are taken, and, if
+    // the sample has the maximum possible value, the level is set to 256
+    struct StereoLevels
+    {
+        int16_t left;
+        int16_t right;
+    };
+    typedef void(*AudioLevelCallbck)(void* arg);
+    void setLevelCallback(AudioLevelCallbck cb, void* arg)
+    {
+        mAudioLevelCb = cb;
+        mAudioLevelCbArg = arg;
+    }
     // volume is in percent of original.
     // 0-99% attenuates, 101-400% amplifies
     virtual uint16_t getVolume() const = 0;
     virtual void setVolume(uint16_t vol) = 0;
+    const StereoLevels& audioLevels() const { return mAudioLevels; }
+protected:
+    StereoLevels mAudioLevels;
+    AudioLevelCallbck mAudioLevelCb = nullptr;
+    void* mAudioLevelCbArg = nullptr;
 };
 
 inline void AudioNode::sendEvent(uint32_t type, void *buf, int bufSize)

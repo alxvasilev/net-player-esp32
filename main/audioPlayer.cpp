@@ -47,11 +47,12 @@ void AudioPlayer::createOutputA2dp()
 
 AudioPlayer::AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, ST7735Display& lcd, bool useEq)
 :mFlags(useEq ? kFlagUseEqualizer : (Flags)0),
- mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd)
+ mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd), mEvents(kEventTerminating)
 {
     lcdInit();
     mNvsHandle.enableAutoCommit(20000);
     createPipeline(inType, outType);
+    initTimedDrawTask();
 }
 
 AudioPlayer::AudioPlayer(ST7735Display& lcd)
@@ -60,6 +61,7 @@ AudioPlayer::AudioPlayer(ST7735Display& lcd)
     lcdInit();
     mNvsHandle.enableAutoCommit(20000);
     initFromNvs();
+    initTimedDrawTask();
 }
 
 void AudioPlayer::initFromNvs()
@@ -74,11 +76,17 @@ void AudioPlayer::initFromNvs()
 
 void AudioPlayer::lcdInit()
 {
+    mLevelPerVuLed = std::numeric_limits<int16_t>::max() / (mLcd.width() / kVuLedWidth);
+    mLcd.setBgColor(0, 0, 128);
     mLcd.clear();
-    mLcd.setFgColor(mLcd.rgb(2,2,2));
-    mLcd.hLine(0, 127, 14);
-    mLcd.setFont(Font_5x7, 2);
-    mLcd.setFgColor(0xffff);
+    mLcd.setFgColor(0, 128, 128);
+    mLcd.hLine(0, 127, 15);
+}
+
+void AudioPlayer::initTimedDrawTask()
+{
+    xTaskCreate(&lcdTimedDrawTask, "lcdTask", 2048, this, 10, nullptr);
+    mVolumeInterface->setLevelCallback(audioLevelCb, this);
 }
 
 void AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType)
@@ -150,7 +158,7 @@ void AudioPlayer::lcdUpdateModeInfo()
 
 void AudioPlayer::lcdUpdatePlayState()
 {
-    mLcd.gotoXY(mLcd.font()->width * 2 + 3, 0);
+    mLcd.gotoXY(mLcd.charWidth() + 1, 0);
     if (isPlaying()) {
         mLcd.putc('>');
     } else if (isStopped()) {
@@ -552,20 +560,22 @@ esp_err_t AudioPlayer::getStatusUrlHandler(httpd_req_t* req)
     if (in->state() == AudioNode::kStateRunning &&
         in->type() == AudioNode::kTypeHttpIn) {
             auto http = static_cast<HttpNode*>(in);
-            if (http->stationName()) {
-                buf.printf(",\"sname\":\"%s\"", http->stationName());
+            auto& icy = http->icyInfo;
+            MutexLocker locker(icy.mutex);
+            if (icy.staName()) {
+                buf.printf(",\"sname\":\"%s\"", icy.staName());
             }
-            if (http->stationDesc()) {
-                buf.printf(",\"sdesc\":\"%s\"", http->stationDesc());
+            if (icy.staDesc()) {
+                buf.printf(",\"sdesc\":\"%s\"", icy.staDesc());
             }
-            if (http->stationGenre()) {
-                buf.printf(",\"sgenre\":\"%s\"", http->stationGenre());
+            if (icy.staGenre()) {
+                buf.printf(",\"sgenre\":\"%s\"", icy.staGenre());
             }
-            if (http->stationUrl()) {
-                buf.printf(",\"surl\":\"%s\"", http->stationUrl());
+            if (icy.staUrl()) {
+                buf.printf(",\"surl\":\"%s\"", icy.staUrl());
             }
-            if (http->trackName()) {
-                buf.printf(",\"track\":\"%s\"", http->trackName());
+            if (icy.trackName()) {
+                buf.printf(",\"track\":\"%s\"", icy.trackName());
             }
     }
     buf.printf("}");
@@ -587,62 +597,148 @@ bool AudioPlayer::onEvent(AudioNode *self, uint32_t event, void *buf, size_t buf
 {
     if (self->type() == AudioNode::kTypeHttpIn) {
         if (event == HttpNode::kEventTrackInfo) {
-            LOCK_PLAYER();
             lcdUpdateTrackTitle((const char*)buf, bufSize);
+        } else if (event == HttpNode::kEventConnected) {
+            lcdUpdateStationInfo();
         }
     }
     return true;
 }
 
+void AudioPlayer::lcdTimedDrawTask(void* ctx)
+{
+    auto& self = *static_cast<AudioPlayer*>(ctx);
+    for (;;) {
+        auto events = self.mEvents.waitForOneAndReset(kEventTerminating|kEventScroll|kEventVolLevel, -1);
+        if (events & kEventTerminating) {
+            break;
+        }
+        {
+            MutexLocker locker(self.mutex);
+            if (events & kEventVolLevel) {
+                self.lcdUpdateVolLevel();
+            }
+            if (events & kEventScroll) {
+                self.lcdScrollTrackTitle();
+            }
+        }
+    }
+    self.mEvents.setBits(kEventTerminated);
+    vTaskDelete(nullptr);
+}
+
 void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int size)
 {
+    LOCK_PLAYER();
+    if (size <= 1) {
+        mTitleScrollTimer.cancel();
+        lcdSetupForTrackTitle();
+        mLcd.puts("----------------", mLcd.kFlagNoAutoNewline);
+        return;
+    }
     mTrackTitle.reserve(size + 3);
     mTrackTitle.assign(buf, size - 1);
     mTrackTitle.append(" * ", 4);
     mTitleScrollCharOffset = mTitleScrollPixOffset = 0;
-    onTitleSrollTick(this);
+    titleSrollTickCb(this);
     if (!mTitleScrollTimer.running()) {
-        mTitleScrollTimer.start(kTitleScrollTickPeriodMs, false, onTitleSrollTick, this);
+        mTitleScrollTimer.start(kTitleScrollTickPeriodMs, false, titleSrollTickCb, this);
     }
 }
-void AudioPlayer::onTitleSrollTick(void* ctx)
+
+void AudioPlayer::lcdSetupForTrackTitle()
 {
-    ElapsedTimer timer;
+    mLcd.setFont(Font_5x7, 2);
+    mLcd.setFgColor(255, 255, 128);
+    mLcd.gotoXY(0, (mLcd.height() - mLcd.charHeight()) / 2);
+}
+
+void AudioPlayer::titleSrollTickCb(void* ctx)
+{
     auto& self = *static_cast<AudioPlayer*>(ctx);
-    MutexLocker locker(self.mutex);
-    if (!self.mTrackTitle.dataSize()) {
+    self.mEvents.setBits(kEventScroll);
+}
+
+void AudioPlayer::lcdScrollTrackTitle()
+{
+//    ElapsedTimer timer;
+    if (mTrackTitle.dataSize() <= 1) {
         return;
     }
-    auto& lcd = self.mLcd;
-    lcd.setFont(Font_5x7, 2);
-    lcd.setFgColor(0xffff);
-    lcd.gotoXY(0, (lcd.height() - lcd.charHeight()) / 2);
+    lcdSetupForTrackTitle();
 
-    auto title = self.mTrackTitle.buf() + self.mTitleScrollCharOffset;
-    auto titleEnd = self.mTrackTitle.buf() + self.mTrackTitle.dataSize() - 1; // without terminating null
+    auto title = mTrackTitle.buf() + mTitleScrollCharOffset;
+    auto titleEnd = mTrackTitle.buf() + mTrackTitle.dataSize() - 1; // without terminating null
     if (title >= titleEnd) {
-        title = self.mTrackTitle.buf();
-        self.mTitleScrollCharOffset = self.mTitleScrollPixOffset = 0;
+        title = mTrackTitle.buf();
+        mTitleScrollCharOffset = mTitleScrollPixOffset = 0;
     } else {
-        if (self.mTitleScrollPixOffset) {
-            lcd.putc(*(title++), lcd.kFlagNoAutoNewline, self.mTitleScrollPixOffset); // can advance to the terminating NULL
+        if (mTitleScrollPixOffset) {
+            mLcd.putc(*(title++), mLcd.kFlagNoAutoNewline, mTitleScrollPixOffset); // can advance to the terminating NULL
         }
-        if (++self.mTitleScrollPixOffset >= lcd.font()->width + lcd.font()->charSpacing) {
-            self.mTitleScrollPixOffset = 0;
-            self.mTitleScrollCharOffset++;
+        if (++mTitleScrollPixOffset >= mLcd.font()->width + mLcd.font()->charSpacing) {
+            mTitleScrollPixOffset = 0;
+            mTitleScrollCharOffset++;
         }
     }
     for(;;) {
         char ch = *title;
         if (!ch) {
-            title = self.mTrackTitle.buf();
+            title = mTrackTitle.buf();
             ch = *title;
         }
         title++;
-        if (!lcd.putc(ch, lcd.kFlagNoAutoNewline)) {
+        if (!mLcd.putc(ch, mLcd.kFlagNoAutoNewline | mLcd.kFlagAllowPartial)) {
             break;
         }
     }
-    ESP_LOGI("PL", "Scroll time: %d", timer.msElapsed());
+    //ESP_LOGI("PL", "Scroll time: %d", timer.msElapsed());
 }
 
+void AudioPlayer::audioLevelCb(void* ctx)
+{
+    auto& self = *static_cast<AudioPlayer*>(ctx);
+    self.mEvents.setBits(kEventVolLevel);
+}
+void AudioPlayer::lcdUpdateVolLevel()
+{
+    // Called from the display refresh worker
+    const auto& levels = mVolumeInterface->audioLevels();
+    auto y = mLcd.height() - 20 - 2 * kVuLedHeight - 2;
+
+    int xEnd = kVuLedWidth * (((int)levels.left + mLevelPerVuLed - 1) / mLevelPerVuLed);
+    mLcd.setFgColor(0xffff);
+    for (int16_t x = 0; x < xEnd; x += kVuLedWidth) {
+        mLcd.setFgColor(x << 7);
+       // ESP_LOGI(TAG, "rect: x=%d, y=%d, w=%d, h=%d", x, y, kVuLedWidth-1, kVuLedHeight);
+        mLcd.fillRect(x, y, kVuLedWidth-1, kVuLedHeight);
+    }
+    if (xEnd < mLcd.width()) {
+        mLcd.clear(xEnd + kVuLedWidth, y, mLcd.width() - xEnd, kVuLedHeight);
+    }
+
+    y += kVuLedHeight + 2;
+    xEnd = kVuLedWidth * (((int)levels.right + mLevelPerVuLed - 1) / mLevelPerVuLed);
+    for (int16_t x = 0; x < xEnd; x += kVuLedWidth) {
+        mLcd.setFgColor(x << 7);
+        mLcd.fillRect(x, y, kVuLedWidth-1, kVuLedHeight);
+    }
+    if (xEnd < mLcd.width()) {
+        mLcd.clear(xEnd + kVuLedWidth, y, mLcd.width() - xEnd, kVuLedHeight);
+    }
+}
+void AudioPlayer::lcdUpdateStationInfo()
+{
+    LOCK_PLAYER();
+    myassert(mStreamIn->type() == AudioNode::kTypeHttpIn);
+    auto& icy = static_cast<HttpNode*>(mStreamIn.get())->icyInfo;
+    MutexLocker locker1(icy.mutex);
+    const char* name = icy.staName();
+    if (!name) {
+        name = icy.staUrl();
+    }
+    mLcd.clear(0, 20, mLcd.width()-1, mLcd.charHeight() * 3);
+    mLcd.gotoXY(0, 20);
+    mLcd.setFont(Font_5x7, 1);
+    mLcd.nputs(name, 3 * mLcd.charsPerLine());
+}

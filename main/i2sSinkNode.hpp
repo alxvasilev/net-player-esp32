@@ -18,8 +18,12 @@ protected:
            kStackSize = 9000, kDefaultSamplerate = 44100
     };
     virtual void nodeThreadFunc();
-    template <typename T>
-    void applyVolume(DataPullReq& dpr);
+    template <typename T, bool ChangeVol>
+    void processVolumeStereo(DataPullReq& dpr);
+
+    template <typename T, bool ChangeVol>
+    void processVolumeMono(DataPullReq& dpr);
+
     void adjustSamplesForInternalDac(char* sBuff, int len);
     void dmaFillWithSilence();
     bool setFormat(StreamFormat fmt);

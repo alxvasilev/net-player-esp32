@@ -41,14 +41,9 @@ protected:
     volatile bool mFlushRequested = false;
     int mPrefillAmount;
     uint32_t mContentLen;
-    DynBuffer mIcyMetaBuf;
     int32_t mIcyCtr = 0;
     int32_t mIcyInterval = 0;
     int16_t mIcyRemaining = 0;
-    BufPtr<char> mStationName = nullptr;
-    BufPtr<char> mStationDesc = nullptr;
-    BufPtr<char> mStationGenre = nullptr;
-    BufPtr<char> mStationUrl = nullptr;
     void clearAllIcyInfo();
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     static CodecType codecFromContentType(const char* content_type);
@@ -77,7 +72,27 @@ public:
         kEventNoMoreTracks = kEventLastGeneric << 4,
         kEventTrackInfo = kEventLastGeneric << 5
     };
-    Mutex infoMutex;
+    class IcyInfo
+    {
+    protected:
+        friend class HttpNode;
+        DynBuffer mIcyMetaBuf;
+        BufPtr<char> mStaName = nullptr;
+        BufPtr<char> mStaDesc = nullptr;
+        BufPtr<char> mStaGenre = nullptr;
+        BufPtr<char> mStaUrl = nullptr;
+        void clear();
+    public:
+        Mutex mutex;
+        const char* trackName() const {
+            return mIcyMetaBuf.dataSize() ? mIcyMetaBuf.buf() : nullptr;
+        }
+        const char* staName() const { return mStaName.ptr(); }
+        const char* staDesc() const { return mStaDesc.ptr(); }
+        const char* staGenre() const { return mStaGenre.ptr(); }
+        const char* staUrl() const { return mStaUrl.ptr(); }
+    };
+    IcyInfo icyInfo;
     HttpNode(size_t bufSize);
     virtual ~HttpNode();
     virtual Type type() const { return kTypeHttpIn; }
@@ -85,9 +100,5 @@ public:
     virtual void confirmRead(int size);
     void setUrl(const char* url);
     bool isConnected() const;
-    const char* stationName() const { return mStationName.ptr(); }
-    const char* stationDesc() const { return mStationDesc.ptr(); }
-    const char* stationGenre() const { return mStationGenre.ptr(); }
-    const char* stationUrl() const { return mStationUrl.ptr(); }
     const char* trackName() const;
 };
