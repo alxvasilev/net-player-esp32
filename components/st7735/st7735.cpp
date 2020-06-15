@@ -113,7 +113,8 @@ void ST7735Display::init(int16_t width, int16_t height, const PinCfg& pins)
         .clock_speed_hz = SPI_MASTER_FREQ_26M,
         .spics_io_num = pins.cs,
         .queue_size = 2,
-        .pre_cb = nullptr //preTransferCallback  //Specify pre-transfer callback to handle D/C line
+        .pre_cb = nullptr,
+        .post_cb = nullptr
     };
     //Attach the LCD to the SPI bus
     ret = spi_bus_add_device(pins.spiHost, &devcfg, &mSpi);
@@ -135,17 +136,18 @@ void ST7735Display::setDcPin(int level)
 template<bool isFirst>
 void ST7735Display::sendCmd(uint8_t opcode)
 {
-    esp_err_t ret;
-    if (!isFirst) {
-        ret = spi_device_polling_end(mSpi, portMAX_DELAY);
-        assert(ret == ESP_OK);
-    }
     mTrans.flags = SPI_TRANS_USE_TXDATA;   //D/C needs to be set to 0
     mTrans.length = 8;                     //Command is 8 bits
     mTrans.tx_data[0] = opcode;            //The data is the cmd itself
     setDcPin(0);
+    execTransaction();
+}
 
-    ret = spi_device_polling_start(mSpi, &mTrans, portMAX_DELAY);  //Transmit!
+inline void ST7735Display::execTransaction()
+{
+    auto ret = spi_device_polling_start(mSpi, &mTrans, portMAX_DELAY);  //Transmit!
+    assert(ret == ESP_OK);
+    ret = spi_device_polling_end(mSpi, portMAX_DELAY);
     assert(ret == ESP_OK);
 }
 
@@ -154,22 +156,15 @@ void ST7735Display::sendData(const void* data, int len)
     if (len == 0) {
         return;
     }
-    esp_err_t ret = spi_device_polling_end(mSpi, portMAX_DELAY);
-    assert(ret == ESP_OK);
-
     mTrans.flags = 0;
-    mTrans.length = len << 3; //Len is in bytes, transaction length is in bits.
+    mTrans.length = len << 3; // Transaction length is in bits.
     mTrans.tx_buffer = data;
     setDcPin(1);
-    ret = spi_device_polling_start(mSpi, &mTrans, portMAX_DELAY);  //Transmit!
-    assert(ret == ESP_OK);
+    execTransaction();
 }
 
 void ST7735Display::prepareSendPixels()
 {
-    esp_err_t ret = spi_device_polling_end(mSpi, portMAX_DELAY);
-    assert(ret == ESP_OK);
-
     mTrans.flags = 0;
     mTrans.length = 16;
     setDcPin(1);
@@ -177,11 +172,9 @@ void ST7735Display::prepareSendPixels()
 
 void ST7735Display::sendNextPixel(uint16_t pixel)
 {
-    esp_err_t ret = spi_device_polling_end(mSpi, portMAX_DELAY);
-    assert(ret == ESP_OK);
     // WARNING: Requires prepareSendPixels() to have been called before
     mTrans.tx_buffer = &pixel;
-    spi_device_polling_start(mSpi, &mTrans, portMAX_DELAY);
+    execTransaction();
 }
 
 void ST7735Display::sendCmd(uint8_t opcode, const std::initializer_list<uint8_t>& data)
@@ -190,10 +183,15 @@ void ST7735Display::sendCmd(uint8_t opcode, const std::initializer_list<uint8_t>
     sendData(data);
 }
 /*
-IRAM_ATTR void ST7735Display::preTransferCallback(spi_transaction_t *t)
+IRAM_ATTR void ST7735Display::postTransferCallback(spi_transaction_t *t)
 {
-    auto self = static_cast<ST7735Display*>(t->user);
-    gpio_set_level((gpio_num_t)self->mDcPin, t->cmd);
+    auto task = static_cast<TaskHandle_t>(t->user);
+    BaseType_t higherPriorityTaskWoken;
+    configASSERT(task != NULL);
+    vTaskNotifyGiveFromISR(task, &higherPriorityTaskWoken);
+    if (higherPriorityTaskWoken) {
+        portYIELD_FROM_ISR();
+    }
 }
 */
 uint16_t ST7735Display::rgb(uint8_t R, uint8_t G, uint8_t B)
@@ -505,7 +503,6 @@ void ST7735Display::puts(const char* str, uint8_t flags)
             cursorX = 0;
             cursorY += (mFont->height + mFont->lineSpacing) * mFontScale;
         } else if (ch != '\r') {
-            ESP_LOGI("PUTS", "putc: x= %d, y= %d", cursorX, cursorY);
             putc(ch, flags);
         }
     }

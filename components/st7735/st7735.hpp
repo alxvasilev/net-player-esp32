@@ -47,9 +47,10 @@ protected:
     uint16_t mFgColor = 0xffff;
     const Font* mFont = &Font_5x7;
     uint8_t mFontScale = 1;
-    //static void preTransferCallback(spi_transaction_t *t);
+    //static void postTransferCallback(spi_transaction_t *t);
     void setRstLevel(int level);
     void setDcPin(int level);
+    inline void execTransaction();
     void displayReset();
 public:
     int16_t cursorX = 0;
