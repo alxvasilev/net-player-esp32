@@ -76,7 +76,9 @@ void AudioPlayer::initFromNvs()
 
 void AudioPlayer::lcdInit()
 {
-    mLevelPerVuLed = std::numeric_limits<int16_t>::max() / (mLcd.width() / kVuLedWidth);
+    mNumVuLeds = mLcd.width() / kVuLedWidth;
+    mLevelPerVuLed = (std::numeric_limits<int16_t>::max() + mNumVuLeds - 1) / mNumVuLeds;
+
     mLcd.setBgColor(0, 0, 128);
     mLcd.clear();
     mLcd.setFgColor(0, 128, 128);
@@ -85,7 +87,7 @@ void AudioPlayer::lcdInit()
 
 void AudioPlayer::initTimedDrawTask()
 {
-    xTaskCreate(&lcdTimedDrawTask, "lcdTask", 2048, this, 10, nullptr);
+    xTaskCreate(&lcdTimedDrawTask, "lcdTask", 1200, this, 10, nullptr);
     mVolumeInterface->setLevelCallback(audioLevelCb, this);
 }
 
@@ -700,31 +702,42 @@ void AudioPlayer::audioLevelCb(void* ctx)
     auto& self = *static_cast<AudioPlayer*>(ctx);
     self.mEvents.setBits(kEventVolLevel);
 }
+
 void AudioPlayer::lcdUpdateVolLevel()
 {
     // Called from the display refresh worker
     const auto& levels = mVolumeInterface->audioLevels();
-    auto y = mLcd.height() - 20 - 2 * kVuLedHeight - 2;
+    auto yLeft = mLcd.height() - 2 * kVuLedHeight - 2;
+    auto yRight = yLeft + kVuLedHeight + 2;
 
-    int xEnd = kVuLedWidth * (((int)levels.left + mLevelPerVuLed - 1) / mLevelPerVuLed);
-    mLcd.setFgColor(0xffff);
-    for (int16_t x = 0; x < xEnd; x += kVuLedWidth) {
-        mLcd.setFgColor(x << 7);
-       // ESP_LOGI(TAG, "rect: x=%d, y=%d, w=%d, h=%d", x, y, kVuLedWidth-1, kVuLedHeight);
-        mLcd.fillRect(x, y, kVuLedWidth-1, kVuLedHeight);
+    int16_t endXLeft = kVuLedWidth * (((int)levels.left + mLevelPerVuLed - 1) / mLevelPerVuLed);
+    int16_t endXRight = kVuLedWidth * (((int)levels.right + mLevelPerVuLed - 1) / mLevelPerVuLed);
+    int16_t endX = std::max(endXLeft, endXRight);
+    int8_t ledIdx = mNumVuLeds;
+    for (int16_t x = 0; x < endX; x += kVuLedWidth, ledIdx--) {
+       // ESP_LOGI(TAG, "led idx=%d", ledIdx);
+        uint16_t ledCol;
+        if (ledIdx <= 1) {
+            ledCol = ST77XX_RED;
+        } else if (ledIdx < 3) {
+            ledCol = ST77XX_YELLOW;
+        } else {
+            ledCol = ST77XX_GREEN;
+        }
+        mLcd.setFgColor(ledCol);
+        if (x < endXLeft) {
+            mLcd.fillRect(x, yLeft, kVuLedWidth-1, kVuLedHeight);
+        } else {
+            mLcd.clear(x, yLeft, kVuLedWidth-1, kVuLedHeight);
+        }
+        if (x < endXRight) {
+            mLcd.fillRect(x, yRight, kVuLedWidth-1, kVuLedHeight);
+        } else {
+            mLcd.clear(x, yRight, kVuLedWidth-1, kVuLedHeight);
+        }
     }
-    if (xEnd < mLcd.width()) {
-        mLcd.clear(xEnd + kVuLedWidth, y, mLcd.width() - xEnd, kVuLedHeight);
-    }
-
-    y += kVuLedHeight + 2;
-    xEnd = kVuLedWidth * (((int)levels.right + mLevelPerVuLed - 1) / mLevelPerVuLed);
-    for (int16_t x = 0; x < xEnd; x += kVuLedWidth) {
-        mLcd.setFgColor(x << 7);
-        mLcd.fillRect(x, y, kVuLedWidth-1, kVuLedHeight);
-    }
-    if (xEnd < mLcd.width()) {
-        mLcd.clear(xEnd + kVuLedWidth, y, mLcd.width() - xEnd, kVuLedHeight);
+    if (endX < mLcd.width()) {
+        mLcd.clear(endX, yLeft, mLcd.width() - endX, kVuLedHeight * 2 + 2);
     }
 }
 void AudioPlayer::lcdUpdateStationInfo()
