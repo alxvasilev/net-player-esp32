@@ -2,11 +2,15 @@
 #include <esp_system.h>
 #include <esp_http_server.h>
 #include <esp_ota_ops.h>
+#include "ota.hpp"
 #include "utils.hpp"
 
-template <class T>
-T min(T a, T b) { return (a < b) ? a : b; }
-enum: int16_t { kOtaBufSize = 512 };
+enum { kOtaBufSize = 512 };
+static constexpr const char* TAG = "OTA";
+
+void defaultOtaNotifyCallback() {}
+OtaNotifyCallback otaNotifyCallback = &defaultOtaNotifyCallback;
+
 bool rollbackIsPendingVerify()
 {
     const esp_partition_t *running = esp_ota_get_running_partition();
@@ -20,30 +24,31 @@ bool rollbackIsPendingVerify()
 /* Receive .Bin file */
 static esp_err_t OTA_update_post_handler(httpd_req_t *req)
 {
+    otaNotifyCallback();
     int contentLen = req->content_len;
-    ESP_LOGI("OTA", "OTA request received, image size: %d",contentLen);
+    ESP_LOGI(TAG, "OTA request received, image size: %d",contentLen);
     char* otaBuf = new char[kOtaBufSize]; // no need to free it, we will reboot
     const auto update_partition = esp_ota_get_next_update_partition(NULL);
     esp_ota_handle_t ota_handle;
     esp_err_t err = esp_ota_begin(update_partition, contentLen, &ota_handle);
     if (err == ESP_ERR_OTA_ROLLBACK_INVALID_STATE) {
-        ESP_LOGW("OTA", "Invalid OTA state of running app, trying to set it");
+        ESP_LOGW(TAG, "Invalid OTA state of running app, trying to set it");
         esp_ota_mark_app_valid_cancel_rollback();
         err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
         if (err != ESP_OK) {
-            ESP_LOGE("OTA", "Error %s after attempting to fix OTA state of running app, aborting OTA", esp_err_to_name(err));
+            ESP_LOGE(TAG, "Error %s after attempting to fix OTA state of running app, aborting OTA", esp_err_to_name(err));
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "esp_ota_begin error");
             return ESP_FAIL;
         }
     } else if (err != ESP_OK) {
-        ESP_LOGE("OTA", "esp_ota_begin returned error %s, aborting OTA", esp_err_to_name(err));
+        ESP_LOGE(TAG, "esp_ota_begin returned error %s, aborting OTA", esp_err_to_name(err));
         char msg[64];
         snprintf(msg, 64, "esp_ota_begin() error %s", esp_err_to_name(err));
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, msg);
         return ESP_FAIL;
     }
 
-    ESP_LOGI("OTA", "Writing to partition '%s' subtype %d at offset 0x%x",
+    ESP_LOGI(TAG, "Writing to partition '%s' subtype %d at offset 0x%x",
         update_partition->label, update_partition->subtype, update_partition->address);
 
     uint64_t tsStart = esp_timer_get_time();
@@ -53,14 +58,14 @@ static esp_err_t OTA_update_post_handler(httpd_req_t *req)
         /* Read the data for the request */
         int recvLen;
         for (int numWaits = 0; numWaits < 4; numWaits++) {
-            recvLen = httpd_req_recv(req, otaBuf, ::min(remain, (int)kOtaBufSize));
+            recvLen = httpd_req_recv(req, otaBuf, std::min(remain, (int)kOtaBufSize));
             if (recvLen != HTTPD_SOCK_ERR_TIMEOUT) {
                 break;
             }
         }
         if (recvLen < 0)
         {
-            ESP_LOGE("OTA", "OTA recv error %d, aborting", recvLen);
+            ESP_LOGE(TAG, "OTA recv error %d, aborting", recvLen);
             return ESP_FAIL;
         }
         remain -= recvLen;
@@ -74,7 +79,7 @@ static esp_err_t OTA_update_post_handler(httpd_req_t *req)
 
     err = esp_ota_end(ota_handle);
     if (err != ESP_OK) {
-        ESP_LOGE("OTA", "esp_ota_end error: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "esp_ota_end error: %s", esp_err_to_name(err));
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "esp_ota_end error");
         return ESP_FAIL;
     }
@@ -82,7 +87,7 @@ static esp_err_t OTA_update_post_handler(httpd_req_t *req)
     // Lets update the partition
     err = esp_ota_set_boot_partition(update_partition);
     if (err != ESP_OK) {
-        ESP_LOGE("OTA", "esp_ota_set_boot_partition error %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "esp_ota_set_boot_partition error %s", esp_err_to_name(err));
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "esp_ota_set_boot_partition error");
         return ESP_FAIL;
     }
@@ -90,13 +95,13 @@ static esp_err_t OTA_update_post_handler(httpd_req_t *req)
     const auto bootPartition = esp_ota_get_boot_partition();
     const char msg[] = "OTA update successful";
     httpd_resp_send(req, msg, sizeof(msg));
-    ESP_LOGI("OTA", "OTA update successful (%.1f sec)",
+    ESP_LOGI(TAG, "OTA update successful (%.1f sec)",
         (((double)esp_timer_get_time() - tsStart) / 1000000));
-    ESP_LOGI("OTA", "Will boot from partition '%s', subtype %d at offset 0x%x",
+    ESP_LOGI(TAG, "Will boot from partition '%s', subtype %d at offset 0x%x",
         bootPartition->label, bootPartition->subtype, bootPartition->address);
 
     // Reboot asynchronously, after we return the http response
-    ESP_LOGI("OTA", " restarting system...");
+    ESP_LOGI(TAG, " restarting system...");
     esp_timer_create_args_t args = {};
     args.dispatch_method = ESP_TIMER_TASK;
     args.callback = [](void*) {

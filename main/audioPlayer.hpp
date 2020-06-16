@@ -25,7 +25,7 @@ protected:
     { kFlagUseEqualizer = 1, kFlagListenerHooked = 2, kFlagNoWaitPrefill = 4 };
     enum: uint8_t
     { kEventTerminating = 1, kEventScroll = 2, kEventVolLevel = 4, kEventTerminated = 8 };
-    enum { kVuLedWidth = 8, kVuLedHeight = 4 };
+    enum { kVuLedWidth = 8, kVuLedHeight = 4, kVuLevelSmoothFactor = 4 };
     Flags mFlags;
     std::unique_ptr<AudioNodeWithState> mStreamIn;
     std::unique_ptr<DecoderNode> mDecoder;
@@ -35,16 +35,27 @@ protected:
     static const float mEqGains[];
     NvsHandle mNvsHandle;
     ST7735Display& mLcd;
-
+    EventGroup mEvents;
+// track name scroll stuff
+    CbTimer mTitleScrollTimer;
     DynBuffer mTrackTitle;
     int16_t mTitleScrollCharOffset = 0;
     int8_t mTitleScrollPixOffset = 0;
-    CbTimer mTitleScrollTimer;
-    EventGroup mEvents;
+// Volume level indicator stuff
     int16_t mLevelPerVuLed;
-    uint8_t mNumVuLeds;
-    static void titleSrollTickCb(void* ctx);
+    int16_t mVuYellowStartX;
+    int16_t mVuRedStartX;
+    int16_t mVuLeftAvg = 0;
+    int16_t mVuRightAvg = 0;
+    int16_t mVuPeakLeft = 0;
+    uint8_t mVuPeakTimerLeft = 0;
+    int16_t mVuPeakRight = 0;
+    uint8_t mVuPeakTimerRight = 0;
     static void audioLevelCb(void* ctx);
+    inline uint16_t vuLedColor(int16_t ledX);
+    void lcdUpdateVolLevel();
+//====
+    static void titleSrollTickCb(void* ctx);
     static void lcdTimedDrawTask(void* ctx);
 
     void createInputA2dp();
@@ -66,7 +77,6 @@ protected:
     void lcdUpdateTrackTitle(const char* buf, int size);
     void lcdScrollTrackTitle();
     void lcdUpdateStationInfo();
-    void lcdUpdateVolLevel();
     // web URL handlers
     static esp_err_t playUrlHandler(httpd_req_t *req);
     static esp_err_t pauseUrlHandler(httpd_req_t *req);

@@ -205,6 +205,9 @@ extern "C" void app_main(void)
     player.reset(new AudioPlayer(lcd));
     player->registerUrlHanlers(gHttpServer);
     player->playlist.load((char*)std::string(gPlaylist).c_str());
+    otaNotifyCallback = []() {
+        player->stop();
+    };
     if (player->inputType() == AudioNode::kTypeHttpIn) {
         ESP_LOGI(TAG, "Player input set to HTTP stream");
         auto before = xPortGetFreeHeapSize();
