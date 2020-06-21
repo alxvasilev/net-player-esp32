@@ -240,8 +240,8 @@ protected:
     virtual void doPause() override { mCmdQueue.post(kCommandPause); }
     virtual bool doRun() override;
 public:
-    AudioNodeWithTask(const char* tag, uint32_t stackSize, UBaseType_t prop=kDefaultPrio)
-    :AudioNodeWithState(tag), mStackSize(stackSize)
+    AudioNodeWithTask(const char* tag, uint32_t stackSize, UBaseType_t prio=kDefaultPrio)
+    :AudioNodeWithState(tag), mStackSize(stackSize), mTaskPrio(prio)
     {}
     void setPriority(UBaseType_t prio) { mTaskPrio = prio; }
 };

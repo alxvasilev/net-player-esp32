@@ -1,6 +1,8 @@
 #include "st7735.hpp"
 #include <driver/gpio.h>
 #include <esp_timer.h>
+#include <driver/periph_ctrl.h>
+#include <soc/spi_struct.h>
 #include <esp_log.h>
 #include <algorithm>
 #include "stdfonts.hpp"
@@ -76,14 +78,13 @@ void ST7735Display::msDelay(uint32_t ms)
     usDelay(ms * 1000);
 }
 
-ST7735Display::ST7735Display()
-{
-    memset(&mTrans, 0, sizeof(mTrans));
-    mTrans.user = this;
-}
+ST7735Display::ST7735Display(uint8_t spiHost)
+:SpiMaster(spiHost)
+{}
 
 void ST7735Display::init(int16_t width, int16_t height, const PinCfg& pins)
 {
+    SpiMaster::init(pins.spi, 3);
     mWidth = width;
     mHeight = height;
     mDcPin = pins.dc;
@@ -94,31 +95,6 @@ void ST7735Display::init(int16_t width, int16_t height, const PinCfg& pins)
     gpio_set_direction((gpio_num_t)mDcPin, GPIO_MODE_OUTPUT);
     gpio_pad_select_gpio((gpio_num_t)mRstPin);
     gpio_set_direction((gpio_num_t)mRstPin, GPIO_MODE_OUTPUT);
-    // init SPI bus and device
-#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
-    spi_bus_config_t buscfg = {
-        .mosi_io_num=pins.mosi,
-        .miso_io_num=-1,
-        .sclk_io_num=pins.clk,
-        .quadwp_io_num=-1,
-        .quadhd_io_num=-1,
-        .max_transfer_sz = kMaxDmaLen + 32 // +32 just in case
-    };
-    //Initialize the SPI bus
-    auto ret = spi_bus_initialize(pins.spiHost, &buscfg, 1);
-    ESP_ERROR_CHECK(ret);
-
-    spi_device_interface_config_t devcfg = {
-        .mode = 0,
-        .clock_speed_hz = SPI_MASTER_FREQ_26M,
-        .spics_io_num = pins.cs,
-        .queue_size = 2,
-        .pre_cb = nullptr,
-        .post_cb = nullptr
-    };
-    //Attach the LCD to the SPI bus
-    ret = spi_bus_add_device(pins.spiHost, &devcfg, &mSpi);
-    ESP_ERROR_CHECK(ret);
 
     displayReset();
 }
@@ -133,48 +109,23 @@ void ST7735Display::setDcPin(int level)
     gpio_set_level((gpio_num_t)mDcPin, level);
 }
 
-template<bool isFirst>
 void ST7735Display::sendCmd(uint8_t opcode)
 {
-    mTrans.flags = SPI_TRANS_USE_TXDATA;   //D/C needs to be set to 0
-    mTrans.length = 8;                     //Command is 8 bits
-    mTrans.tx_data[0] = opcode;            //The data is the cmd itself
+    waitDone();
     setDcPin(0);
-    execTransaction();
-}
-
-inline void ST7735Display::execTransaction()
-{
-    auto ret = spi_device_polling_start(mSpi, &mTrans, portMAX_DELAY);  //Transmit!
-    assert(ret == ESP_OK);
-    ret = spi_device_polling_end(mSpi, portMAX_DELAY);
-    assert(ret == ESP_OK);
-}
-
-void ST7735Display::sendData(const void* data, int len)
-{
-    if (len == 0) {
-        return;
-    }
-    mTrans.flags = 0;
-    mTrans.length = len << 3; // Transaction length is in bits.
-    mTrans.tx_buffer = data;
-    setDcPin(1);
-    execTransaction();
+    spiSendVal<false>(opcode);
 }
 
 void ST7735Display::prepareSendPixels()
 {
-    mTrans.flags = 0;
-    mTrans.length = 16;
+    waitDone();
     setDcPin(1);
 }
 
 void ST7735Display::sendNextPixel(uint16_t pixel)
 {
     // WARNING: Requires prepareSendPixels() to have been called before
-    mTrans.tx_buffer = &pixel;
-    execTransaction();
+    spiSendVal(pixel);
 }
 
 void ST7735Display::sendCmd(uint8_t opcode, const std::initializer_list<uint8_t>& data)
@@ -182,6 +133,13 @@ void ST7735Display::sendCmd(uint8_t opcode, const std::initializer_list<uint8_t>
     sendCmd(opcode);
     sendData(data);
 }
+void ST7735Display::sendData(const void* data, int size)
+{
+    waitDone();
+    setDcPin(1);
+    spiSend(data, size);
+}
+
 /*
 IRAM_ATTR void ST7735Display::postTransferCallback(spi_transaction_t *t)
 {
@@ -206,12 +164,12 @@ void ST7735Display::displayReset()
   msDelay(50);
   setRstLevel(1);
   msDelay(140);
-  sendCmd<true>(ST77XX_SLPOUT);     // Sleep out, booster on
+  sendCmd(ST77XX_SLPOUT);     // Sleep out, booster on
   msDelay(140);
 
   sendCmd(ST77XX_INVOFF);
-  sendCmd(ST77XX_MADCTL, { 0x08 | ST77XX_MADCTL_MX | ST77XX_MADCTL_MV });
-  sendCmd(ST77XX_COLMOD, {0x05});
+  sendCmd(ST77XX_MADCTL, (uint8_t)(0x08 | ST77XX_MADCTL_MX | ST77XX_MADCTL_MV));
+  sendCmd(ST77XX_COLMOD, (uint8_t)0x05);
 
   sendCmd(ST77XX_CASET, {0x00, 0x00, 0x00, 0x7F});
   sendCmd(ST77XX_RASET, {0x00, 0x00, 0x00, 0x9F});
@@ -230,53 +188,42 @@ void ST7735Display::setOrientation(Orientation orientation)
     {
         case kOrientCW:
             std::swap(mWidth, mHeight);
-            sendData({0xA0}); // X-Y Exchange,Y-Mirror
+            sendData(0xA0); // X-Y Exchange,Y-Mirror
             break;
         case kOrientCCW:
             std::swap(mWidth, mHeight);
-            sendData({0x60}); // X-Y Exchange,X-Mirror
+            sendData(0x60); // X-Y Exchange,X-Mirror
             break;
         case kOrient180:
-            sendData({0xc0}); // X-Mirror,Y-Mirror: Bottom to top; Right to left; RGB
+            sendData(0xc0); // X-Mirror,Y-Mirror: Bottom to top; Right to left; RGB
             break;
         default:
-            sendData({0x00}); // Normal: Top to Bottom; Left to Right; RGB
+            sendData(0x00); // Normal: Top to Bottom; Left to Right; RGB
             break;
     }
 }
 
 void ST7735Display::setWriteWindow(uint16_t XS, uint16_t YS, uint16_t XE, uint16_t YE)
 {
-  sendCmd(ST77XX_CASET, {
-      (uint8_t)(XS >> 8),
-      (uint8_t)XS,
-      (uint8_t)(XE >> 8),
-      (uint8_t)XE
-  });
-
-  sendCmd(ST77XX_RASET, {
-      (uint8_t)(YS >> 8),
-      (uint8_t)(YS),
-      (uint8_t)(YE >> 8),
-      (uint8_t)(YE)
-   });
-
+  sendCmd(ST77XX_CASET, (uint32_t)(htobe16(XS) | (htobe16(XE) << 16)));
+  sendCmd(ST77XX_RASET, (uint32_t)(htobe16(YS) | (htobe16(YE) << 16)));
   sendCmd(ST77XX_RAMWR); // Memory write
 }
 
 void ST7735Display::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
 {
     setWriteWindow(x, y, x + w - 1, y + h - 1);
+    // TODO: If we want to support SPI bus sharing, we must lock the bus
+    // before modifying the fifo buffer
+    waitDone();
     int num = w * h * 2;
-    int bufSize = std::min(num, (int)kMaxDmaLen);
-    uint8_t* txbuf = (uint8_t*)alloca(bufSize);
-    auto bufEnd = (uint16_t*)(txbuf + bufSize);
-    for (auto ptr = (uint16_t*)txbuf; ptr < bufEnd; ptr++) {
-        *ptr = color;
-    }
+    int bufSize = std::min(num, (int)kMaxTransferLen);
+    int numWords = (bufSize + 3) / 4;
+    fifoMemset(((uint32_t)color << 16) | color, numWords);
+    setDcPin(1);
     do {
         int txCount = std::min(num, bufSize);
-        sendData(txbuf, txCount);
+        fifoSend(txCount);
         num -= txCount;
     } while (num > 0);
 }
@@ -284,7 +231,7 @@ void ST7735Display::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_
 void ST7735Display::setPixel(uint16_t x, uint16_t y, uint16_t color)
 {
     setWriteWindow(x, y, x, y);
-    sendData(&color, sizeof(color));
+    sendData(color);
 }
 
 void ST7735Display::hLine(uint16_t x1, uint16_t x2, uint16_t y)

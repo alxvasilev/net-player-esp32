@@ -52,7 +52,7 @@ protected:
     int16_t mVuPeakRight = 0;
     uint8_t mVuPeakTimerRight = 0;
     static void audioLevelCb(void* ctx);
-    inline uint16_t vuLedColor(int16_t ledX);
+    inline uint16_t vuLedColor(int16_t ledX, int16_t level);
     void lcdUpdateVolLevel();
 //====
     static void titleSrollTickCb(void* ctx);

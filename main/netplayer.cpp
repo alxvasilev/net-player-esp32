@@ -49,7 +49,7 @@ httpd_handle_t gHttpServer = nullptr;
 std::unique_ptr<AudioPlayer> player;
 std::unique_ptr<WifiBase> wifi;
 TaskList taskList;
-ST7735Display lcd;
+ST7735Display lcd(VSPI_HOST);
 
 void startWebserver(bool isAp=false);
 
@@ -154,10 +154,11 @@ bool rollbackCheckUserForced()
     return true;
 }
 static constexpr ST7735Display::PinCfg lcdPins = {
-    .spiHost = VSPI_HOST,
-    .clk = GPIO_NUM_18,
-    .mosi = GPIO_NUM_23,
-    .cs = GPIO_NUM_5,
+    {
+        .clk = GPIO_NUM_18,
+        .mosi = GPIO_NUM_23,
+        .cs = GPIO_NUM_5,
+    },
     .dc = GPIO_NUM_33, // data/command
     .rst = GPIO_NUM_4
 };
@@ -201,7 +202,11 @@ extern "C" void app_main(void)
 //==
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
-
+/*
+    for(;;) {
+        lcd.sendCmd((uint8_t)0x55, (uint8_t)0xff);
+    }
+*/
     player.reset(new AudioPlayer(lcd));
     player->registerUrlHanlers(gHttpServer);
     player->playlist.load((char*)std::string(gPlaylist).c_str());

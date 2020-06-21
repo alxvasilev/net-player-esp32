@@ -3,26 +3,22 @@
 
 #include <string.h>
 #include <stdint.h>
-#include <driver/spi_master.h>
 #include <endian.h>
 #include <initializer_list>
+#include "spi.hpp"
 #include "stdfonts.hpp"
-
 class Font;
 
-class ST7735Display
+class ST7735Display: public SpiMaster
 {
 public:
     struct PinCfg
     {
-        spi_host_device_t spiHost;
-        uint8_t clk;
-        uint8_t mosi;
-        uint8_t cs;
+        SpiPinCfg spi;
         uint8_t dc; // data/command
         uint8_t rst;
     };
-    enum { kMaxDmaLen = 256 };
+    enum { kMaxTransferLen = 64 };
     typedef int16_t coord_t;
     enum Orientation
     {
@@ -39,15 +35,12 @@ public:
 protected:
     int16_t mWidth;
     int16_t mHeight;
-    spi_device_handle_t mSpi;
     uint8_t mRstPin;
     uint8_t mDcPin;
-    spi_transaction_t mTrans;
     uint16_t mBgColor = 0x0000;
     uint16_t mFgColor = 0xffff;
     const Font* mFont = &Font_5x7;
     uint8_t mFontScale = 1;
-    //static void postTransferCallback(spi_transaction_t *t);
     void setRstLevel(int level);
     void setDcPin(int level);
     inline void execTransaction();
@@ -61,7 +54,7 @@ public:
     static void usDelay(uint32_t us);
     static void msDelay(uint32_t ms);
     static uint16_t rgb(uint8_t R, uint8_t G, uint8_t B);
-    ST7735Display();
+    ST7735Display(uint8_t spiHost);
     void setFgColor(uint16_t color) { mFgColor = htobe16(color); }
     void setFgColor(uint8_t r, uint8_t g, uint8_t b) { setFgColor(rgb(r, g, b)); }
     void setBgColor(uint16_t color) { mBgColor = htobe16(color); }
@@ -69,12 +62,26 @@ public:
 
     void gotoXY(int16_t x, int16_t y) { cursorX = x; cursorY = y; }
     void init(int16_t width, int16_t height, const PinCfg& pins);
-    template<bool isFirst=false>
     void sendCmd(uint8_t opcode);
     void sendCmd(uint8_t opcode, const std::initializer_list<uint8_t>& data);
-    void sendData(const void* data, int len);
+    template <typename T>
+    void sendCmd(uint8_t opcode, T data)
+    {
+        waitDone();
+        sendCmd(opcode);
+        sendData(data);
+    }
+
+    void sendData(const void* data, int size);
     void sendData(const std::initializer_list<uint8_t>& data) {
         sendData(data.begin(), (int)data.size());
+    }
+    template<typename T>
+    void sendData(T data)
+    {
+        waitDone();
+        setDcPin(1);
+        spiSendVal(data);
     }
     void prepareSendPixels();
     void sendNextPixel(uint16_t pixel);

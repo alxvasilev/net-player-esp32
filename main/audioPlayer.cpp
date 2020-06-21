@@ -89,7 +89,7 @@ void AudioPlayer::lcdInit()
 
 void AudioPlayer::initTimedDrawTask()
 {
-    xTaskCreate(&lcdTimedDrawTask, "lcdTask", 1200, this, 10, nullptr);
+    xTaskCreate(&lcdTimedDrawTask, "lcdTask", 1200, this, 20, nullptr);
     mVolumeInterface->setLevelCallback(audioLevelCb, this);
 }
 
@@ -665,7 +665,7 @@ void AudioPlayer::titleSrollTickCb(void* ctx)
 
 void AudioPlayer::lcdScrollTrackTitle()
 {
-//    ElapsedTimer timer;
+    ElapsedTimer timer;
     if (mTrackTitle.dataSize() <= 1) {
         return;
     }
@@ -696,7 +696,16 @@ void AudioPlayer::lcdScrollTrackTitle()
             break;
         }
     }
-    //ESP_LOGI("PL", "Scroll time: %d", timer.msElapsed());
+  auto ms = timer.msElapsed();
+  mLcd.gotoXY(0, 100);
+  char buf[8];
+  if (ms < 10) {
+      buf[0] = '0';
+      itoa(ms, buf+1, 10);
+  } else {
+      itoa(ms, buf, 10);
+  }
+  mLcd.puts(buf);
 }
 
 void AudioPlayer::audioLevelCb(void* ctx)
@@ -704,10 +713,12 @@ void AudioPlayer::audioLevelCb(void* ctx)
     auto& self = *static_cast<AudioPlayer*>(ctx);
     self.mEvents.setBits(kEventVolLevel);
 }
-inline uint16_t AudioPlayer::vuLedColor(int16_t ledX)
+inline uint16_t AudioPlayer::vuLedColor(int16_t ledX, int16_t level)
 {
     if (ledX >= mVuRedStartX) {
-        return ST77XX_RED;
+        return (level == std::numeric_limits<decltype(level)>::max())
+            ? ST77XX_RED
+            : ST77XX_ORANGE;
     } else if (ledX >= mVuYellowStartX) {
         return ST77XX_YELLOW;
     } else {
@@ -731,8 +742,10 @@ void AudioPlayer::lcdUpdateVolLevel()
         mVuPeakTimerLeft = 60;
     } else {
         if (--mVuPeakTimerLeft <= 0) {
-            mVuPeakTimerLeft = 20;
-            mVuPeakLeft = std::max(mVuPeakLeft - mLevelPerVuLed, (int)mVuLeftAvg);
+            mVuPeakTimerLeft = 4;
+            if (mVuPeakLeft > 0) {
+                mVuPeakLeft -= mLevelPerVuLed;
+            }
         }
     }
     if (levels.right > mVuRightAvg) {
@@ -740,32 +753,67 @@ void AudioPlayer::lcdUpdateVolLevel()
     } else {
         mVuRightAvg = ((int)mVuRightAvg * (kVuLevelSmoothFactor-1) + levels.right) / kVuLevelSmoothFactor;
     }
+    if (levels.right > mVuPeakRight) {
+        mVuPeakRight = levels.right;
+        mVuPeakTimerRight = 60;
+    } else {
+        if (--mVuPeakTimerRight <= 0) {
+            mVuPeakTimerRight = 4;
+            if (mVuPeakRight > 0) {
+                mVuPeakRight -= mLevelPerVuLed;
+            }
+        }
+    }
 
     int16_t endXLeft = kVuLedWidth * (((int)mVuLeftAvg + mLevelPerVuLed - 1) / mLevelPerVuLed);
     int16_t endXRight = kVuLedWidth * (((int)mVuRightAvg + mLevelPerVuLed - 1) / mLevelPerVuLed);
     int16_t endX = std::max(endXLeft, endXRight);
     for (int16_t x = 0; x < endX; x += kVuLedWidth) {
-        mLcd.setFgColor(vuLedColor(x));
         if (x < endXLeft) {
+            mLcd.setFgColor(vuLedColor(x, mVuPeakLeft));
             mLcd.fillRect(x, yLeft, kVuLedWidth-1, kVuLedHeight);
         } else {
             mLcd.clear(x, yLeft, kVuLedWidth-1, kVuLedHeight);
         }
         if (x < endXRight) {
+            mLcd.setFgColor(vuLedColor(x, mVuPeakRight));
             mLcd.fillRect(x, yRight, kVuLedWidth-1, kVuLedHeight);
         } else {
             mLcd.clear(x, yRight, kVuLedWidth-1, kVuLedHeight);
         }
     }
-    if (endX < mLcd.width()) {
-        mLcd.clear(endX, yLeft, mLcd.width() - endX, kVuLedHeight * 2 + 2);
+    int16_t afterEndX = mLcd.width() - endX;
+    int16_t leftPeakX = kVuLedWidth * (((int)mVuPeakLeft + mLevelPerVuLed - 1) / mLevelPerVuLed - 1);
+    if (leftPeakX >= endXLeft) {
+        if (leftPeakX > endXLeft) {
+            mLcd.clear(endXLeft, yLeft, leftPeakX - endXLeft, kVuLedHeight);
+        }
+        mLcd.setFgColor(vuLedColor(leftPeakX, mVuPeakLeft));
+        mLcd.fillRect(leftPeakX, yLeft, kVuLedWidth-1, kVuLedHeight);
+        int afterBg = mLcd.width() - leftPeakX - kVuLedWidth;
+        if (afterBg > 0) {
+            mLcd.clear(leftPeakX + kVuLedWidth, yLeft, afterBg, kVuLedHeight);
+        }
+    } else if (afterEndX) {
+        mLcd.clear(endX, yLeft, afterEndX, kVuLedHeight);
     }
-    int16_t leftPeak = kVuLedWidth * ((mVuPeakLeft + mLevelPerVuLed - 1) / mLevelPerVuLed - 1);
-    if (leftPeak >= endXLeft) {
-        mLcd.setFgColor(vuLedColor(leftPeak));
-        mLcd.fillRect(leftPeak, yLeft, kVuLedWidth-1, kVuLedHeight);
+
+    int16_t rightPeakX = kVuLedWidth * (((int)mVuPeakRight + mLevelPerVuLed - 1) / mLevelPerVuLed - 1);
+    if (rightPeakX >= endXRight) {
+        if (rightPeakX > endXRight) {
+            mLcd.clear(endXRight, yRight, rightPeakX - endXRight, kVuLedHeight);
+        }
+        mLcd.setFgColor(vuLedColor(rightPeakX, mVuPeakRight));
+        mLcd.fillRect(rightPeakX, yRight, kVuLedWidth-1, kVuLedHeight);
+        int afterBg = mLcd.width() - rightPeakX - kVuLedWidth;
+        if (afterBg > 0) {
+            mLcd.clear(rightPeakX + kVuLedWidth, yRight, afterBg, kVuLedHeight);
+        }
+    } else if (afterEndX) {
+        mLcd.clear(endX, yRight, afterEndX, kVuLedHeight);
     }
 }
+
 void AudioPlayer::lcdUpdateStationInfo()
 {
     LOCK_PLAYER();
