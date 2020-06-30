@@ -81,7 +81,14 @@ long strToInt(const char* str, size_t len, long defVal, int base)
 {
     char* end;
     long val = strtol(str, &end, base);
-    return (end == str + len) ? val : defVal;
+    return (end == str + len - 1) ? val : defVal;
+}
+
+float strToFloat(const char* str, size_t len, float defVal)
+{
+    char* end;
+    float val = strtod(str, &end);
+    return (end == str + len - 1) ? val : defVal;
 }
 
 void KeyValParser::Substring::trimSpaces()
@@ -99,15 +106,23 @@ void KeyValParser::Substring::trimSpaces()
     while (newEnd > str && (*newEnd == ' ' || *newEnd == '\t')) {
         newEnd--;
     }
+    if (newEnd == str) {
+        str = nullptr;
+        len = 0;
+        return;
+    }
     newEnd++;
+    if (newEnd == end) {
+        return;
+    }
     *newEnd = 0;
-    len = newEnd - str;
+    len = newEnd - str + 1;
 }
 
 bool KeyValParser::parse(char pairDelim, char keyValDelim, Flags flags)
 {
-    auto end = mPtr + mSize - 1;
-    char* pch = mPtr;
+    auto end = mBuf + mSize - 1;
+    char* pch = mBuf;
     for (;;) {
         auto start = pch;
         for (; (pch < end) && (*pch != keyValDelim); pch++);
@@ -119,12 +134,12 @@ bool KeyValParser::parse(char pairDelim, char keyValDelim, Flags flags)
         KeyVal& keyval = mKeyVals.back();
         auto& key = keyval.key;
         key.str = start;
-        key.len = pch - start;
+        key.len = pch - start + 1;
 
         start = ++pch;
         for (; (pch < end) && (*pch != pairDelim); pch++);
         auto& val = keyval.val;
-        auto len = pch - start;
+        auto len = pch - start + 1;
         if (flags & kUrlUnescape) {
             if (!unescapeUrlParam(start, len)) {
                 return false;
@@ -164,17 +179,35 @@ long KeyValParser::intVal(const char* name, long defVal)
     return sval.toInt(defVal);
 }
 
+float KeyValParser::floatVal(const char* name, float defVal)
+{
+    auto sval = strVal(name);
+    auto str = sval.str;
+    if (!str) {
+        return defVal;
+    }
+    return sval.toFloat(defVal);
+}
+KeyValParser::~KeyValParser()
+{
+    if (mBuf && mOwn) {
+        free(mBuf);
+    }
+}
+
 UrlParams::UrlParams(httpd_req_t* req)
 {
     mSize = httpd_req_get_url_query_len(req) + 1;
     if (mSize <= 1) {
         mSize = 0;
-        mPtr = nullptr;
+        mBuf = nullptr;
         return;
     }
-    mPtr = (char*)malloc(mSize);
-    if (httpd_req_get_url_query_str(req, mPtr, mSize) != ESP_OK) {
-        free();
+    mOwn = true;
+    mBuf = (char*)malloc(mSize);
+    if (httpd_req_get_url_query_str(req, mBuf, mSize) != ESP_OK) {
+        free(mBuf);
+        mBuf = nullptr;
         return;
     }
     parse('&', '=', kUrlUnescape);

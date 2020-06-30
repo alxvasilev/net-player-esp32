@@ -149,6 +149,7 @@ void AudioPlayer::lcdUpdateModeInfo()
 {
     mLcd.setFont(Font_5x7, 2);
     mLcd.gotoXY(0, 0);
+    mLcd.setFgColor(255, 255, 128);
     auto type = mStreamIn->type();
     if (type == AudioNode::kTypeHttpIn) {
         mLcd.putc('N');
@@ -162,6 +163,7 @@ void AudioPlayer::lcdUpdateModeInfo()
 
 void AudioPlayer::lcdUpdatePlayState()
 {
+    mLcd.setFgColor(255, 255, 128);
     mLcd.gotoXY(mLcd.charWidth() + 1, 0);
     if (isPlaying()) {
         mLcd.putc('>');
@@ -226,10 +228,14 @@ void AudioPlayer::loadSettings()
 }
 
 void AudioPlayer::detectVolumeNode() {
+    std::vector<AudioNode*> nodes(10);
     for (AudioNode* node = mStreamOut.get(); node; node = node->prev()) {
-        mVolumeInterface = node->volumeInterface();
+        nodes.push_back(node);
+    }
+    for (auto it = nodes.rbegin(); it != nodes.rend(); it++) {
+        mVolumeInterface = (*it)->volumeInterface();
         if (mVolumeInterface) {
-            ESP_LOGW(TAG, "Volume node found: '%s'", node->tag());
+            ESP_LOGW(TAG, "Volume node found: '%s'", (*it)->tag());
             return;
         }
     }
@@ -307,6 +313,10 @@ void AudioPlayer::stop()
    mStreamOut->stop(false);
    mStreamIn->waitForStop();
    mStreamOut->waitForStop();
+   mTitleScrollTimer.cancel();
+   if (mVolumeInterface) {
+       mVolumeInterface->clearAudioLevels();
+   }
    lcdUpdatePlayState();
 }
 
@@ -364,12 +374,12 @@ bool AudioPlayer::equalizerSetBand(int band, float dbGain)
 
 float AudioPlayer::equalizerDoSetBandGain(int band, float dbGain)
 {
-    if (dbGain < -25) {
-        dbGain = -25;
-    } else if (dbGain > 25) {
-        dbGain = 25;
+    if (dbGain < -40) {
+        dbGain = -40;
+    } else if (dbGain > 40) {
+        dbGain = 40;
     }
-    dbGain = roundf(dbGain * 5) / 5; // encode to int and decode back
+    dbGain = roundf(dbGain * kEqGainPrecisionDiv) / kEqGainPrecisionDiv; // encode to int and decode back
     mEqualizer->setBandGain(band, dbGain);
     return dbGain;
 }
@@ -386,15 +396,19 @@ bool AudioPlayer::equalizerSetGainsBulk(char* str, size_t len)
     vals.parse(';', '=', KeyValParser::kTrimSpaces);
     bool ok = true;
     for (const auto& kv: vals.keyVals()) {
-        int band = kv.key.toInt(0xff);
+        int band = kv.key.toInt(-1);
         if (band < 0 || band > 9) {
-            ok = false;
-        }
-        int gain = kv.val.toInt(0xff);
-        if (gain == 0xff) {
+            ESP_LOGW(TAG, "Invalid band %d", band);
             ok = false;
             continue;
         }
+        auto gain = kv.val.toFloat(INFINITY);
+        if (gain == INFINITY) {
+            ESP_LOGW(TAG, "Invalid gain '%s'", kv.val.str);
+            ok = false;
+            continue;
+        }
+        ESP_LOGI(TAG, "Setting band %d gain %f", band, gain);
         equalizerDoSetBandGain(band, gain);
     }
     equalizerSaveGains();
@@ -417,7 +431,7 @@ void AudioPlayer::equalizerSaveGains()
     auto fGains = mEqualizer->allGains();
     int8_t gains[10];
     for (int i = 0; i < 10; i++) {
-        gains[i] = roundf(fGains[i] * 5);
+        gains[i] = roundf(fGains[i] * kEqGainPrecisionDiv);
     }
     mNvsHandle.writeBlob("eqGains", gains, sizeof(gains));
 }
@@ -431,7 +445,7 @@ esp_err_t AudioPlayer::playUrlHandler(httpd_req_t *req)
     auto self = static_cast<AudioPlayer*>(req->user_ctx);
     MutexLocker locker(self->mutex);
     UrlParams params(req);
-    auto urlParam = params.strParam("url");
+    auto urlParam = params.strVal("url");
     const char* url;
     if (!urlParam) {
         url = self->playlist.getNextTrack();
@@ -480,7 +494,7 @@ esp_err_t AudioPlayer::volumeUrlHandler(httpd_req_t *req)
     auto self = static_cast<AudioPlayer*>(req->user_ctx);
     UrlParams params(req);
     int newVol;
-    auto step = params.intParam("step", 0);
+    auto step = params.intVal("step", 0);
     if (step) {
         newVol = self->volumeChange(step);
         if (newVol < 0) {
@@ -488,7 +502,7 @@ esp_err_t AudioPlayer::volumeUrlHandler(httpd_req_t *req)
             return ESP_OK;
         }
     } else {
-        auto vol = params.intParam("vol", -1);
+        auto vol = params.intVal("vol", -1);
         if (vol < 0) {
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Neither 'step' nor 'vol' parameter provided");
             return ESP_OK;
@@ -506,22 +520,24 @@ esp_err_t AudioPlayer::equalizerSetUrlHandler(httpd_req_t *req)
 {
     auto self = static_cast<AudioPlayer*>(req->user_ctx);
     UrlParams params(req);
-    auto data = params.strParam("vals");
+    auto data = params.strVal("vals");
     if (data.str) {
         self->equalizerSetGainsBulk(data.str, data.len);
+        httpd_resp_sendstr(req, "ok");
         return ESP_OK;
     }
-    if (params.strParam("reset").str) {
+    if (params.strVal("reset").str) {
         self->equalizerSetGainsBulk(nullptr, 0);
+        httpd_resp_sendstr(req, "ok");
         return ESP_OK;
     }
-    auto band = params.intParam("band", -1);
+    auto band = params.intVal("band", -1);
     if (band < 0 || band > 9) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid 'band' parameter");
         return ESP_OK;
     }
-    auto level = params.intParam("level", 0xff);
-    if (level == 0xff) {
+    auto level = params.floatVal("level", INFINITY);
+    if (level == INFINITY) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid 'level' parameter");
         return ESP_OK;
     }
@@ -539,12 +555,12 @@ esp_err_t AudioPlayer::equalizerDumpUrlHandler(httpd_req_t *req)
     MutexLocker locker(self->mutex);
     auto levels = self->equalizerGains();
     DynBuffer buf(240);
-    buf.printf("{");
+    buf.printf("[");
     for (int i = 0; i < 10; i++) {
         buf.printf("[%d,%.1f],", self->equalizerFreqs[i], levels[i]);
     }
-    buf[buf.dataSize()-2] = '}';
-    httpd_resp_send(req, buf.buf(), buf.dataSize());
+    buf[buf.dataSize()-2] = ']';
+    httpd_resp_send(req, buf.buf(), buf.dataSize()-1);
     return ESP_OK;
 }
 
@@ -637,7 +653,7 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int size)
     if (size <= 1) {
         mTitleScrollTimer.cancel();
         lcdSetupForTrackTitle();
-        mLcd.puts("----------------", mLcd.kFlagNoAutoNewline);
+        mLcd.puts("----------------", mLcd.kFlagNoAutoNewline|mLcd.kFlagAllowPartial);
         return;
     }
     mTrackTitle.reserve(size + 3);
@@ -665,7 +681,6 @@ void AudioPlayer::titleSrollTickCb(void* ctx)
 
 void AudioPlayer::lcdScrollTrackTitle()
 {
-    ElapsedTimer timer;
     if (mTrackTitle.dataSize() <= 1) {
         return;
     }
@@ -696,16 +711,6 @@ void AudioPlayer::lcdScrollTrackTitle()
             break;
         }
     }
-  auto ms = timer.msElapsed();
-  mLcd.gotoXY(0, 100);
-  char buf[8];
-  if (ms < 10) {
-      buf[0] = '0';
-      itoa(ms, buf+1, 10);
-  } else {
-      itoa(ms, buf, 10);
-  }
-  mLcd.puts(buf);
 }
 
 void AudioPlayer::audioLevelCb(void* ctx)
@@ -718,7 +723,7 @@ inline uint16_t AudioPlayer::vuLedColor(int16_t ledX, int16_t level)
     if (ledX >= mVuRedStartX) {
         return (level == std::numeric_limits<decltype(level)>::max())
             ? ST77XX_RED
-            : ST77XX_ORANGE;
+            : ST77XX_YELLOW;
     } else if (ledX >= mVuYellowStartX) {
         return ST77XX_YELLOW;
     } else {
@@ -739,10 +744,10 @@ void AudioPlayer::lcdUpdateVolLevel()
     }
     if (levels.left > mVuPeakLeft) {
         mVuPeakLeft = levels.left;
-        mVuPeakTimerLeft = 60;
+        mVuPeakTimerLeft = kVuPeakHoldTime;
     } else {
         if (--mVuPeakTimerLeft <= 0) {
-            mVuPeakTimerLeft = 4;
+            mVuPeakTimerLeft = kVuPeakDropTime;
             if (mVuPeakLeft > 0) {
                 mVuPeakLeft -= mLevelPerVuLed;
             }
@@ -755,10 +760,10 @@ void AudioPlayer::lcdUpdateVolLevel()
     }
     if (levels.right > mVuPeakRight) {
         mVuPeakRight = levels.right;
-        mVuPeakTimerRight = 60;
+        mVuPeakTimerRight = kVuPeakHoldTime;
     } else {
         if (--mVuPeakTimerRight <= 0) {
-            mVuPeakTimerRight = 4;
+            mVuPeakTimerRight = kVuPeakDropTime;
             if (mVuPeakRight > 0) {
                 mVuPeakRight -= mLevelPerVuLed;
             }
@@ -827,5 +832,6 @@ void AudioPlayer::lcdUpdateStationInfo()
     mLcd.clear(0, 20, mLcd.width()-1, mLcd.charHeight() * 3);
     mLcd.gotoXY(0, 20);
     mLcd.setFont(Font_5x7, 1);
+    mLcd.setFgColor(255, 255, 128);
     mLcd.nputs(name, 3 * mLcd.charsPerLine());
 }

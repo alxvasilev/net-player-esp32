@@ -38,8 +38,8 @@ bool unescapeUrlParam(char* str, size_t len);
 
 uint8_t hexDigitVal(char digit);
 long strToInt(const char* str, size_t len, long defVal, int base=10);
-
-class KeyValParser: public BufPtr<char>
+float strToFloat(const char* str, size_t len, float defVal);
+class KeyValParser
 {
 public:
     struct Substring
@@ -51,6 +51,7 @@ public:
         operator bool() const { return str != nullptr; }
         void trimSpaces();
         long toInt(long defVal, int base=10) const { return strToInt(str, len, defVal, base); }
+        float toFloat(float defVal) const { return strToFloat(str, len, defVal); }
     };
     struct KeyVal
     {
@@ -58,24 +59,26 @@ public:
         Substring val;
     };
 protected:
+    char* mBuf;
     size_t mSize;
     std::vector<KeyVal> mKeyVals;
+    bool mOwn;
     KeyValParser() {} // ctor to inherit when derived class has its own initialization
 public:
     enum Flags: uint8_t { kUrlUnescape = 1, kTrimSpaces = 2 };
     const std::vector<KeyVal>& keyVals() const { return mKeyVals; }
-    KeyValParser(char* str, size_t len): BufPtr(str), mSize(len) {}
+    KeyValParser(char* str, size_t len, bool own=false): mBuf(str), mSize(len), mOwn(own) {}
+    ~KeyValParser();
     bool parse(char pairDelim, char keyValDelim, Flags flags);
     Substring strVal(const char* name);
     long intVal(const char* name, long defVal);
+    float floatVal(const char* name, float defVal);
 };
 
 class UrlParams: public KeyValParser
 {
 public:
     UrlParams(httpd_req_t* req);
-    Substring strParam(const char* name) { return strVal(name); }
-    long intParam(const char* name, long defVal) { return intVal(name, defVal); }
 };
 
 const char* getUrlFile(const char* url);

@@ -4,26 +4,19 @@
 #include <string.h>
 #include "audioNode.hpp"
 #include <driver/i2s.h>
+#include "volume.hpp"
 
-class I2sOutputNode: public AudioNodeWithTask, public IAudioVolume
+class I2sOutputNode: public AudioNodeWithTask, public DefaultVolumeImpl
 {
 protected:
-    enum: uint8_t { kVolumeDiv = 64 };
     i2s_port_t mPort;
     bool mUseInternalDac;
     StreamFormat mFormat;
     int mReadTimeout;
-    uint8_t mVolume = kVolumeDiv;
     enum { kDmaBufLen = 600, kDmaBufCnt = 3,
            kStackSize = 9000, kDefaultSamplerate = 44100
     };
     virtual void nodeThreadFunc();
-    template <typename T, bool ChangeVol>
-    void processVolumeStereo(DataPullReq& dpr);
-
-    template <typename T, bool ChangeVol>
-    void processVolumeMono(DataPullReq& dpr);
-
     void adjustSamplesForInternalDac(char* sBuff, int len);
     void dmaFillWithSilence();
     bool setFormat(StreamFormat fmt);
@@ -35,9 +28,6 @@ public:
     virtual IAudioVolume* volumeInterface() override { return this; }
     virtual StreamError pullData(DataPullReq& dpr, int timeout) { return kTimeout; }
     virtual void confirmRead(int amount) {}
-    // volume interface
-    virtual uint16_t getVolume() const;
-    virtual void setVolume(uint16_t vol);
 };
 
 #endif

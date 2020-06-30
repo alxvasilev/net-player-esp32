@@ -246,42 +246,6 @@ public:
     void setPriority(UBaseType_t prio) { mTaskPrio = prio; }
 };
 
-/* Interface for setting and getting volume of an audio node. If implemented,
- * flags() should have the kHasVolume bit set.
- * IMPORTANT: This interface class should have no members, because it is
- * used in multple inheritance and AudioNode is cast to IAudioVolume based
- * on the presence of kHasVolume bit in flags(). This cast will not work correctly
- * if IAudioVolume is not a pure virtual class, because the this pointers will
- * differ in the multiple inheritance
- */
-class IAudioVolume
-{
-public:
-    // The actual levels are in the range [0-256].
-    // The most significant 8 bits of the max sample are taken, and, if
-    // the sample has the maximum possible value, the level is set to 256
-    struct StereoLevels
-    {
-        int16_t left;
-        int16_t right;
-    };
-    typedef void(*AudioLevelCallbck)(void* arg);
-    void setLevelCallback(AudioLevelCallbck cb, void* arg)
-    {
-        mAudioLevelCb = cb;
-        mAudioLevelCbArg = arg;
-    }
-    // volume is in percent of original.
-    // 0-99% attenuates, 101-400% amplifies
-    virtual uint16_t getVolume() const = 0;
-    virtual void setVolume(uint16_t vol) = 0;
-    const StereoLevels& audioLevels() const { return mAudioLevels; }
-protected:
-    StereoLevels mAudioLevels;
-    AudioLevelCallbck mAudioLevelCb = nullptr;
-    void* mAudioLevelCbArg = nullptr;
-};
-
 inline void AudioNode::sendEvent(uint32_t type, void *buf, int bufSize)
 {
     if (!mEventHandler) {
@@ -291,4 +255,5 @@ inline void AudioNode::sendEvent(uint32_t type, void *buf, int bufSize)
         mEventHandler->onEvent(this, type, buf, bufSize);
     }
 }
+
 #endif

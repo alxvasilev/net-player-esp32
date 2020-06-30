@@ -82,7 +82,8 @@ AudioNode::StreamError EqualizerNode::pullData(DataPullReq &dpr, int timeout)
         }
         equalizerReinit(dpr.fmt);
     }
-    ElapsedTimer tim;
+    processVolume(dpr);
     esp_equalizer_process(mEqualizer, (unsigned char*)dpr.buf, dpr.size, mSampleRate, mChanCount);
+    getAudioLevel(dpr);
     return kNoError;
 }

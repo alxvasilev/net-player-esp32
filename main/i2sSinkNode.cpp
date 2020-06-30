@@ -24,52 +24,6 @@ void I2sOutputNode::adjustSamplesForInternalDac(char* sBuff, int len)
     }
 }
 
-template <typename T, bool ChangeVol=true>
-void I2sOutputNode::processVolumeStereo(DataPullReq& dpr)
-{
-    T left = 0;
-    T right = 0;
-    T* pSample = (T*)dpr.buf;
-    T* end = pSample + dpr.size / sizeof(T);
-    while(pSample < end) {
-        if (*pSample > left) {
-            left = *pSample;
-        }
-        if (ChangeVol) {
-            *pSample = (static_cast<int64_t>(*pSample) * mVolume + kVolumeDiv / 2) / kVolumeDiv;
-        }
-        pSample++;
-
-        if (*pSample > right) {
-            right = *pSample;
-        }
-        if (ChangeVol) {
-            *pSample = (static_cast<int64_t>(*pSample) * mVolume + kVolumeDiv / 2) / kVolumeDiv;
-        }
-        pSample++;
-    }
-    mAudioLevels.left = left;
-    mAudioLevels.right = right;
-}
-
-template <typename T, bool ChangeVol=true>
-void I2sOutputNode::processVolumeMono(DataPullReq& dpr)
-{
-    T level = 0;
-    T* pSample = (T*)dpr.buf;
-    T* end = pSample + dpr.size / sizeof(T);
-    for(; pSample < end; pSample++) {
-        if (*pSample > level) {
-            level = *pSample;
-        }
-
-        if (ChangeVol) {
-            *pSample = (static_cast<int64_t>(*pSample) * mVolume + kVolumeDiv / 2) / kVolumeDiv;
-        }
-    }
-    mAudioLevels.left = mAudioLevels.right = level;
-}
-
 void I2sOutputNode::nodeThreadFunc()
 {
     for (;;) {
@@ -78,7 +32,6 @@ void I2sOutputNode::nodeThreadFunc()
             return;
         }
         myassert(mState == kStateRunning);
-        bool isStereo = true;
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
             DataPullReq dpr(10240); // read all available data
             auto err = mPrev->pullData(dpr, -1);
@@ -93,22 +46,9 @@ void I2sOutputNode::nodeThreadFunc()
             }
             if (dpr.fmt != mFormat) {
                 setFormat(dpr.fmt);
-                isStereo = mFormat.channels() > 1;
             }
 
-            if (mVolume != kVolumeDiv) {
-                if (isStereo) {
-                    processVolumeStereo<int16_t, true>(dpr);
-                } else {
-                    processVolumeMono<int16_t, true>(dpr);
-                }
-            } else if (mAudioLevelCb) { // only find peak amplitude
-                if (isStereo) {
-                    processVolumeStereo<int16_t, false>(dpr);
-                } else {
-                    processVolumeMono<int16_t, false>(dpr);
-                }
-            }
+            processVolume(dpr);
 
             if (mUseInternalDac) {
                 adjustSamplesForInternalDac(dpr.buf, dpr.size);
@@ -122,9 +62,6 @@ void I2sOutputNode::nodeThreadFunc()
             }
             if (written != dpr.size) {
                 ESP_LOGE(mTag, "is2_write() wrote less than requested with infinite timeout");
-            }
-            if (mAudioLevelCb) {
-                mAudioLevelCb(mAudioLevelCbArg);
             }
         }
     }
@@ -219,13 +156,3 @@ I2sOutputNode::~I2sOutputNode()
     i2s_driver_uninstall(mPort);
 }
 
-uint16_t I2sOutputNode::getVolume() const
-{
-    return (mVolume * 100 + kVolumeDiv/2) / kVolumeDiv;
-}
-
-void I2sOutputNode::setVolume(uint16_t vol)
-{
-    mVolume = ((vol * kVolumeDiv + 50) / 100);
-    ESP_LOGW(mTag, "setVolume(%u) -> %u", vol, mVolume);
-}

@@ -25,7 +25,10 @@ protected:
     { kFlagUseEqualizer = 1, kFlagListenerHooked = 2, kFlagNoWaitPrefill = 4 };
     enum: uint8_t
     { kEventTerminating = 1, kEventScroll = 2, kEventVolLevel = 4, kEventTerminated = 8 };
-    enum { kVuLedWidth = 8, kVuLedHeight = 4, kVuLevelSmoothFactor = 4 };
+    enum { kVuLedWidth = 8, kVuLedHeight = 4, kVuLevelSmoothFactor = 4,
+           kVuPeakHoldTime = 30, kVuPeakDropTime = 2
+    };
+    enum { kEqGainPrecisionDiv = 2 };
     Flags mFlags;
     std::unique_ptr<AudioNodeWithState> mStreamIn;
     std::unique_ptr<DecoderNode> mDecoder;
