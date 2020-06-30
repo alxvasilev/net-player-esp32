@@ -1,0 +1,147 @@
+<html>
+<head>
+<style>
+.eq-slider-cont {
+  display: inline-block;
+  width: 25px;
+  height: 150px;
+  padding: 0;
+  font-size: 0.65em;
+  text-align: center;
+}
+.eq-slider-cont input {
+    display: inline-block;
+
+  width: 150px;
+  height: 25px;
+  margin: 0;
+  transform-origin: 75px 75px;
+  transform: rotate(-90deg);
+}
+.dblabel {
+    position: relative;
+    top: 85%;
+}
+</style>
+</head>
+<body>
+    <datalist id="tickmarks">
+        <option value="-40"></option>
+        <option value="-36"></option>
+        <option value="-32"></option>
+        <option value="-28"></option>
+        <option value="-24"></option>
+        <option value="-20"></option>
+        <option value="-16"></option>
+        <option value="-12"></option>
+        <option value="-8"></option>
+        <option value="-4"></option>
+        <option value="0"></option>
+        <option value="4"></option>
+        <option value="8"></option>
+        <option value="12"></option>
+        <option value="16"></option>
+        <option value="20"></option>
+        <option value="24"></option>
+        <option value="28"></option>
+        <option value="32"></option>
+        <option value="36"></option>
+        <option value="40"></option>
+    </datalist>
+    <div id=equalizer>
+    </div>
+<script>
+function byId(id) {
+    return document.getElementById(id);
+}
+function htmlToElement(html) {
+    var template = document.createElement('template');
+    html = html.trim(); // Never return a text node of whitespace as the result
+    template.innerHTML = html;
+    return template.content.firstChild;
+}
+function Slider(parent, band, slider, label) {
+    this.parent = parent;
+    this.band = band;
+    this.slider = slider;
+    this.label = label;
+    slider.addEventListener('input', this.onSlide.bind(this));
+};
+
+Slider.prototype.onSlide = function(event) {
+    let db = this.label.innerHTML = this.slider.value;
+    if (this.dirty) {
+        return;
+    }
+    this.dirty = Date.now();
+    this.parent.onSlide();
+};
+
+Slider.prototype.load = function(db) {
+    this.slider.value = db;
+    this.label.innerHTML = db;
+};
+
+function Equalizer(cont) {
+    this.sliders = [];
+    for (let i = 0; i < 10; i++) {
+        cont.appendChild(htmlToElement(
+            '<div class="eq-slider-cont">' + Equalizer.freqs[i] +
+            '<input type="range" id="eqSlider' + i + '" band="' + i +
+            '" min="-40" max="40" value="0" step="0.5" list="tickmarks"><div class="dblabel" id="dbLabel'+ i +
+            '">db</div></div>'));
+        this.sliders.push(new Slider(this, i, byId('eqSlider' + i), byId('dbLabel' + i)));
+    }
+}
+
+Equalizer.freqs = ['31', '62', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'];
+Equalizer.kThrottleInterval = 100;
+
+Equalizer.prototype.load = function(data) {
+    for (let i = 0; i < 10; i++) {
+        let slider = this.sliders[i].load(data[i][1]);
+    }
+}
+Equalizer.prototype.onSlide = function() {
+    if (!this.throttleTimer) {
+        this.throttleTimer = setInterval(this.onThrottleTimer.bind(this), Equalizer.kThrottleInterval);
+    }
+}
+Equalizer.prototype.onThrottleTimer = function() {
+    let now = Date.now();
+    let commit = "";
+    remain = false;
+    for (let slider of this.sliders) {
+        if (slider.dirty) {
+            if(now - slider.dirty >= Equalizer.kThrottleInterval) {
+                if (commit) {
+                    commit += ';';
+                }
+                commit += slider.band + '=' + slider.slider.value;
+                delete slider.dirty;
+            } else {
+                remain = true;
+            }
+        }
+    }
+    if (!commit) {
+        return;
+    }
+    fetch('/eqset?vals=' + commit);
+    if (!remain) {
+        clearInterval(this.throttleTimer);
+        delete this.throttleTimer;
+    }
+}
+
+async function init() {
+    let eq = new Equalizer(byId("equalizer"));
+    //var data = [[0, 10], [1, 8], [2, 0], [3, -5], [4, -10], [5, -10], [6, -10], [7, -10], [8, 10], [9, 12]];
+    var response = await fetch("/eqget");
+    var text = await response.text();
+    eq.load(JSON.parse(text));
+}
+window.onload = init;
+</script>
+</body>
+</html>

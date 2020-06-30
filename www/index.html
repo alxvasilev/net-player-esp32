@@ -1,0 +1,95 @@
+<html>
+<head>
+<style>
+.eq-slider-cont {
+  display: inline-block;
+  width: 25px;
+  height: 150px;
+  padding: 0;
+  font-size: 0.65em;
+  text-align: center;
+}
+.eq-slider-cont input {
+    display: inline-block;
+
+  width: 150px;
+  height: 25px;
+  margin: 0;
+  transform-origin: 75px 75px;
+  transform: rotate(-90deg);
+}
+.dblabel {
+    position: relative;
+    top: 85%;
+}
+</style>
+</head>
+<body>
+    <datalist id="tickmarks">
+        <option value="-20"></option>
+        <option value="-18"></option>
+        <option value="-16"></option>
+        <option value="-14"></option>
+        <option value="-12"></option>
+        <option value="-10"></option>
+        <option value="-8"></option>
+        <option value="-6"></option>
+        <option value="-4"></option>
+        <option value="-2"></option>
+        <option value="0"></option>
+        <option value="2"></option>
+        <option value="4"></option>
+        <option value="6"></option>
+        <option value="8"></option>
+        <option value="10"></option>
+        <option value="12"></option>
+        <option value="14"></option>
+        <option value="16"></option>
+        <option value="18"></option>
+        <option value="20"></option>
+    </datalist>
+    <div id=equalizer>
+    </div>
+<script>
+function byId(id) {
+    return document.getElementById(id);
+}
+function htmlToElement(html) {
+    var template = document.createElement('template');
+    html = html.trim(); // Never return a text node of whitespace as the result
+    template.innerHTML = html;
+    return template.content.firstChild;
+}
+function Equalizer(cont) {
+    this.sliders = [];
+    for (let i = 0; i < 10; i++) {
+        cont.appendChild(htmlToElement(
+            '<div class="eq-slider-cont">' + Equalizer.freqs[i] +
+            '<input type="range" id="eqSlider' + i + '" band="' + i +
+            '" min="-20" max="20" value="0" step="0.5" list="tickmarks"><div class="dblabel" id="dbLabel'+ i +
+            '">db</div></div>'));
+        let slider = byId('eqSlider' + i);
+        slider.addEventListener('input', this.onEqSlider.bind(this));
+        this.sliders.push(slider);
+    }
+}
+Equalizer.freqs = ['31', '62', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'];
+
+Equalizer.prototype.onEqSlider = function(event) {
+    let slider = event.target;
+    byId('dbLabel' + slider.getAttribute('band')).innerHTML = slider.value;
+}
+Equalizer.prototype.load = function(data) {
+    for (let i = 0; i < 10; i++) {
+        this.sliders[i].value = data[i][1];
+    }
+}
+async function init() {
+    let eq = new Equalizer(byId("equalizer"));
+    var data = [[0, 10], [1, 8], [2, 0], [3, -5], [4, -10], [5, -10], [6, -10], [7, -10], [8, 10], [9, 12]];
+    eq.load(await fetch("/eqget"));
+}
+window.onload = init;
+</script>
+</body>
+</html>
