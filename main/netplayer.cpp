@@ -22,7 +22,6 @@
 #include "bluetooth.hpp"
 #include "taskList.hpp"
 #include <st7735.hpp>
-#include <stdfonts.hpp>
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
@@ -200,11 +199,12 @@ extern "C" void app_main(void)
 //==
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
-/*
-    for(;;) {
-        lcd.sendCmd((uint8_t)0x55, (uint8_t)0xff);
-    }
-*/
+
+    lcd.setFont(Font_7x11);
+    lcd.setFgColor(0, 255, 0);
+    lcd.puts("\nTest message");
+    for (;;);
+
     player.reset(new AudioPlayer(lcd));
     player->registerUrlHanlers(gHttpServer);
     player->playlist.load((char*)std::string(gPlaylist).c_str());

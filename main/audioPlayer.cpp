@@ -1,9 +1,6 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/event_groups.h"
 #include <esp_log.h>
-#include <esp_system.h>
 #include "utils.hpp"
 #include "audioPlayer.hpp"
 #include "httpNode.hpp"

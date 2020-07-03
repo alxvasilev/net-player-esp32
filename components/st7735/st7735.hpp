@@ -7,7 +7,6 @@
 #include <initializer_list>
 #include "spi.hpp"
 #include "stdfonts.hpp"
-class Font;
 
 class ST7735Display: public SpiMaster
 {
@@ -86,7 +85,8 @@ public:
     void prepareSendPixels();
     void sendNextPixel(uint16_t pixel);
     void setOrientation(Orientation orientation);
-    void setWriteWindow(uint16_t XS, uint16_t YS, uint16_t XE, uint16_t YE);
+    void setWriteWindow(uint16_t XS, uint16_t YS, uint16_t w, uint16_t h);
+    void setWriteWindowCoords(uint16_t XS, uint16_t YS, uint16_t XE, uint16_t YE);
     void fillRect(int16_t x, int16_t y, int16_t w, int16_t h) { fillRect(x, y, w, h, mFgColor); }
     void fillRect(int16_t x0, int16_t y0, int16_t w, int16_t h, uint16_t color);
     void clear() { fillRect(0, 0, mWidth, mHeight, mBgColor); }
@@ -96,7 +96,7 @@ public:
     void vLine(uint16_t x, uint16_t y1, uint16_t y2);
     void rect(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2);
     void line(int16_t x1, int16_t y1, int16_t x2, int16_t y2);
-    void blitMonoHscan(int16_t sx, int16_t sy, int16_t w, int16_t h, const uint8_t* binData, bool bg=true);
+    void blitMonoHscan(int16_t sx, int16_t sy, int16_t w, int16_t h, const uint8_t* binData, int8_t bgSpacing=0, int scale=1);
     void blitMonoVscan(int16_t sx, int16_t sy, int16_t w, int16_t h, const uint8_t* binData, int8_t bgSpacing=0, int scale=1);
     void setFont(const Font& font, int8_t scale=1) { mFont = &font; mFontScale = scale; }
     void setFontScale(int8_t scale) { mFontScale = scale; }

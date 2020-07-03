@@ -140,18 +140,6 @@ void ST7735Display::sendData(const void* data, int size)
     spiSend(data, size);
 }
 
-/*
-IRAM_ATTR void ST7735Display::postTransferCallback(spi_transaction_t *t)
-{
-    auto task = static_cast<TaskHandle_t>(t->user);
-    BaseType_t higherPriorityTaskWoken;
-    configASSERT(task != NULL);
-    vTaskNotifyGiveFromISR(task, &higherPriorityTaskWoken);
-    if (higherPriorityTaskWoken) {
-        portYIELD_FROM_ISR();
-    }
-}
-*/
 uint16_t ST7735Display::rgb(uint8_t R, uint8_t G, uint8_t B)
 {
   // RGB565
@@ -203,7 +191,13 @@ void ST7735Display::setOrientation(Orientation orientation)
     }
 }
 
-void ST7735Display::setWriteWindow(uint16_t XS, uint16_t YS, uint16_t XE, uint16_t YE)
+void ST7735Display::setWriteWindow(uint16_t XS, uint16_t YS, uint16_t w, uint16_t h)
+{
+  sendCmd(ST77XX_CASET, (uint32_t)(htobe16(XS) | (htobe16(XS + w - 1) << 16)));
+  sendCmd(ST77XX_RASET, (uint32_t)(htobe16(YS) | (htobe16(YS + h - 1) << 16)));
+  sendCmd(ST77XX_RAMWR); // Memory write
+}
+void ST7735Display::setWriteWindowCoords(uint16_t XS, uint16_t YS, uint16_t XE, uint16_t YE)
 {
   sendCmd(ST77XX_CASET, (uint32_t)(htobe16(XS) | (htobe16(XE) << 16)));
   sendCmd(ST77XX_RASET, (uint32_t)(htobe16(YS) | (htobe16(YE) << 16)));
@@ -212,7 +206,7 @@ void ST7735Display::setWriteWindow(uint16_t XS, uint16_t YS, uint16_t XE, uint16
 
 void ST7735Display::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
 {
-    setWriteWindow(x, y, x + w - 1, y + h - 1);
+    setWriteWindow(x, y, w, h);
     // TODO: If we want to support SPI bus sharing, we must lock the bus
     // before modifying the fifo buffer
     waitDone();
@@ -230,7 +224,7 @@ void ST7735Display::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_
 
 void ST7735Display::setPixel(uint16_t x, uint16_t y, uint16_t color)
 {
-    setWriteWindow(x, y, x, y);
+    setWriteWindowCoords(x, y, x, y);
     sendData(color);
 }
 
@@ -305,19 +299,27 @@ void ST7735Display::rect(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
     vLine(x2, y1, y2);
 }
 
-void ST7735Display::blitMonoHscan(int16_t sx, int16_t sy, int16_t w, int16_t h, const uint8_t* binData, bool bg)
+void ST7735Display::blitMonoHscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
+    const uint8_t* binData, int8_t bgSpacing, int scale)
 {
-    setWriteWindow(sx, sy, sx+w-1, sy+h-1);
+    int16_t bitW = w / scale;
+    setWriteWindow(sx, sy, w + bgSpacing, h);
     prepareSendPixels();
     const uint8_t* bits = binData;
-    uint8_t mask = 0x80;
     for (int y = 0; y < h; y++) {
-        for (int x = 0; x < w; x++) {
+        uint8_t mask = 0x80;
+        int rptY = 0;
+        auto lineBits = bits;
+        for (int x = 0; x < bitW; x++) {
             auto bit = (*bits) & mask;
             if (bit) {
-                sendNextPixel(mFgColor);
-            } else if (bg) {
-                sendNextPixel(mBgColor);
+                for (int rptX = 0; rptX < scale; rptX++) {
+                    sendNextPixel(mFgColor);
+                }
+            } else {
+                for (int rptX = 0; rptX < scale; rptX++) {
+                    sendNextPixel(mBgColor);
+                }
             }
             mask >>= 1;
             if (mask == 0) {
@@ -325,16 +327,22 @@ void ST7735Display::blitMonoHscan(int16_t sx, int16_t sy, int16_t w, int16_t h, 
                 bits++;
             }
         }
+        for (int i = 0; i < bgSpacing; i++) {
+            sendNextPixel(mBgColor);
+        }
+        if (++rptY < scale) {
+            mask = 0x80;
+            bits = lineBits;
+            continue;
+        }
         if (mask != 0x80) {
             bits++;
             mask = 0x80;
         }
     }
 }
-/** @param bg if zero, no background (i.e. zero) pixels are drawn
- *  if bg > 0, this amount of columns is drawn on the right of the
- *  bitmap (for char spacing), and background pixels are drawn
- *  if bg < 0, background pixels are drawn but no bg columns on the right
+
+/** @param bgSpacing Draw this number of columns with background color to the right
  */
 void ST7735Display::blitMonoVscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
     const uint8_t* binData, int8_t bgSpacing, int scale)
@@ -349,11 +357,7 @@ void ST7735Display::blitMonoVscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
     int16_t bitH = h / scale;
     int16_t bitW = w / scale;
     int8_t byteHeight = (bitH + 7) / 8;
-    if (bgSpacing) {
-        setWriteWindow(sx, sy, sx+w-1 + bgSpacing, sy+h-1);
-    } else {
-        setWriteWindow(sx, sy, sx+w-1, sy+h-1);
-    }
+    setWriteWindow(sx, sy, w + bgSpacing, h);
     prepareSendPixels();
     int rptY = 0;
     uint8_t mask = 0x01;
@@ -372,10 +376,8 @@ void ST7735Display::blitMonoVscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
             }
             bits += byteHeight;
         }
-        if (bgSpacing) {
-            for (int rptBg = 0; rptBg < bgSpacing; rptBg++) {
-                sendNextPixel(mBgColor);
-            }
+        for (int rptBg = 0; rptBg < bgSpacing; rptBg++) {
+            sendNextPixel(mBgColor);
         }
         if (++rptY < scale) {
             continue;
@@ -404,13 +406,13 @@ bool ST7735Display::putc(uint8_t ch, uint8_t flags, uint8_t startCol)
     }
     auto height = mFont->height * mFontScale;
     int charSpc = mFont->charSpacing;
-    if (startCol) {
-        if (startCol >= width) {
+    if (startCol) { // start from specified char column
+        if (startCol >= width) { // column is beyond char width
             auto colsToDraw = startCol - width + 1;
             if (colsToDraw > charSpc) {
                 return false;
             }
-            colsToDraw *= mFontScale;
+            colsToDraw *= mFontScale; // but column is within char spacing
             fillRect(cursorX, cursorY, colsToDraw, height, mBgColor);
             cursorX += colsToDraw;
             return true;
@@ -437,7 +439,11 @@ bool ST7735Display::putc(uint8_t ch, uint8_t flags, uint8_t startCol)
             newCursorX = width + charSpc;
         }
     }
-    blitMonoVscan(cursorX, cursorY, width, height, charData, charSpc, mFontScale);
+    if (mFont->isVertScan) {
+        blitMonoVscan(cursorX, cursorY, width, height, charData, charSpc, mFontScale);
+    } else {
+        blitMonoHscan(cursorX, cursorY, width, height, charData, charSpc, mFontScale);
+    }
     cursorX = newCursorX;
     return true;
 }

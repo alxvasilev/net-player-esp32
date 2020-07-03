@@ -1,7 +1,8 @@
-#ifndef FONTS_H
-#define FONTS_H
+#ifndef STDFONTS_H
+#define STDFONTS_H
 #include "font.hpp"
-extern Font Font_5x7;
+extern Font const Font_5x7;
+extern Font const Font_7x11;
 
 /*
 extern Font Font_7x10;
