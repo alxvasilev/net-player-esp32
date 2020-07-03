@@ -499,7 +499,7 @@ HttpNode::~HttpNode()
 }
 
 HttpNode::HttpNode(size_t bufSize)
-: AudioNodeWithTask("http-node", kStackSize), mRingBuf(bufSize),
+: AudioNodeWithTask("node-http", kStackSize), mRingBuf(bufSize),
   mPrefillAmount(bufSize * 3 / 4)
 {
 }

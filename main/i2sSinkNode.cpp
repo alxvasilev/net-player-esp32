@@ -110,7 +110,7 @@ void I2sOutputNode::recalcReadTimeout(int samplerate)
 }
 
 I2sOutputNode::I2sOutputNode(int port, i2s_pin_config_t* pinCfg)
-:AudioNodeWithTask("i2s-out", kStackSize, 16), mFormat(kDefaultSamplerate, 16, 2)
+:AudioNodeWithTask("node-i2s-out", kStackSize, 16), mFormat(kDefaultSamplerate, 16, 2)
 {
     if (port == 0xff) {
         mUseInternalDac = true;

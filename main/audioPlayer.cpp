@@ -220,8 +220,8 @@ void AudioPlayer::loadSettings()
           && len == sizeof(gains)) {
             ESP_LOGI(TAG, "Loaded equalizer gains from NVS:");
             for (int i = 0; i < 10; i++) {
-                ESP_LOGI("band", "%d Hz -> %.1f", equalizerFreqs[i], (float)gains[i] / 5);
-                mEqualizer->setBandGain(i, (float)gains[i] / 5);
+                ESP_LOGI("band", "%d Hz -> %.1f", equalizerFreqs[i], (float)gains[i] / kEqGainPrecisionDiv);
+                mEqualizer->setBandGain(i, (float)gains[i] / kEqGainPrecisionDiv);
             }
         }
     }
@@ -408,7 +408,7 @@ bool AudioPlayer::equalizerSetGainsBulk(char* str, size_t len)
             ok = false;
             continue;
         }
-        ESP_LOGI(TAG, "Setting band %d gain %f", band, gain);
+        ESP_LOGI(TAG, "Setting band %d gain %.1f", band, gain);
         equalizerDoSetBandGain(band, gain);
     }
     equalizerSaveGains();
