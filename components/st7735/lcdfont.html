@@ -6,7 +6,10 @@
     float: left;
     vertical-align: top;
 }
-html, body { height: 100%; }
+html, body {
+    height: 100%;
+    margin: 0
+}
 
 #typingArea {
     flex: 0 0 auto;
@@ -22,19 +25,8 @@ html, body { height: 100%; }
  overflow: hidden;
 }
 
-#glyphs {
-    flex: 1 1 auto;
-    display: flex;
-    flex-flow: row;
-    flex-wrap: wrap;
-    align-self: stretch;
-    overflow: auto;
-}
-#spacer {
-    flex: 0 0 10px;
-}
 .glyph {
-    flex: 0 0 auto;
+    float: left;
     border: 1px solid #eeeeee;
     margin: 4px;
 }
@@ -46,34 +38,30 @@ html, body { height: 100%; }
 .openCaption {
     text-align: center;
     font-size: 44px;
-    flex: 0 0 auto;
     padding-top: 15px;
     padding-bottom: 20px;
     border-bottom: 1px solid #eeeeee;
 }
 
 .openBtnPanel {
-    flex: 0 0 auto;
-    display: flex;
-    flex-flow: row;
+    width: 100%;
 }
 
-.openModeSection {
-    flex: 1 1 50%;
-    flex-flow: column;
-    justify-content: space-around;
+.openBtnPanel td {
+    width:20%;
+    text-align: center;
+    margin: 10px;
 }
 
 .openBtn {
-    flex: 0 0 auto;
-    flex-flow: row;
-    align-self: center;
+    float: left;
     text-align: center;
     border-radius: 8px;
     border: 2px solid #eeeeee;
-    padding: 10px;
+    margin: 0;
     cursor: hand;
     font-size: 20px;
+    width: 98%;
 }
 .openBtn:hover {
     background: lightblue;
@@ -83,6 +71,10 @@ html, body { height: 100%; }
     align-self: center;
     display: flex;
     flex-flow: column;
+}
+#guiNewFont input {
+    width: 70px;
+    margin-right: 20px;
 }
 .fontSelect {
     flex: 0 0 auto;
@@ -110,47 +102,62 @@ html, body { height: 100%; }
 <body id=page>
     <div id=guiLoad>
         <div class=openCaption>Load font:</div>
-        <div style='flex: 0 0 10%'></div>
-        <table width=100%>
+        <table class=openBtnPanel>
           <tr>
-            <td style='width:50%'>
+            <td>
               <label class=openBtn>
                 <span>Local file...</span>
-                <input type=file style='visibility:hidden;' onchange='loadLocalFile(event);' />
-              </label></td>
-            <td style='width:50%'>
-              <div class=openBtn onclick='fontSelectGui();'>Capture</div>
+                <input type=file style='display:none;' onchange='loadLocalFile(event);' />
+              </label>
             </td>
-          </tr>
-          <tr>
-            <td><div></div>
-            <td><div id=captureOptions class=openOptions></div>
+            <td>
+                <label class=openBtn>
+                    <span onclick="showGui(guiNewFont)">New font...</span>
+                </label>
+            </td>
+            <td>
+                <div class=openBtn onclick='fontSelectGui();'>Capture</div>
+            </td>
           </tr>
         </table>
     </div>
     <div id = guiCaptureOptions  style="display:none;">
         <table width=100% style='table-layout:fixed'>
-          <tr>
-            <td id=localFont width=50% class=borderBottomRight></td>
-            <td id=remoteFont width=50% class=borderBottomRight></td>
-          </tr>
-          <tr><td colspan=2>
-            <table width=100%>
-              <tr>
-                <td>
-                  <canvas id=capture style='border: 1px solid #0000ff;width:200; height: 200; align-self: center'>
-                  </canvas>
-                </td>
-                <td id=glyph></td>
-                <td width=33% style='word-wrap:break-word' id=chars></td>
-              </tr>
-            </table>
-          </td></tr>
+            <tr>
+              <td id=localFont width=50% class=borderBottomRight></td>
+              <td id=remoteFont width=50% class=borderBottomRight></td>
+            </tr>
+            <tr><td colspan=2>
+              <table width=100%>
+                <tr>
+                  <td>
+                    <canvas id=capture style='border: 1px solid #0000ff;width:200; height: 200; align-self: center'>
+                    </canvas>
+                  </td>
+                  <td id=glyph></td>
+                  <td width=33% style='word-wrap:break-word' id=chars></td>
+                </tr>
+              </table>
+            </td></tr>
         </table>
     </div>
+    <div id=guiNewFont style="display:none">
+        <h1 style="text-align: center;">New font parameters:</h1>
+        <br />
+        Font width:
+            <input type="number" id="fontWidth"></input>
+        Font height:
+            <input type="number" id="fontHeight"></input>
+        Number of glyphs:
+        <input type="number" id="numGlyphs"></input>
+        <button onclick = startWithNewFont();> Go </button>
+    </div>
 
-    <div id=guiEditor style="height: 100%; display:none;">
-        <div id=menu>editor menu</div>
+    <div id=guiEditor style="height: 90%; display:none;">
+        <table id=menu><tr>
+            <td><button onclick = "saveAsVScan()">Save as vScan</button><td>
+            <td><button onclick = "saveAsHScan()">Save as hScan</button><td>
+        </tr></table>
         <table style="height: 100%"><tr>
           <td style="vertical-align: top; width: 20%">
             <table id=editorGroup>
@@ -174,6 +181,7 @@ function byId(id) {
 var guiLoad = byId('guiLoad');
 var guiCaptureOptions = byId('guiCaptureOptions');
 var guiEditor = byId('guiEditor');
+var guiNewFont = byId('guiNewFont');
 
 const kColorFg = "black";
 const kColorBg = "white";
@@ -184,6 +192,7 @@ var gConfig = {
     spaceWidth: 1,
     targetFontHeight: 10
 }
+var gFont = null; // currently loaded glyph models
 
 function showGui(gui)
 {
@@ -193,8 +202,11 @@ function showGui(gui)
     if (gui !== guiLoad) {
         guiLoad.style.display = "none";
     }
-    if (gui != guiCaptureOptions) {
+    if (gui !== guiCaptureOptions) {
         guiCaptureOptions.style.display = "none";
+    }
+    if (gui !== guiNewFont) {
+        guiNewFont.style.display = "none";
     }
     gui.style.display = "block";
 }
@@ -209,7 +221,7 @@ function loadConfig() {
         }
     }
 }
-var gMonospaceFont = false;
+
 function GlyphModel(w, h, ch)
 {
     this.width = w;
@@ -474,7 +486,7 @@ gvProto.ctxMenu = function(event) {
     gCtxMenu.style.top = event.pageY + "px";
     gCtxMenu.style.left = event.pageX + "px";
     var html = '<table>';
-    if (!gMonospaceFont) {
+    if (!gFont.isMonospace) {
         html+=
            '<tr><td id=ctxDelCol>Delete column</td></tr>\
             <tr><td id=ctxInsertColLeft>Insert Column on Left</td></tr>\
@@ -486,10 +498,10 @@ gvProto.ctxMenu = function(event) {
     m.innerHTML = html;
 
     m.querySelector("#ctxClearGlyph").onclick = function(event) {
-        self.clear();
+        self.model.clear();
     };
 
-    if (!gMonospaceFont) {
+    if (!gFont.isMonospace) {
         m.querySelector("#ctxDelCol").onclick = function(event) {
             if (self.model.width <= 1)
                 return;
@@ -582,12 +594,25 @@ gmProto.undo = function() {
     return true;
 }
 
-var lcdLetters = [];
+function Font(w, h, models, notMonoSpace) {
+    this.models = models;
+    this.width = w;
+    this.height = h;
+    this.isMonospace = !notMonoSpace;
+};
+
+Font.prototype.firstCharCode = function() {
+    return this.models[0].char.charCodeAt(0);
+};
+Font.prototype.lastCharCode = function() {
+    return this.models[this.models.length-1].char.charCodeAt(0);
+};
+
 var gEditor = null;
 
-function loadEditor(models) {
+function loadEditor() {
     showGui(guiEditor);
-
+    let models = gFont.models;
     glyphCont = document.getElementById('glyphs');
     var glyphCount = models.length;
     var editorCont = document.getElementById('editor');
@@ -778,7 +803,8 @@ function parseFontCSource(contents)
             models.push(loadModelFromSourceLineHScan(bytes, models.length, width, height));
         }
     }
-    loadEditor(models);
+    gFont = new Font(width, height, models);
+    loadEditor();
 }
 
 function loadModelFromSourceLineVScan(bytes, lineNo, width, height)
@@ -823,14 +849,95 @@ function loadModelFromSourceLineHScan(bytes, lineNo, width, height) {
     }
     return model;
 }
+function byteToHex(byte) {
+    if (byte < 0x10) {
+        return "0x0" + byte.toString(16);
+    } else {
+        return "0x" + byte.toString(16);
+    }
+}
+
+function saveAsVScan() {
+    let src = "/*\n  Vertical-scan bitmap data for " + gFont.width + "x" + gFont.height + " font\n" +
+        "  Defines ASCII characters from " + gFont.firstCharCode() + " to " + gFont.lastCharCode() + "\n" +
+        "  Generated with lcdfont utility by Alexander Vassilev\n*/\n\nstatic const unsigned char Font" +
+        gFont.width + "x" + gFont.height + "_data[] = {";
+    let byteHeight = (gFont.height + 7) / 8;
+    let lastModel = gFont.models[gFont.models.length-1];
+    for (let model of gFont.models) {
+        src += "\n";
+        for (let col = 0; col < model.width; col++) {
+            let byte = 0;
+            let shift = 0;
+            let row;
+            for (row = 0; row < model.height; row++) {
+                byte |= model.rows[row][col] << shift;
+                if (++shift > 7) {
+                    shift = 0;
+                    if (col > 0 || row > 7) {
+                        src += " ";
+                    } else {
+                        src += "    ";
+                    }
+                    src += byteToHex(byte) + ",";
+                }
+            }
+            if (shift > 0) { // we have uncommitted byte
+                if (col > 0 || row > 7) {
+                        src += " ";
+                } else {
+                    src += "    ";
+                }
+                src += byteToHex(byte) + ",";
+            }
+        }
+        if (model === lastModel) {
+            src = src.slice(0, -1);
+            src += " ";
+        }
+        src += " // " + ((model.char === "\\") ? "\\\\" : model.char);
+    }
+    src += "\n};\n";
+    let fname = "font" + gFont.width + "x" + gFont.height +".c";
+    let file = new File([src], fname,  {type: 'text/plain'});
+    let url = URL.createObjectURL(file);
+    let link = document.createElement('a');
+    link.href = url;
+    link.setAttribute("download", fname);
+    link._target = "blank";
+    link.click();
+}
+
+function saveAsHScan() {
+    alert("Not implemented");
+}
+
+function startWithNewFont() {
+    let width = byId("fontWidth").value;
+    if (!width) {
+        alert("Incorrect font width");
+        return;
+    }
+    let height = byId("fontHeight").value;
+    if (!height) {
+        alert("Incorrect font height");
+        return;
+    }
+
+    let numGlyphs = byId("numGlyphs").value;
+    if (!numGlyphs) {
+        alert("Incorrect number of glyphs");
+        return;
+    }
+}
 //var canvas = document.getElementById('capture');
 //var glyph = document.getElementById('glyph');
 function captureFont(font)
 {
     var cap = new FontCapturer(font, gConfig.targetFontHeight,
         document.getElementById('capture'));
-    var models = cap.capture();
-    loadEditor(models);
+    gFont = cap.capture();
+    loadEditor();
 }
 
 function FontCapturer(font, height, canvas)
@@ -861,7 +968,7 @@ capProto.capture = function()
     for (var ch=32; ch < 127; ch++) {
         models.push(this.captureGlyph(String.fromCharCode(ch)));
     };
-    return models;
+    return new Font(models[0].width, models[0].heigh, models, true);
 }
 
 capProto.clearCanvas = function() {
