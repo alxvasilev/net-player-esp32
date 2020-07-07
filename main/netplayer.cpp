@@ -199,12 +199,14 @@ extern "C" void app_main(void)
 //==
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
-
+/*
     lcd.setFont(Font_7x11);
+    lcd.gotoXY(10, 70);
     lcd.setFgColor(0, 255, 0);
-    lcd.puts("\nTest message");
+    //lcd.puts("\nTest message");
+    lcd.putc('s');
     for (;;);
-
+*/
     player.reset(new AudioPlayer(lcd));
     player->registerUrlHanlers(gHttpServer);
     player->playlist.load((char*)std::string(gPlaylist).c_str());

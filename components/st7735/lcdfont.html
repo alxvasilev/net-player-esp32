@@ -871,15 +871,16 @@ function saveAsVScan() {
             let shift = 0;
             let row;
             for (row = 0; row < model.height; row++) {
-                byte |= model.rows[row][col] << shift;
+                byte |= ((model.rows[row][col]) ? 1 : 0) << shift;
                 if (++shift > 7) {
-                    shift = 0;
                     if (col > 0 || row > 7) {
                         src += " ";
                     } else {
                         src += "    ";
                     }
                     src += byteToHex(byte) + ",";
+                    shift = 0;
+                    byte = 0;
                 }
             }
             if (shift > 0) { // we have uncommitted byte
@@ -895,7 +896,11 @@ function saveAsVScan() {
             src = src.slice(0, -1);
             src += " ";
         }
-        src += " // " + ((model.char === "\\") ? "\\\\" : model.char);
+        if (model.char === "\\") {
+            src += "// (backslash)";
+        } else {
+            src += "// " + model.char;
+        }
     }
     src += "\n};\n";
     let fname = "font" + gFont.width + "x" + gFont.height +".c";

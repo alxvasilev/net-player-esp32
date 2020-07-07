@@ -160,6 +160,7 @@ void AudioPlayer::lcdUpdateModeInfo()
 
 void AudioPlayer::lcdUpdatePlayState()
 {
+    mLcd.setFont(Font_5x7, 2);
     mLcd.setFgColor(255, 255, 128);
     mLcd.gotoXY(mLcd.charWidth() + 1, 0);
     if (isPlaying()) {
@@ -665,7 +666,7 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int size)
 
 void AudioPlayer::lcdSetupForTrackTitle()
 {
-    mLcd.setFont(Font_5x7, 2);
+    mLcd.setFont(Font_7x11, 2);
     mLcd.setFgColor(255, 255, 128);
     mLcd.gotoXY(0, (mLcd.height() - mLcd.charHeight()) / 2);
 }

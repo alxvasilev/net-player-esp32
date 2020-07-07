@@ -307,7 +307,7 @@ void ST7735Display::blitMonoHscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
     prepareSendPixels();
     const uint8_t* bits = binData;
     for (int y = 0; y < h; y++) {
-        uint8_t mask = 0x80;
+        uint8_t mask = 0x01;
         int rptY = 0;
         auto lineBits = bits;
         for (int x = 0; x < bitW; x++) {
@@ -321,9 +321,9 @@ void ST7735Display::blitMonoHscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
                     sendNextPixel(mBgColor);
                 }
             }
-            mask >>= 1;
+            mask <<= 1;
             if (mask == 0) {
-                mask = 0x80;
+                mask = 0x01;
                 bits++;
             }
         }
@@ -331,13 +331,11 @@ void ST7735Display::blitMonoHscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
             sendNextPixel(mBgColor);
         }
         if (++rptY < scale) {
-            mask = 0x80;
             bits = lineBits;
             continue;
         }
-        if (mask != 0x80) {
+        if (mask != 0x01) {
             bits++;
-            mask = 0x80;
         }
     }
 }
