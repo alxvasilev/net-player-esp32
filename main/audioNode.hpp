@@ -113,8 +113,8 @@ public:
         kTypeEncoder,
         kTypeEqualizer,
         kTypeI2sOut,
-        kTypeHttpOut,
-        kTypeA2dpOut
+        kTypeA2dpOut,
+        kTypeSpdifIn
     };
     struct EventHandler
     {

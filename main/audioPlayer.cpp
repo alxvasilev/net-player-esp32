@@ -5,6 +5,7 @@
 #include "audioPlayer.hpp"
 #include "httpNode.hpp"
 #include "i2sSinkNode.hpp"
+#include "spdif.hpp"
 #include "decoderNode.hpp"
 #include "equalizerNode.hpp"
 #include "a2dpInputNode.hpp"
@@ -106,6 +107,11 @@ void AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         break;
     case AudioNode::kTypeA2dpIn:
         mStreamIn.reset(new A2dpInputNode("NetPlayer"));
+        mDecoder.reset();
+        pcmSource = mStreamIn.get();
+        break;
+    case AudioNode::kTypeSpdifIn:
+        mStreamIn.reset(new SpdifInputNode(GPIO_NUM_35));
         mDecoder.reset();
         pcmSource = mStreamIn.get();
         break;
@@ -476,13 +482,16 @@ esp_err_t AudioPlayer::pauseUrlHandler(httpd_req_t *req)
 }
 
 void AudioPlayer::registerHttpGetHandler(httpd_handle_t server,
-    const char* path, esp_err_t(*handler)(httpd_req_t*))
+    const char* path, esp_err_t(*handler)(httpd_req_t*), bool isWebsocket)
 {
     httpd_uri_t desc = {
         .uri       = path,
         .method    = HTTP_GET,
         .handler   = handler,
-        .user_ctx  = this
+        .user_ctx  = this,
+#ifdef  CONFIG_HTTPD_WS_SUPPORT
+        .is_websocket = isWebsocket
+#endif
     };
     httpd_register_uri_handler(server, &desc);
 }
@@ -601,7 +610,7 @@ esp_err_t AudioPlayer::getStatusUrlHandler(httpd_req_t* req)
     return ESP_OK;
 }
 
-void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
+void AudioPlayer::registerUrlHandlers(httpd_handle_t server)
 {
     registerHttpGetHandler(server, "/play", &playUrlHandler);
     registerHttpGetHandler(server, "/pause", &pauseUrlHandler);
@@ -609,6 +618,7 @@ void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
     registerHttpGetHandler(server, "/eqget", &equalizerDumpUrlHandler);
     registerHttpGetHandler(server, "/eqset", &equalizerSetUrlHandler);
     registerHttpGetHandler(server, "/status", &getStatusUrlHandler);
+//    registerHttpGetHandler(server, "/ws", &wsUrlHandler);
 }
 
 bool AudioPlayer::onEvent(AudioNode *self, uint32_t event, void *buf, size_t bufSize)

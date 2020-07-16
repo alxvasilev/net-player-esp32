@@ -87,8 +87,9 @@ protected:
     static esp_err_t equalizerSetUrlHandler(httpd_req_t *req);
     static esp_err_t equalizerDumpUrlHandler(httpd_req_t *req);
     static esp_err_t getStatusUrlHandler(httpd_req_t *req);
+    static esp_err_t websocketHandler(httpd_req_t *req);
     void registerHttpGetHandler(httpd_handle_t server,
-        const char* path, esp_err_t(*handler)(httpd_req_t*));
+        const char* path, esp_err_t(*handler)(httpd_req_t*), bool isWebsocket=false);
 public:
     static constexpr const char* const TAG = "AudioPlayer";
     static const uint16_t equalizerFreqs[10];
@@ -116,7 +117,7 @@ public:
     bool equalizerSetBand(int band, float dbGain);
     // format is: bandIdx1=gain1;bandIdx2=gain2....
     bool equalizerSetGainsBulk(char* str, size_t len);
-    void registerUrlHanlers(httpd_handle_t server);
+    void registerUrlHandlers(httpd_handle_t server);
     // AudioNode::EventHandler interface
     virtual bool onEvent(AudioNode *self, uint32_t type, void *buf, size_t bufSize) override;
 };

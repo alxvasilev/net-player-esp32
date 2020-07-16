@@ -9,6 +9,7 @@
 #include <esp_system.h>
 #include <esp_http_server.h>
 #include <esp_spiffs.h>
+#include <hal/spi_types.h>
 #include <sys/param.h>
 #include <string>
 #include <algorithm> // for sorting task list
@@ -208,7 +209,7 @@ extern "C" void app_main(void)
     for (;;);
 */
     player.reset(new AudioPlayer(lcd));
-    player->registerUrlHanlers(gHttpServer);
+    player->registerUrlHandlers(gHttpServer);
     player->playlist.load((char*)std::string(gPlaylist).c_str());
     otaNotifyCallback = []() {
         player->stop();
@@ -219,8 +220,7 @@ extern "C" void app_main(void)
         BluetoothStack::disableCompletely();
         ESP_LOGW(TAG, "Releasing Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
         player->playUrl("https://mediaserv38.live-streams.nl:18030/stream");
-    } else if (player->inputType() == AudioNode::kTypeA2dpIn) {
-        ESP_LOGI(TAG, "Player input set to Bluetooth A2DP sink");
+    } else {
         player->play();
     }
     ESP_LOGI(TAG, "player started");
@@ -286,11 +286,16 @@ static esp_err_t changeInputUrlHandler(httpd_req_t *req)
             player->changeInput(AudioNode::kTypeHttpIn);
             httpd_resp_sendstr(req, "Switched to HTTP client");
             return ESP_OK;
+        case 's':
+            player->changeInput(AudioNode::kTypeSpdifIn);
+            httpd_resp_sendstr(req, "Switched to SPDIF input");
+            return ESP_OK;
         default:
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid mode param");
             return ESP_OK;
     }
 }
+
 static const httpd_uri_t changeInputUrl = {
     .uri       = "/inmode",
     .method    = HTTP_GET,
