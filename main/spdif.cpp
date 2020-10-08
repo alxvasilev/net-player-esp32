@@ -9,21 +9,32 @@
 #include <esp_timer.h>
 #include "utils.hpp"
 
+void delayCycles(uint32_t num)
+{
+    auto startCnt = xthal_get_ccount();
+    auto target = startCnt + num;
+    if (target < startCnt) {
+        while (xthal_get_ccount() > target);
+    }
+    while(xthal_get_ccount() < target);
+}
+
+//#pragma GCC push_options
+//#pragma GCC optimize ("O0")
 void gpioOutTask(void* arg) {
-    const gpio_num_t pin = GPIO_NUM_2;
-    gpio_pad_select_gpio(pin);
-    gpio_set_direction(pin, GPIO_MODE_OUTPUT);
-    for (;;) {
+    GpioPinStatic<GPIO_NUM_2> pin;
+    pin.configAsOutput();
+    for(int j = 0;; j++) {
         for(int i = 0; i < 10; i++) {
-            gpio_set_level(pin, 1);
-            //for (int i= 0; i<10; i++);
-            gpio_set_level(pin, 0);
-            //for (int i= 0; i<100; i++);
+            pin.set();
+            if (j & 1) delayCycles(10);
+            pin.clear();
+            if (j & 1) delayCycles(10);
         }
-        usDelay(10);
+        usDelay(1);
     }
 }
-//#define TEST
+//#pragma GCC pop_options
 
 RmtRx::RmtRx(gpio_num_t inputPin)
 : mChan0(0), mInputPin(inputPin), mChan1(4)
@@ -44,7 +55,7 @@ void RmtRx::pcntInit()
     pcnt_config_t cfg;
     memset(&cfg, 0, sizeof(cfg));
     // Set PCNT input signal and control GPIOs
-    cfg.pulse_gpio_num = mInputPin;
+    cfg.pulse_gpio_num = mInputPin.pinNum();
     cfg.ctrl_gpio_num = -1;
     cfg.unit = PCNT_UNIT_0;
     cfg.channel = PCNT_CHANNEL_0;
@@ -62,21 +73,23 @@ void RmtRx::pcntInit()
 }
 
 void RmtRx::start() {
-    assert(mActiveChanNo < 0);
-    mActiveChanNo = 0;
+    assert(!mActiveChannel);
+    mActiveChannel = &mChan0;
     mIsFirstBatch = true;
     mChan0.setMemOwner(RMT_MEM_OWNER_SW);
     mChan0.zeroFifo();
-    pcnt_counter_clear(PCNT_UNIT_0);
+    mChan0.resetRxPointer();
+    mChan0.setMemOwner(RMT_MEM_OWNER_HW);
+
+    pcntReset();
     pcnt_counter_resume(PCNT_UNIT_0);
-    mChan0.start();
+
+    mChan0.enable();
 }
 
-int16_t RmtRx::pcntCurrPulseCount()
+uint16_t RmtRx::pcntCurrPulseCount()
 {
-    int16_t pulseCnt;
-    pcnt_get_counter_value(PCNT_UNIT_0, &pulseCnt);
-    return pulseCnt;
+    return PCNT.cnt_unit[0].cnt_val;
 }
 
 void RmtRx::pcntReset()
@@ -86,36 +99,32 @@ void RmtRx::pcntReset()
 
 volatile rmt_item32_t* RmtRx::getPulses()
 {
-    assert(mActiveChanNo >= 0);
-
-    RmtRxChannel* active;
-    RmtRxChannel* other;
-    if (mActiveChanNo == 0) {
-        active = &mChan0;
-        other = &mChan1;
-    } else {
-        active = &mChan1;
-        other = &mChan0;
-    }
+    RmtRxChannel* other = (mActiveChannel == &mChan0) ? &mChan1 : &mChan0;
     other->zeroFifo();
+    other->resetRxPointer();
+    other->setMemOwner(RMT_MEM_OWNER_HW);
 
     // wait for at least this amount of pulses
     if (pcntCurrPulseCount() > kMaxPulsesPerBatch) {
         ESP_LOGI("RMT", "Too late with %d pulses", pcntCurrPulseCount() - kMaxPulsesPerBatch);
     }
+
     while(pcntCurrPulseCount() < kMaxPulsesPerBatch);
 
-    // stop on capture transition from 1 to 0
-    while(gpio_get_level(mInputPin) != 1);
-    while(gpio_get_level(mInputPin) != 0);
+    // stop capture on transition from 1 to 0
+    while(mInputPin.read() == 0);
+    while(mInputPin.read());
 
-    other->start();
-    active->stop();
+    portDISABLE_INTERRUPTS();
+    other->enable();
+    mActiveChannel->disable();
     pcntReset();
+    portENABLE_INTERRUPTS();
 
-    active->setMemOwner(false);
-    mActiveChanNo = other->chanNo();
-    return active->memory();
+    mActiveChannel->setMemOwner(RMT_MEM_OWNER_SW);
+    auto ret = mActiveChannel->memory();
+    mActiveChannel = other;
+    return ret;
 }
 
 void RmtRxChannel::init(gpio_num_t pin, bool initPinGpio)
@@ -173,27 +182,30 @@ SpdifInputNode::SpdifInputNode(gpio_num_t inputPin)
 void SpdifInputNode::nodeThreadFunc()
 {
     ESP_LOGW("SPDIF", "Started SPDIF node");
-    rmt_item32_t pulses1[10];
-    rmt_item32_t pulses2[10];
+    const int kCount = 25;
+    rmt_item32_t pulses1[kCount];
+    rmt_item32_t pulses2[kCount];
     mRmtRx.start();
     for (;;) {
         auto pulses = mRmtRx.getPulses();
-
         memcpy((void*)&pulses1, (uint8_t*)pulses+1024-sizeof(pulses1), sizeof(pulses1));
         pulses = mRmtRx.getPulses();
         memcpy(&pulses2, (void*)pulses, sizeof(pulses2));
-
+        int p = 1;
+/*
         ESP_LOGI("", "Batch0");
-        for (int i = 0, p = 0; i<10; i++) {
+        for (int i = 0; i<kCount; i++) {
             ESP_LOGI("", "[%d] %d: %d", p++, pulses1[i].level0, pulses1[i].duration0);
             ESP_LOGI("", "[%d] %d: %d", p++, pulses1[i].level1, pulses1[i].duration1);
         }
+*/
         ESP_LOGI("", "Batch1");
-        for (int i = 0, p = 0; i<10; i++) {
+        for (int i = 0; i<kCount; i++) {
             ESP_LOGI("", "[%d] %d: %d", p++, pulses2[i].level0, pulses2[i].duration0);
             ESP_LOGI("", "[%d] %d: %d", p++, pulses2[i].level1, pulses2[i].duration1);
         }
     }
+
     /*
     rmt_rx_start(mRxChan, true);
 
