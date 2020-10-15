@@ -68,7 +68,11 @@ void AudioPlayer::initFromNvs()
         mFlags = (Flags)(mFlags | kFlagUseEqualizer);
     }
     AudioNode::Type inType = (AudioNode::Type)mNvsHandle.readDefault<uint8_t>("inType", AudioNode::kTypeHttpIn);
-    createPipeline(inType, AudioNode::kTypeI2sOut);
+    bool ok = createPipeline(inType, AudioNode::kTypeI2sOut);
+    if (!ok) {
+        ESP_LOGE(TAG, "Failed to create audio pipeline");
+        myassert(false);
+    }
 }
 
 void AudioPlayer::lcdInit()
@@ -90,7 +94,7 @@ void AudioPlayer::initTimedDrawTask()
     mVolumeInterface->setLevelCallback(audioLevelCb, this);
 }
 
-void AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType)
+bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType)
 {
     ESP_LOGI(TAG, "Creating audio pipeline");
     AudioNode* pcmSource = nullptr;
@@ -110,7 +114,8 @@ void AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         pcmSource = mStreamIn.get();
         break;
     default:
-        myassert(false);
+        ESP_LOGE(TAG, "Unknown pipeline input node type %d", inType);
+        return false;
     }
     if (mFlags & kFlagUseEqualizer) {
         mEqualizer.reset(new EqualizerNode(mEqGains));
@@ -125,7 +130,7 @@ void AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         cfg.data_out_num = 13;
         cfg.data_in_num = -1;
 
-        mStreamOut.reset(new I2sOutputNode(0, &cfg)); //(0xff, nullptr));
+        mStreamOut.reset(new I2sOutputNode(0, &cfg));
         break;
     /*
     case kOutputA2dp:
@@ -133,13 +138,15 @@ void AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         break;
     */
     default:
-        myassert(false);
+        ESP_LOGE(TAG, "Unknown pipeline output node type %d", outType);
+        return false;
     }
     mStreamOut->linkToPrev(pcmSource);
     detectVolumeNode();
     ESP_LOGI(TAG, "Audio pipeline:\n%s", printPipeline().c_str());
     loadSettings();
     lcdUpdateModeInfo();
+    return true;
 }
 
 void AudioPlayer::lcdUpdateModeInfo()
@@ -196,8 +203,9 @@ std::string AudioPlayer::printPipeline()
 
 void AudioPlayer::changeInput(AudioNode::Type inType)
 {
-    myassert(mStreamIn);
-    if (inType == mStreamIn->type()) {
+    mNvsHandle.write("inType", (uint8_t)inType);
+    if (mStreamIn && inType == mStreamIn->type()) {
+        ESP_LOGW(TAG, "AudioPlayer::changeInput: Input type is already %d", inType);
         return;
     }
     destroyPipeline();
@@ -666,7 +674,7 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int size)
 
 void AudioPlayer::lcdSetupForTrackTitle()
 {
-    mLcd.setFont(Font_7x11, 2);
+    mLcd.setFont(Font_5x7, 2);
     mLcd.setFgColor(255, 255, 128);
     mLcd.gotoXY(0, (mLcd.height() - mLcd.charHeight()) / 2);
 }

@@ -2,6 +2,7 @@
 #include "freertos/FreeRTOS.h"
 #include <esp_log.h>
 #include <driver/gpio.h>
+#include <driver/spi_common.h>
 #include <esp_wifi.h>
 #include <nvs_flash.h>
 #include <esp_ota_ops.h>
@@ -199,14 +200,6 @@ extern "C" void app_main(void)
 //==
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
-/*
-    lcd.setFont(Font_7x11);
-    lcd.gotoXY(10, 70);
-    lcd.setFgColor(0, 255, 0);
-    //lcd.puts("\nTest message");
-    lcd.putc('s');
-    for (;;);
-*/
     player.reset(new AudioPlayer(lcd));
     player->registerUrlHanlers(gHttpServer);
     player->playlist.load((char*)std::string(gPlaylist).c_str());
@@ -281,15 +274,17 @@ static esp_err_t changeInputUrlHandler(httpd_req_t *req)
         case 'b':
             player->changeInput(AudioNode::kTypeA2dpIn);
             httpd_resp_sendstr(req, "Switched to Bluetooth A2DP sink");
-            return ESP_OK;
+            break;
         case 'h':
             player->changeInput(AudioNode::kTypeHttpIn);
             httpd_resp_sendstr(req, "Switched to HTTP client");
-            return ESP_OK;
+            break;
         default:
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid mode param");
             return ESP_OK;
     }
+    ESP_LOGI(TAG, "Changed input node to type %d", player->nvs().readDefault<uint8_t>("inType", AudioNode::kTypeHttpIn));
+    return ESP_OK;
 }
 static const httpd_uri_t changeInputUrl = {
     .uri       = "/inmode",

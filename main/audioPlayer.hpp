@@ -64,7 +64,7 @@ protected:
     void createInputA2dp();
     void createOutputA2dp();
 //==
-    void createPipeline(AudioNode::Type inType, AudioNode::Type outType);
+    bool createPipeline(AudioNode::Type inType, AudioNode::Type outType);
     void destroyPipeline();
     void detectVolumeNode();
     std::string printPipeline();
@@ -100,6 +100,7 @@ public:
     ~AudioPlayer();
     AudioNode::Type inputType() const { return mStreamIn->type(); }
     AudioNode::Type outputType() const { return mStreamOut->type(); }
+    NvsHandle& nvs() { return mNvsHandle; }
     void changeInput(AudioNode::Type inType);
     void playUrl(const char* url);
     bool isStopped() const;
