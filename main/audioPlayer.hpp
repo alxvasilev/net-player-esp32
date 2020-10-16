@@ -29,13 +29,13 @@ protected:
            kVuPeakHoldTime = 30, kVuPeakDropTime = 2
     };
     enum { kEqGainPrecisionDiv = 2 };
+    static const float sDefaultEqGains[];
     Flags mFlags;
     std::unique_ptr<AudioNodeWithState> mStreamIn;
     std::unique_ptr<DecoderNode> mDecoder;
     std::unique_ptr<EqualizerNode> mEqualizer;
     std::unique_ptr<AudioNodeWithTask> mStreamOut;
     IAudioVolume* mVolumeInterface = nullptr;
-    static const float mEqGains[];
     NvsHandle mNvsHandle;
     ST7735Display& mLcd;
     EventGroup mEvents;
@@ -91,7 +91,6 @@ protected:
         const char* path, esp_err_t(*handler)(httpd_req_t*));
 public:
     static constexpr const char* const TAG = "AudioPlayer";
-    static const uint16_t equalizerFreqs[10];
     Mutex mutex;
     Playlist playlist;
     void setLogLevel(esp_log_level_t level) { esp_log_level_set(TAG, level); }

@@ -6,8 +6,10 @@
 
 class EqualizerNode: public AudioNode, public DefaultVolumeImpl
 {
-protected:
+public:
     enum: uint8_t { kBandCount = 10 };
+    static const uint16_t bandFreqs[kBandCount];
+protected:
     Mutex mMutex;
     StreamFormat mFormat;
     int mSampleRate = 0; // cached from mFormat, for performance

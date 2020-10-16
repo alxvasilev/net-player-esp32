@@ -1,6 +1,10 @@
 #include "equalizerNode.hpp"
 #include <esp_equalizer.h>
 
+const uint16_t EqualizerNode::bandFreqs[kBandCount] = {
+    31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000
+};
+
 EqualizerNode::EqualizerNode(const float *gains)
 : AudioNode("equalizer")
 {

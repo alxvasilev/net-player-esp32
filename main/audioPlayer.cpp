@@ -10,15 +10,11 @@
 #include "a2dpInputNode.hpp"
 #include <stdfonts.hpp>
 
-constexpr float AudioPlayer::mEqGains[] = {
+#define LOCK_PLAYER() MutexLocker locker(mutex)
+
+const float AudioPlayer::sDefaultEqGains[EqualizerNode::kBandCount] = {
     8, 8, 4, 0, -2, -4, -4, -2, 4, 6
 };
-
-const uint16_t AudioPlayer::equalizerFreqs[10] = {
-    31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000
-};
-
-#define LOCK_PLAYER() MutexLocker locker(mutex)
 
 void AudioPlayer::createOutputA2dp()
 {
@@ -118,7 +114,7 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         return false;
     }
     if (mFlags & kFlagUseEqualizer) {
-        mEqualizer.reset(new EqualizerNode(mEqGains));
+        mEqualizer.reset(new EqualizerNode(sDefaultEqGains));
         mEqualizer->linkToPrev(pcmSource);
         pcmSource = mEqualizer.get();
     }
@@ -226,7 +222,7 @@ void AudioPlayer::loadSettings()
           && len == sizeof(gains)) {
             ESP_LOGI(TAG, "Loaded equalizer gains from NVS:");
             for (int i = 0; i < 10; i++) {
-                ESP_LOGI("band", "%d Hz -> %.1f", equalizerFreqs[i], (float)gains[i] / kEqGainPrecisionDiv);
+                ESP_LOGI("band", "%d Hz -> %.1f", mEqualizer->bandFreqs[i], (float)gains[i] / kEqGainPrecisionDiv);
                 mEqualizer->setBandGain(i, (float)gains[i] / kEqGainPrecisionDiv);
             }
         }
@@ -563,7 +559,7 @@ esp_err_t AudioPlayer::equalizerDumpUrlHandler(httpd_req_t *req)
     DynBuffer buf(240);
     buf.printf("[");
     for (int i = 0; i < 10; i++) {
-        buf.printf("[%d,%.1f],", self->equalizerFreqs[i], levels[i]);
+        buf.printf("[%d,%.1f],", self->mEqualizer->bandFreqs[i], levels[i]);
     }
     buf[buf.dataSize()-2] = ']';
     httpd_resp_send(req, buf.buf(), buf.dataSize()-1);
