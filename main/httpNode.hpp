@@ -18,6 +18,7 @@
 #include "utils.hpp"
 #include "audioNode.hpp"
 #include "playlist.hpp"
+#include "recorder.hpp"
 
 class HttpNode: public AudioNodeWithTask
 {
@@ -45,6 +46,7 @@ protected:
     int32_t mIcyInterval = 0;
     int16_t mIcyRemaining = 0;
     void clearAllIcyInfo();
+    std::unique_ptr<TrackRecorder> mRecorder;
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     static CodecType codecFromContentType(const char* content_type);
     bool isPlaylist();
@@ -101,4 +103,5 @@ public:
     void setUrl(const char* url);
     bool isConnected() const;
     const char* trackName() const;
+    void startRecording(const char* stationName);
 };

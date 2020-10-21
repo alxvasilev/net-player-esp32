@@ -14,6 +14,8 @@ public:
         uint8_t cs;
     };
     SDCard(){}
-    bool init(int port, const PinCfg pins);
+    bool init(int port, const PinCfg pins, const char* mountPoint = "/sdcard");
+    void unmount();
+    bool test();
 };
 #endif

@@ -256,12 +256,15 @@ void AudioPlayer::destroyPipeline()
     mStreamOut.reset();
 }
 
-void AudioPlayer::playUrl(const char* url)
+void AudioPlayer::playUrl(const char* url, const char* record)
 {
     LOCK_PLAYER();
     assert(mStreamIn && mStreamIn->type() == AudioNode::kTypeHttpIn);
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
     http.setUrl(url);
+    if (record) {
+        http.startRecording(record);
+    }
     if (isStopped()) {
         play();
     }

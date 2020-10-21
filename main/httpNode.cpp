@@ -312,6 +312,9 @@ void HttpNode::recv()
                     rlen = icyProcessRecvData(buf, rlen);
                 }
                 mRingBuf.commitWrite(rlen);
+                if (mRecorder) {
+                    mRecorder->onData(buf, rlen);
+                }
                 //ESP_LOGI(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.totalDataAvail());
                 //TODO: Implement IceCast metadata support
                 if (mWaitingPrefill && mRingBuf.totalDataAvail() >= mPrefillAmount) {
@@ -430,6 +433,9 @@ void HttpNode::icyParseMetaData()
     icyMetaBuf.setDataSize(titleSize + 1);
     ESP_LOGW(TAG, "Track title changed to: '%s'", icyMetaBuf.buf());
     sendEvent(kEventTrackInfo, icyMetaBuf.buf(), icyMetaBuf.dataSize());
+    if (mRecorder) {
+        mRecorder->onNewTrack(icyMetaBuf.buf());
+    }
 }
 
 void HttpNode::setUrl(const char* url)
@@ -584,4 +590,11 @@ void HttpNode::IcyInfo::clear()
     mStaGenre.free();
     mStaUrl.free();
     mIcyMetaBuf.clear();
+}
+
+void HttpNode::startRecording(const char* stationName) {
+    if (!mRecorder) {
+        mRecorder.reset(new TrackRecorder("/sdcard/rec"));
+    }
+    mRecorder->setStation(stationName);
 }

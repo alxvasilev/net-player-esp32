@@ -5,7 +5,7 @@
 #include "sdmmc_cmd.h"
 
 static const char* TAG = "SDCARD";
-bool SDCard::init(int spiPort, SDCard::PinCfg pins)
+bool SDCard::init(int spiPort, SDCard::PinCfg pins, const char* mountPoint)
 {
     ESP_LOGI(TAG, "Initializing SD card host");
 
@@ -23,7 +23,7 @@ bool SDCard::init(int spiPort, SDCard::PinCfg pins)
         .allocation_unit_size = 8 * 1024
     };
     sdmmc_card_t* card;
-    auto ret = esp_vfs_fat_sdmmc_mount("/sdcard", &host, &slotCfg, &mountCfg, &card);
+    auto ret = esp_vfs_fat_sdmmc_mount(mountPoint, &host, &slotCfg, &mountCfg, &card);
 
     if (ret != ESP_OK) {
         if (ret == ESP_FAIL) {
@@ -37,9 +37,16 @@ bool SDCard::init(int spiPort, SDCard::PinCfg pins)
     }
 
     // Card has been initialized, print its properties
-    ESP_LOGI(TAG, "Card info:");
+    ESP_LOGI(TAG, "SD Card info:");
     sdmmc_card_print_info(stdout, card);
+    return true;
+}
+void SDCard::unmount() {
+    esp_vfs_fat_sdmmc_unmount();
+    ESP_LOGI(TAG, "SD Card unmounted");
+}
 
+bool SDCard::test() {
     // Use POSIX and C standard library functions to work with files.
     // First create a file.
     FILE* f = fopen("/sdcard/hello.txt", "r");
@@ -56,11 +63,9 @@ bool SDCard::init(int spiPort, SDCard::PinCfg pins)
             ESP_LOGE(TAG, "Failed to open file for writing");
             return false;
         }
-        fprintf(f, "Hello %s!\n", card->cid.name);
+        fprintf(f, "Hello SD Card!\n");
         fclose(f);
         ESP_LOGI(TAG, "File written");
     }
-    esp_vfs_fat_sdmmc_unmount();
-    ESP_LOGI(TAG, "Card unmounted");
     return true;
 }

@@ -49,6 +49,7 @@ std::unique_ptr<AudioPlayer> player;
 std::unique_ptr<WifiBase> wifi;
 TaskList taskList;
 ST7735Display lcd(VSPI_HOST);
+SDCard sdcard;
 
 void startWebserver(bool isAp=false);
 
@@ -197,15 +198,13 @@ extern "C" void app_main(void)
     }
  //====
     startWebserver();    
-//==
 /*
     lcd.puts("Waiting log conn...\n");
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
 */
-    SDCard sdcard;
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };
-    sdcard.init(HSPI_HOST, pins);
+    sdcard.init(HSPI_HOST, pins, "/sdcard");
 
     player.reset(new AudioPlayer(lcd));
     player->registerUrlHanlers(gHttpServer);
@@ -218,7 +217,7 @@ extern "C" void app_main(void)
         auto before = xPortGetFreeHeapSize();
         BluetoothStack::disableClassic();
         ESP_LOGW(TAG, "Releasing Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
-        player->playUrl("https://mediaserv38.live-streams.nl:18030/stream");
+        player->playUrl("https://mediaserv38.live-streams.nl:18030/stream", "synthfm");
     } else if (player->inputType() == AudioNode::kTypeA2dpIn) {
         ESP_LOGI(TAG, "Player input set to Bluetooth A2DP sink");
         player->play();

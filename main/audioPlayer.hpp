@@ -101,7 +101,7 @@ public:
     AudioNode::Type outputType() const { return mStreamOut->type(); }
     NvsHandle& nvs() { return mNvsHandle; }
     void changeInput(AudioNode::Type inType);
-    void playUrl(const char* url);
+    void playUrl(const char* url, const char* record=nullptr);
     bool isStopped() const;
     bool isPaused() const;
     bool isPlaying() const;
