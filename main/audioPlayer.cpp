@@ -121,9 +121,9 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
     switch(outType) {
     case AudioNode::kTypeI2sOut:
         i2s_pin_config_t cfg;
-        cfg.ws_io_num = 14;
-        cfg.bck_io_num = 12;
-        cfg.data_out_num = 13;
+        cfg.ws_io_num = 25;
+        cfg.bck_io_num = 26;
+        cfg.data_out_num = 27;
         cfg.data_in_num = -1;
 
         mStreamOut.reset(new I2sOutputNode(0, &cfg));

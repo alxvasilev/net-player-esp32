@@ -23,6 +23,7 @@
 #include "bluetooth.hpp"
 #include "taskList.hpp"
 #include <st7735.hpp>
+#include "sdcard.hpp"
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
@@ -195,11 +196,17 @@ extern "C" void app_main(void)
         static_cast<WifiAp*>(wifi.get())->start("netplayer", "alexisthebest", 1);
     }
  //====
-    lcd.puts("Waiting log conn...\n");
     startWebserver();    
 //==
+/*
+    lcd.puts("Waiting log conn...\n");
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
+*/
+    SDCard sdcard;
+    SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };
+    sdcard.init(HSPI_HOST, pins);
+
     player.reset(new AudioPlayer(lcd));
     player->registerUrlHanlers(gHttpServer);
     player->playlist.load((char*)std::string(gPlaylist).c_str());
@@ -209,7 +216,7 @@ extern "C" void app_main(void)
     if (player->inputType() == AudioNode::kTypeHttpIn) {
         ESP_LOGI(TAG, "Player input set to HTTP stream");
         auto before = xPortGetFreeHeapSize();
-        BluetoothStack::disableCompletely();
+        BluetoothStack::disableClassic();
         ESP_LOGW(TAG, "Releasing Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
         player->playUrl("https://mediaserv38.live-streams.nl:18030/stream");
     } else if (player->inputType() == AudioNode::kTypeA2dpIn) {
