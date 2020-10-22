@@ -82,6 +82,13 @@ public:
 };
 
 const char* getUrlFile(const char* url);
+class FileHandle: public std::unique_ptr<FILE, void(*)(FILE*)>
+{
+protected:
+    typedef std::unique_ptr<FILE, void(*)(FILE*)> Base;
+public:
+    FileHandle(FILE* f): Base(f, [](FILE* fp) { if (fp) fclose(fp); }) {}
+};
 
 static inline TaskHandle_t currentTaskHandle()
 {

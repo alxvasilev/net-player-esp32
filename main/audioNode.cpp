@@ -158,7 +158,7 @@ void AudioNodeWithTask::processMessages()
         }
     }
 }
-const char* AudioNode::codecTypeToStr(CodecType type)
+const char* StreamFormat::codecTypeToStr(CodecType type)
 {
     switch (type) {
         case kCodecMp3: return "mp3";

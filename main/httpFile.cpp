@@ -1,26 +1,49 @@
 #include <esp_http_server.h>
 #include "utils.hpp"
+#include <dirent.h>
+#include <sys/stat.h>
 
-static constexpr char fsPrefix[] = "/spiffs/";
-static constexpr int kFileIoBufSize = 512;
+static constexpr int kFileIoBufSize = 1024;
 static constexpr const char* TAG = "HTTPFS";
 
-static esp_err_t fsFilePostHandler(httpd_req_t *req)
+const char* urlGetPathAfterSlashCnt(const char* url, int slashCnt)
 {
-    auto fname = getUrlFile(req->uri);
-    if (!fname) {
+    for (; *url; url++) {
+        if (*url == '/') {
+            if (slashCnt-- <= 0) {
+                return url;
+            }
+        }
+    }
+    return nullptr;
+}
+int pathDirLen(const char* path) {
+    const char* lastSlash = nullptr;
+    for (const char* p = path; *p; p++) {
+        if (*p == '/') {
+            lastSlash = p;
+        }
+    }
+    return lastSlash ? (lastSlash - path) : 0;
+}
+
+static esp_err_t fsFilePostHandler(httpd_req_t* req)
+{
+    auto fn = urlGetPathAfterSlashCnt(req->uri, 1);
+    if (!fn) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing file name in URL");
         return ESP_FAIL;
     }
-    std::unique_ptr<char[]> rxBuf(new char[kFileIoBufSize]);
-    strcpy(rxBuf.get(), fsPrefix);
-    strcpy(rxBuf.get() + sizeof(fsPrefix) - 1, fname);
-    int contentLen = req->content_len;
-    ESP_LOGI(TAG, "Uploading file '%s' of size %d...", rxBuf.get(), contentLen);
+    std::string fname = fn;
+    unescapeUrlParam(&fname[0], fname.size());
 
-    std::unique_ptr<FILE> file(fopen(rxBuf.get(), "w"));
+    std::unique_ptr<char[]> rxBuf(new char[kFileIoBufSize]);
+    int contentLen = req->content_len;
+    ESP_LOGI(TAG, "Receiving file '%s' of size %d...", fname.c_str(), contentLen);
+
+    FileHandle file(fopen(fname.c_str(), "w"));
     if (!file) {
-        ESP_LOGE(TAG, "Failed to open file for writing");
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to open file for writing");
         return ESP_FAIL;
     }
 
@@ -35,8 +58,7 @@ static esp_err_t fsFilePostHandler(httpd_req_t *req)
             }
         }
 
-        if (recvLen < 0)
-        {
+        if (recvLen < 0) {
             ESP_LOGI(TAG, "File recv error %d", recvLen);
             return ESP_FAIL;
         }
@@ -52,46 +74,109 @@ static esp_err_t fsFilePostHandler(httpd_req_t *req)
         }
     }
     httpd_resp_send(req, "OK\r\n", 4);
-    ESP_LOGI(TAG, "Success uploading file '%s'", fname);
+    ESP_LOGI(TAG, "Success receiving file '%s'", fname.c_str());
     return ESP_OK;
 }
-
-static esp_err_t fsFileGetHandler(httpd_req_t *req)
+bool respondWithDirContent(const std::string& fname, httpd_req_t* req)
 {
-    auto fname = getUrlFile(req->uri);
-    if (!fname) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing file name in URL");
-        return ESP_FAIL;
+    DIR* dir = opendir(fname.c_str());
+    if (!dir) {
+        std::string msg = "Error opening directory: ";
+        msg.append(strerror(errno));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, msg.c_str());
+        return false;
     }
 
+    std::string buf;
+    buf.reserve(300);
+    int parentDirLen = pathDirLen(fname.c_str());
+    buf = "<html><body><h1>";
+    buf.append(fname).append("</h1><br/>");
+    if (parentDirLen) {
+        buf.append("<button onclick=\"window.location='/file")
+           .append(fname, 0, parentDirLen).append("'\">..</button><br/>");
+    }
+    httpd_resp_send_chunk(req, buf.c_str(), buf.size());
+
+    for(;;) {
+        struct dirent* entry = readdir(dir);
+        if (!entry) {
+            break;
+        }
+        buf = "<a href='/file";
+        buf.append(fname) += '/';
+        buf.append(entry->d_name).append("'>")
+           .append(entry->d_name).append("</a><br/>");
+        httpd_resp_send_chunk(req, buf.c_str(), buf.size());
+    }
+    closedir(dir);
+    buf = "</body></html>";
+    httpd_resp_send_chunk(req, buf.c_str(), buf.size());
+    httpd_resp_send_chunk(req, nullptr, 0);
+    return true;
+}
+bool respondWithFileContent(const std::string& fname, httpd_req_t* req)
+{
     std::unique_ptr<char[]> rxBuf(new char[kFileIoBufSize]);
-    strcpy(rxBuf.get(), fsPrefix);
-    strcpy(rxBuf.get() + sizeof(fsPrefix) - 1, fname);
-    std::unique_ptr<FILE> file(fopen(rxBuf.get(), "r"));
+    FileHandle file(fopen(fname.c_str(), "r"));
     if (!file) {
-        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "File not found");
-        return ESP_FAIL;
+        std::string msg = "Error opening file: ";
+        msg += strerror(errno);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, msg.c_str());
+        return false;
     }
 
-    ESP_LOGI(TAG, "Downloading file '%s'...", rxBuf.get());
-
+    ESP_LOGI(TAG, "Sending file '%s'...", fname.c_str());
+    httpd_resp_set_type(req, "application/octet-stream");
     for (;;) {
         /* Read the data for the request */
         int readLen = fread(rxBuf.get(), 1, kFileIoBufSize, file.get());
         if (readLen > 0) {
-            httpd_resp_send_chunk(req, rxBuf.get(), readLen);
+            if (httpd_resp_send_chunk(req, rxBuf.get(), readLen) != ESP_OK) {
+                ESP_LOGE(TAG, "Error sending file data, aborting");
+                return false;
+            }
             if (readLen != kFileIoBufSize) {
                 break;
             }
         } else if (readLen == 0) {
             break;
         } else {
-            ESP_LOGE(TAG, "Error reading file '%s'", fname);
-            return ESP_FAIL;
+            ESP_LOGE(TAG, "Error reading file '%s': %s", fname.c_str(), strerror(errno));
+            return false;
         }
     }
     httpd_resp_send_chunk(req, nullptr, 0);
-    ESP_LOGI(TAG, "File download successful");
+    ESP_LOGI(TAG, "File sent successfully");
+    return true;
+}
+
+static esp_err_t fsFileGetHandler(httpd_req_t *req)
+{
+    auto fn = urlGetPathAfterSlashCnt(req->uri, 1);
+    if (!fn) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing file/dir path in URL");
+        return ESP_FAIL;
+    }
+    std::string fname(fn);
+    unescapeUrlParam(&fname[0], fname.size());
+    ESP_LOGI(TAG, "Get file '%s'", fname.c_str());
+    struct stat info;
+    if (stat(fname.c_str(), &info) != 0) {
+        std::string msg = "File/directory '";
+        msg.append(fname).append("' not found");
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, msg.c_str());
+        return ESP_FAIL;
+    }
+    if (info.st_mode & S_IFDIR) { // path is a dir
+        if (!respondWithDirContent(fname, req)) {
+            return ESP_FAIL;
+        }
+    } else {
+        if (!respondWithFileContent(fname, req)) {
+            return ESP_FAIL;
+        }
+    }
     return ESP_OK;
 }
 

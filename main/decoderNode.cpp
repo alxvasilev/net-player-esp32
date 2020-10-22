@@ -9,7 +9,7 @@ bool DecoderNode::createDecoder(CodecType type)
         mDecoder = new DecoderMp3();
         return true;
     default:
-        ESP_LOGW(mTag, "No decoder for codec type %s", AudioNode::codecTypeToStr(type));
+        ESP_LOGW(mTag, "No decoder for codec type %s", StreamFormat::codecTypeToStr(type));
         return false;
     }
 }

@@ -75,7 +75,7 @@ void TrackRecorder::commit()
     ESP_LOGI(TAG, "Recorded track %s on station %s", mCurrTrackName.c_str(), mStationName.c_str());
 }
 
-void TrackRecorder::onNewTrack(const char* trackName)
+void TrackRecorder::onNewTrack(const char* trackName, StreamFormat fmt)
 {
     if (mStationName.empty()) {
         return;
@@ -98,6 +98,8 @@ void TrackRecorder::onNewTrack(const char* trackName)
         return;
     }
     mCurrTrackName = trackName;
+    mCurrTrackName += '.';
+    mCurrTrackName.append(fmt.codecTypeStr());
     ESP_LOGI(TAG, "Starting to record track %s on station %s", mCurrTrackName.c_str(), mStationName.c_str());
 }
 void TrackRecorder::onData(const void* data, int dataLen)
@@ -111,7 +113,10 @@ void TrackRecorder::onData(const void* data, int dataLen)
         abortTrack();
         ESP_LOGE(TAG, "Error writing to stream sink file: %s", strerror(errno));
     }
-    ESP_LOGI(TAG, "write took %d ms", timer.msElapsed());
+    auto msElapsed = timer.msElapsed();
+    if (msElapsed > 20) {
+        ESP_LOGW(TAG, "SDCard write took %d ms", msElapsed);
+    }
 }
 void TrackRecorder::abortTrack()
 {

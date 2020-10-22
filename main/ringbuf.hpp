@@ -229,6 +229,7 @@ public:
         if (msTimeout < 0) {
             while ((avail = availableForContigRead()) < 1) {
                 MutexUnlocker unlocker(mMutex);
+                ESP_LOGI("RB", "underflow");
                 if (waitForWriteOp(-1) <= 0) {
                     return -1;
                 }
@@ -237,6 +238,7 @@ public:
             while ((avail = availableForContigRead()) < 1) {
                 int64_t tsStart = esp_timer_get_time();
                 MutexUnlocker unlocker(mMutex);
+                ESP_LOGI("RB", "underflow");
                 int ret = waitForWriteOp(msTimeout);
                 msTimeout -= (esp_timer_get_time() - tsStart) / 1000;
                 if (ret < 0) {

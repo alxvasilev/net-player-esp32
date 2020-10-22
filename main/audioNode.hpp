@@ -83,6 +83,8 @@ public:
     bool isStereo() const { return nChannels != 0; }
     void setChannels(uint8_t ch) { nChannels = ch - 1; }
     operator bool() const { return toCode() != 0; }
+    static const char* codecTypeToStr(CodecType type);
+    const char* codecTypeStr() const { return codecTypeToStr(codec); }
 };
 
 class IAudioVolume;
@@ -166,7 +168,6 @@ public:
     // confirmRead() with the actual amount read.
     virtual StreamError pullData(DataPullReq& dpr, int timeout) = 0;
     virtual void confirmRead(int amount) = 0;
-    static const char* codecTypeToStr(CodecType type);
     static StreamError threeStateStreamError(int ret) {
         if (ret > 0) {
             return kNoError;

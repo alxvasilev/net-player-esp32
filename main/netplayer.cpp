@@ -165,7 +165,7 @@ static constexpr ST7735Display::PinCfg lcdPins = {
 
 extern "C" void app_main(void)
 {
-    esp_log_level_set("*", ESP_LOG_DEBUG);
+//  esp_log_level_set("*", ESP_LOG_DEBUG);
     configGpios();
 
     rollbackCheckUserForced();
@@ -197,15 +197,18 @@ extern "C" void app_main(void)
         static_cast<WifiAp*>(wifi.get())->start("netplayer", "alexisthebest", 1);
     }
  //====
+    lcd.puts("Starting webserver...\n");
     startWebserver();    
 /*
     lcd.puts("Waiting log conn...\n");
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
 */
+    lcd.puts("Mounting SDCard...\n");
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };
     sdcard.init(HSPI_HOST, pins, "/sdcard");
 
+    lcd.puts("Starting Player...\n");
     player.reset(new AudioPlayer(lcd));
     player->registerUrlHanlers(gHttpServer);
     player->playlist.load((char*)std::string(gPlaylist).c_str());
@@ -301,7 +304,6 @@ static const httpd_uri_t changeInputUrl = {
     .user_ctx  = nullptr
 };
 
-/* An HTTP GET handler */
 
 void stopWebserver() {
     /* Stop the web server */

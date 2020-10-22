@@ -108,7 +108,7 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
     if (strcasecmp(key, "Content-Type") == 0) {
         self->mStreamFormat.codec = self->codecFromContentType(evt->header_value);
         ESP_LOGI(TAG, "Parsed content-type '%s' as %s", evt->header_value,
-            codecTypeToStr(self->mStreamFormat.codec));
+            self->mStreamFormat.codecTypeStr());
     } else if (strcasecmp(key, "icy-metaint") == 0) {
         auto self = static_cast<HttpNode*>(evt->user_data);
         self->mIcyInterval = atoi(evt->header_value);
@@ -315,6 +315,7 @@ void HttpNode::recv()
                 if (mRecorder) {
                     mRecorder->onData(buf, rlen);
                 }
+                mBytePos += rlen;
                 //ESP_LOGI(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.totalDataAvail());
                 //TODO: Implement IceCast metadata support
                 if (mWaitingPrefill && mRingBuf.totalDataAvail() >= mPrefillAmount) {
@@ -433,8 +434,8 @@ void HttpNode::icyParseMetaData()
     icyMetaBuf.setDataSize(titleSize + 1);
     ESP_LOGW(TAG, "Track title changed to: '%s'", icyMetaBuf.buf());
     sendEvent(kEventTrackInfo, icyMetaBuf.buf(), icyMetaBuf.dataSize());
-    if (mRecorder) {
-        mRecorder->onNewTrack(icyMetaBuf.buf());
+    if (mRecorder && mBytePos) {
+        mRecorder->onNewTrack(icyMetaBuf.buf(), mStreamFormat);
     }
 }
 
