@@ -75,13 +75,15 @@ void AudioPlayer::lcdInit()
 {
     auto numLeds = mLcd.width() / kVuLedWidth;
     mLevelPerVuLed = (std::numeric_limits<int16_t>::max() + numLeds - 1) / numLeds;
-    mVuRedStartX = mLcd.width() - kVuLedWidth - 2;
+    mVuRedStartX = mLcd.width() - kVuLedWidth - 1;
     mVuYellowStartX = mVuRedStartX - kVuLedWidth * 2;
+    mVuLeftCtx.barY = mLcd.height() - 2 * kVuLedHeight - kVuLedSpacing;
+    mVuRightCtx.barY = mVuLeftCtx.barY + kVuLedHeight + kVuLedSpacing;
 
     mLcd.setBgColor(0, 0, 128);
     mLcd.clear();
     mLcd.setFgColor(0, 128, 128);
-    mLcd.hLine(0, 127, 15);
+    mLcd.hLine(0, mLcd.width()-1, 15);
 }
 
 void AudioPlayer::initTimedDrawTask()
@@ -147,7 +149,7 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
 
 void AudioPlayer::lcdUpdateModeInfo()
 {
-    mLcd.setFont(Font_5x7, 2);
+    mLcd.setFont(Font_7x11, 2);
     mLcd.gotoXY(0, 0);
     mLcd.setFgColor(255, 255, 128);
     auto type = mStreamIn->type();
@@ -163,7 +165,7 @@ void AudioPlayer::lcdUpdateModeInfo()
 
 void AudioPlayer::lcdUpdatePlayState()
 {
-    mLcd.setFont(Font_5x7, 2);
+    mLcd.setFont(Font_7x11, 2);
     mLcd.setFgColor(255, 255, 128);
     mLcd.gotoXY(mLcd.charWidth() + 1, 0);
     if (isPlaying()) {
@@ -673,7 +675,7 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int size)
 
 void AudioPlayer::lcdSetupForTrackTitle()
 {
-    mLcd.setFont(Font_5x7, 2);
+    mLcd.setFont(Font_7x11, 2);
     mLcd.setFgColor(255, 255, 128);
     mLcd.gotoXY(0, (mLcd.height() - mLcd.charHeight()) / 2);
 }
@@ -726,7 +728,7 @@ void AudioPlayer::audioLevelCb(void* ctx)
 inline uint16_t AudioPlayer::vuLedColor(int16_t ledX, int16_t level)
 {
     if (ledX >= mVuRedStartX) {
-        return (level == std::numeric_limits<decltype(level)>::max())
+        return (level >= std::numeric_limits<decltype(level)>::max()-1)
             ? ST77XX_RED
             : ST77XX_YELLOW;
     } else if (ledX >= mVuYellowStartX) {
@@ -735,92 +737,67 @@ inline uint16_t AudioPlayer::vuLedColor(int16_t ledX, int16_t level)
         return ST77XX_GREEN;
     }
 }
+
+void AudioPlayer::vuCalculateLevels(VuLevelCtx& ctx, int16_t level)
+{
+    if (level > ctx.avgLevel) {
+        ctx.avgLevel = level;
+    } else {
+        ctx.avgLevel = ((int)ctx.avgLevel * (kVuLevelSmoothFactor-1) + level) / kVuLevelSmoothFactor;
+    }
+    if (level > ctx.peakLevel) {
+        ctx.peakLevel = level;
+        ctx.peakTimer = kVuPeakHoldTime;
+    } else {
+        if (--ctx.peakTimer <= 0) {
+            ctx.peakTimer = kVuPeakDropTime;
+            if (ctx.peakLevel > 0) {
+                ctx.peakLevel -= mLevelPerVuLed;
+            }
+        }
+    }
+}
 void AudioPlayer::lcdUpdateVolLevel()
 {
     // Called from the display refresh worker
     const auto& levels = mVolumeInterface->audioLevels();
-    auto yLeft = mLcd.height() - 2 * kVuLedHeight - 2;
-    auto yRight = yLeft + kVuLedHeight + 2;
+    vuDrawChannel(mVuLeftCtx, levels.left);
+    vuDrawChannel(mVuRightCtx, levels.right);
+}
 
-    if (levels.left > mVuLeftAvg) {
-        mVuLeftAvg = levels.left;
-    } else {
-        mVuLeftAvg = ((int)mVuLeftAvg * (kVuLevelSmoothFactor-1) + levels.left) / kVuLevelSmoothFactor;
-    }
-    if (levels.left > mVuPeakLeft) {
-        mVuPeakLeft = levels.left;
-        mVuPeakTimerLeft = kVuPeakHoldTime;
-    } else {
-        if (--mVuPeakTimerLeft <= 0) {
-            mVuPeakTimerLeft = kVuPeakDropTime;
-            if (mVuPeakLeft > 0) {
-                mVuPeakLeft -= mLevelPerVuLed;
-            }
-        }
-    }
-    if (levels.right > mVuRightAvg) {
-        mVuRightAvg = levels.right;
-    } else {
-        mVuRightAvg = ((int)mVuRightAvg * (kVuLevelSmoothFactor-1) + levels.right) / kVuLevelSmoothFactor;
-    }
-    if (levels.right > mVuPeakRight) {
-        mVuPeakRight = levels.right;
-        mVuPeakTimerRight = kVuPeakHoldTime;
-    } else {
-        if (--mVuPeakTimerRight <= 0) {
-            mVuPeakTimerRight = kVuPeakDropTime;
-            if (mVuPeakRight > 0) {
-                mVuPeakRight -= mLevelPerVuLed;
-            }
-        }
+void AudioPlayer::vuDrawChannel(VuLevelCtx& ctx, int16_t level)
+{
+    vuCalculateLevels(ctx, level);
+    //width in pixels of level bars
+    int16_t levelBarWidth = kVuLedWidth * (((int)ctx.avgLevel + mLevelPerVuLed - 1) / mLevelPerVuLed);
+    // draw bar
+    for (int16_t x = 0; x < levelBarWidth; x += kVuLedWidth) {
+        mLcd.setFgColor(vuLedColor(x, ctx.peakLevel));
+        mLcd.fillRect(x, ctx.barY, kVuLedWidth-kVuLedSpacing, kVuLedHeight);
     }
 
-    int16_t endXLeft = kVuLedWidth * (((int)mVuLeftAvg + mLevelPerVuLed - 1) / mLevelPerVuLed);
-    int16_t endXRight = kVuLedWidth * (((int)mVuRightAvg + mLevelPerVuLed - 1) / mLevelPerVuLed);
-    int16_t endX = std::max(endXLeft, endXRight);
-    for (int16_t x = 0; x < endX; x += kVuLedWidth) {
-        if (x < endXLeft) {
-            mLcd.setFgColor(vuLedColor(x, mVuPeakLeft));
-            mLcd.fillRect(x, yLeft, kVuLedWidth-1, kVuLedHeight);
-        } else {
-            mLcd.clear(x, yLeft, kVuLedWidth-1, kVuLedHeight);
+    // draw peak indicators and background bafore and after them
+    int16_t x = kVuLedWidth * ((ctx.peakLevel + mLevelPerVuLed - 1) / mLevelPerVuLed - 1);
+    if (x < levelBarWidth) { // no peak led after level bar
+        int16_t afterWidth = mLcd.width() - levelBarWidth;
+        if (afterWidth > 0) {
+            // draw background after level bar and return
+            mLcd.clear(levelBarWidth, ctx.barY, afterWidth, kVuLedHeight);
         }
-        if (x < endXRight) {
-            mLcd.setFgColor(vuLedColor(x, mVuPeakRight));
-            mLcd.fillRect(x, yRight, kVuLedWidth-1, kVuLedHeight);
-        } else {
-            mLcd.clear(x, yRight, kVuLedWidth-1, kVuLedHeight);
-        }
+        return;
     }
-    int16_t afterEndX = mLcd.width() - endX;
-    int16_t leftPeakX = kVuLedWidth * (((int)mVuPeakLeft + mLevelPerVuLed - 1) / mLevelPerVuLed - 1);
-    if (leftPeakX >= endXLeft) {
-        if (leftPeakX > endXLeft) {
-            mLcd.clear(endXLeft, yLeft, leftPeakX - endXLeft, kVuLedHeight);
-        }
-        mLcd.setFgColor(vuLedColor(leftPeakX, mVuPeakLeft));
-        mLcd.fillRect(leftPeakX, yLeft, kVuLedWidth-1, kVuLedHeight);
-        int afterBg = mLcd.width() - leftPeakX - kVuLedWidth;
-        if (afterBg > 0) {
-            mLcd.clear(leftPeakX + kVuLedWidth, yLeft, afterBg, kVuLedHeight);
-        }
-    } else if (afterEndX) {
-        mLcd.clear(endX, yLeft, afterEndX, kVuLedHeight);
+    if (x > levelBarWidth) {
+        // draw background between end of level bar and peak led
+        mLcd.clear(levelBarWidth, ctx.barY, x - levelBarWidth, kVuLedHeight);
     }
-
-    int16_t rightPeakX = kVuLedWidth * (((int)mVuPeakRight + mLevelPerVuLed - 1) / mLevelPerVuLed - 1);
-    if (rightPeakX >= endXRight) {
-        if (rightPeakX > endXRight) {
-            mLcd.clear(endXRight, yRight, rightPeakX - endXRight, kVuLedHeight);
-        }
-        mLcd.setFgColor(vuLedColor(rightPeakX, mVuPeakRight));
-        mLcd.fillRect(rightPeakX, yRight, kVuLedWidth-1, kVuLedHeight);
-        int afterBg = mLcd.width() - rightPeakX - kVuLedWidth;
-        if (afterBg > 0) {
-            mLcd.clear(rightPeakX + kVuLedWidth, yRight, afterBg, kVuLedHeight);
-        }
-    } else if (afterEndX) {
-        mLcd.clear(endX, yRight, afterEndX, kVuLedHeight);
+    mLcd.setFgColor(vuLedColor(x, ctx.peakLevel));
+    // draw peak led
+    mLcd.fillRect(x, ctx.barY, kVuLedWidth - kVuLedSpacing, kVuLedHeight);
+    // draw background after peak led
+    int16_t xEnd = x + kVuLedWidth - kVuLedSpacing;
+    int16_t afterBg = mLcd.width() - xEnd;
+    if (afterBg > 0) {
+        mLcd.clear(x + kVuLedWidth, ctx.barY, afterBg, kVuLedHeight);
     }
 }
 
@@ -836,7 +813,7 @@ void AudioPlayer::lcdUpdateStationInfo()
     }
     mLcd.clear(0, 20, mLcd.width()-1, mLcd.charHeight() * 3);
     mLcd.gotoXY(0, 20);
-    mLcd.setFont(Font_5x7, 1);
+    mLcd.setFont(Font_7x11, 1);
     mLcd.setFgColor(255, 255, 128);
     mLcd.nputs(name, 3 * mLcd.charsPerLine());
 }

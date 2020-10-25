@@ -312,6 +312,10 @@ void HttpNode::recv()
                     rlen = icyProcessRecvData(buf, rlen);
                 }
                 mRingBuf.commitWrite(rlen);
+                // First commit the write, only after that record to SD card,
+                // to avoid blocking the stream consumer
+                // Note: The buffer is still valid, even if it has been consumed
+                // before we reach the next line - ringbuf consumers are read-only
                 if (mRecorder) {
                     mRecorder->onData(buf, rlen);
                 }

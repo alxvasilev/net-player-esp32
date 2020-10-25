@@ -32,11 +32,14 @@ enum: uint8_t {
     ST77XX_MADCTL = 0x36,
     ST77XX_COLMOD = 0x3A,
 
-    ST77XX_MADCTL_MY = 0x80,
-    ST77XX_MADCTL_MX = 0x40,
-    ST77XX_MADCTL_MV = 0x20,
-    ST77XX_MADCTL_ML = 0x10,
-    ST77XX_MADCTL_RGB = 0x00,
+    ST77XX_MADCTL_MY = 0x80, ///< Bottom to top
+    ST77XX_MADCTL_MX = 0x40, ///< Right to left
+    ST77XX_MADCTL_MV = 0x20, ///< Reverse X and Y
+    ST77XX_MADCTL_ML = 0x10, ///< LCD refresh Bottom to top
+    ST77XX_MADCTL_RGB = 0x00, ///< Red-Green-Blue pixel order
+    // ILI9341 specific
+    ST77XX_MADCTL_BGR = 0x08, ///< Blue-Green-Red pixel order
+    ST77XX_MADCTL_MH = 0x04,  ///< LCD refresh right to left
 
     ST77XX_RDID1 = 0xDA,
     ST77XX_RDID2 = 0xDB,
@@ -156,7 +159,7 @@ void ST7735Display::displayReset()
   msDelay(140);
 
   sendCmd(ST77XX_INVOFF);
-  sendCmd(ST77XX_MADCTL, (uint8_t)(0x08 | ST77XX_MADCTL_MX | ST77XX_MADCTL_MV));
+  sendCmd(ST77XX_MADCTL, (uint8_t)(0x08 | ST77XX_MADCTL_MV));
   sendCmd(ST77XX_COLMOD, (uint8_t)0x05);
 
   sendCmd(ST77XX_CASET, {0x00, 0x00, 0x00, 0x7F});

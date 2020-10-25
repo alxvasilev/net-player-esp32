@@ -96,6 +96,17 @@ static inline TaskHandle_t currentTaskHandle()
     return (TaskHandle_t)pxCurrentTCB;
 }
 
+static inline void usDelay(uint32_t us)
+{
+    auto end = esp_timer_get_time() + us;
+    while (esp_timer_get_time() < end);
+}
+
+static inline void msDelay(uint32_t ms)
+{
+    usDelay(ms * 1000);
+}
+
 class ElapsedTimer
 {
 protected:

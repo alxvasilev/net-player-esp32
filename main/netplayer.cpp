@@ -171,7 +171,8 @@ extern "C" void app_main(void)
     rollbackCheckUserForced();
     rollbackConfirmAppIsWorking();
 
-    lcd.init(128, 128, lcdPins);
+    lcd.init(320, 240, lcdPins);
+    lcd.setFont(Font_7x11);
     lcd.puts("Mounting storage...\n");
     initNvs();
     mountSpiffs();

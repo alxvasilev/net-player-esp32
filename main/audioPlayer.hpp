@@ -25,8 +25,8 @@ protected:
     { kFlagUseEqualizer = 1, kFlagListenerHooked = 2, kFlagNoWaitPrefill = 4 };
     enum: uint8_t
     { kEventTerminating = 1, kEventScroll = 2, kEventVolLevel = 4, kEventTerminated = 8 };
-    enum { kVuLedWidth = 8, kVuLedHeight = 4, kVuLevelSmoothFactor = 4,
-           kVuPeakHoldTime = 30, kVuPeakDropTime = 2
+    enum { kVuLevelSmoothFactor = 4, kVuPeakHoldTime = 30, kVuPeakDropTime = 2,
+           kVuLedWidth = 20, kVuLedHeight = 8, kVuLedSpacing = 3
     };
     enum { kEqGainPrecisionDiv = 2 };
     static const float sDefaultEqGains[];
@@ -48,15 +48,22 @@ protected:
     int16_t mLevelPerVuLed;
     int16_t mVuYellowStartX;
     int16_t mVuRedStartX;
-    int16_t mVuLeftAvg = 0;
-    int16_t mVuRightAvg = 0;
-    int16_t mVuPeakLeft = 0;
-    uint8_t mVuPeakTimerLeft = 0;
-    int16_t mVuPeakRight = 0;
-    uint8_t mVuPeakTimerRight = 0;
+    struct VuLevelCtx
+    {
+        int16_t barY;
+        int16_t avgLevel = 0;
+        int16_t peakLevel = 0;
+        uint8_t peakTimer = 0;
+    };
+    VuLevelCtx mVuLeftCtx;
+    VuLevelCtx mVuRightCtx;
+
     static void audioLevelCb(void* ctx);
     inline uint16_t vuLedColor(int16_t ledX, int16_t level);
     void lcdUpdateVolLevel();
+    void vuCalculateLevels(VuLevelCtx& ctx, int16_t level);
+    void vuDrawChannel(VuLevelCtx& ctx, int16_t level);
+
 //====
     static void titleSrollTickCb(void* ctx);
     static void lcdTimedDrawTask(void* ctx);
