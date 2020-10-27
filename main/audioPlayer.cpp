@@ -320,7 +320,7 @@ void AudioPlayer::stop()
    mStreamOut->stop(false);
    mStreamIn->waitForStop();
    mStreamOut->waitForStop();
-   mTitleScrollTimer.cancel();
+   mTitleScrollEnabled = false;
    if (mVolumeInterface) {
        mVolumeInterface->clearAudioLevels();
    }
@@ -635,8 +635,13 @@ bool AudioPlayer::onEvent(AudioNode *self, uint32_t event, void *buf, size_t buf
 void AudioPlayer::lcdTimedDrawTask(void* ctx)
 {
     auto& self = *static_cast<AudioPlayer*>(ctx);
+    enum { kTitleScrollTickPeriodUs = kTitleScrollTickPeriodMs * 1000 };
+    int64_t tsLastTitleScroll = esp_timer_get_time() - kTitleScrollTickPeriodUs - 1;
     for (;;) {
-        auto events = self.mEvents.waitForOneAndReset(kEventTerminating|kEventScroll|kEventVolLevel, 50);
+        int timeout = kTitleScrollTickPeriodUs - (esp_timer_get_time() - tsLastTitleScroll);
+        EventBits_t events = (self.mTitleScrollEnabled && timeout > 0)
+            ? self.mEvents.waitForOneAndReset(kEventTerminating|kEventScroll|kEventVolLevel, timeout)
+            : (EventBits_t)kEventScroll;
         if (events & kEventTerminating) {
             break;
         }
@@ -645,7 +650,8 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
             if (events & kEventVolLevel) {
                 self.lcdUpdateVolLevel();
             }
-            if (events & kEventScroll) {
+            if (events == 0 || events & kEventScroll) {
+                tsLastTitleScroll = esp_timer_get_time();
                 self.lcdScrollTrackTitle();
             }
         }
@@ -658,7 +664,7 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int size)
 {
     LOCK_PLAYER();
     if (size <= 1) {
-        mTitleScrollTimer.cancel();
+        mTitleScrollEnabled = false;
         lcdSetupForTrackTitle();
         mLcd.puts("----------------", mLcd.kFlagNoAutoNewline|mLcd.kFlagAllowPartial);
         return;
@@ -668,14 +674,12 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int size)
     mTrackTitle.append(" * ", 4);
     mTitleScrollCharOffset = mTitleScrollPixOffset = 0;
     titleSrollTickCb(this);
-    if (!mTitleScrollTimer.running()) {
-        mTitleScrollTimer.start(kTitleScrollTickPeriodMs, false, titleSrollTickCb, this);
-    }
+    mTitleScrollEnabled = true;
 }
 
 void AudioPlayer::lcdSetupForTrackTitle()
 {
-    mLcd.setFont(Font_7x11, 2);
+    mLcd.setFont(Font_5x7, 2);
     mLcd.setFgColor(255, 255, 128);
     mLcd.gotoXY(0, (mLcd.height() - mLcd.charHeight()) / 2);
 }

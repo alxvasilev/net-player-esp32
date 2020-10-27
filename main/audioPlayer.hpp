@@ -40,7 +40,7 @@ protected:
     ST7735Display& mLcd;
     EventGroup mEvents;
 // track name scroll stuff
-    CbTimer mTitleScrollTimer;
+    bool mTitleScrollEnabled = false;
     DynBuffer mTrackTitle;
     int16_t mTitleScrollCharOffset = 0;
     int8_t mTitleScrollPixOffset = 0;
