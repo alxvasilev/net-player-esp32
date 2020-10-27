@@ -159,6 +159,8 @@ void ST7735Display::displayReset()
   msDelay(140);
 
   sendCmd(ST77XX_INVOFF);
+
+//ST7735: sendCmd(ST77XX_MADCTL, (uint8_t)(0x08 | ST77XX_MADCTL_MX | ST77XX_MADCTL_MV))
   sendCmd(ST77XX_MADCTL, (uint8_t)(0x08 | ST77XX_MADCTL_MV));
   sendCmd(ST77XX_COLMOD, (uint8_t)0x05);
 
@@ -348,17 +350,22 @@ void ST7735Display::blitMonoHscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
 void ST7735Display::blitMonoVscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
     const uint8_t* binData, int8_t bgSpacing, int scale)
 {
-    if (sx + w >= mWidth) {
-        w = mWidth - sx;
+    int16_t endX = sx + w;
+    if (endX > mWidth) {
+        w = mWidth - sx - 1;
         if (w < 0) {
             return;
         }
+        bgSpacing = 0;
+    } else if (endX + bgSpacing > mWidth) {
+        bgSpacing = mWidth - endX;
     }
+
     // scan horizontally in display RAM, but vertically in char data
     int16_t bitH = h / scale;
     int16_t bitW = w / scale;
     int8_t byteHeight = (bitH + 7) / 8;
-    setWriteWindow(sx, sy, w + bgSpacing, h);
+    setWriteWindow(sx, sy, bitW * scale + bgSpacing, h);
     prepareSendPixels();
     int rptY = 0;
     uint8_t mask = 0x01;
@@ -401,21 +408,30 @@ bool ST7735Display::putc(uint8_t ch, uint8_t flags, uint8_t startCol)
         return false;
     }
     uint8_t width = ch;
+    // returns char width via the charcode argument
     auto charData = mFont->getCharData(width);
     if (!charData) {
         return false;
     }
     auto height = mFont->height * mFontScale;
     int charSpc = mFont->charSpacing;
-    if (startCol) { // start from specified char column
+    if (startCol) { // start drawing the char from the specified column
         if (startCol >= width) { // column is beyond char width
-            auto colsToDraw = startCol - width + 1;
-            if (colsToDraw > charSpc) {
+            // check if we still need to draw the spacing after that invisible char
+            // needed for easier handling of scrolling text
+            auto spacingToDraw = width + charSpc - startCol;
+            if (spacingToDraw > charSpc) {
                 return false;
             }
-            colsToDraw *= mFontScale; // but column is within char spacing
-            fillRect(cursorX, cursorY, colsToDraw, height, mBgColor);
-            cursorX += colsToDraw;
+            spacingToDraw *= mFontScale; // but column is within char spacing
+            if (cursorX + spacingToDraw > mWidth) {
+                spacingToDraw = mWidth - cursorX;
+                if (spacingToDraw <= 0) {
+                    return false;
+                }
+            }
+            clear(cursorX, cursorY, spacingToDraw, height);
+            cursorX += spacingToDraw;
             return true;
         }
         auto byteHeight = (mFont->height + 7) / 8;

@@ -88,7 +88,7 @@ void AudioPlayer::lcdInit()
 
 void AudioPlayer::initTimedDrawTask()
 {
-    xTaskCreate(&lcdTimedDrawTask, "lcdTask", 1200, this, 20, nullptr);
+    xTaskCreate(&lcdTimedDrawTask, "lcdTask", 3000, this, 20, nullptr);
     mVolumeInterface->setLevelCallback(audioLevelCb, this);
 }
 
@@ -636,7 +636,7 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
 {
     auto& self = *static_cast<AudioPlayer*>(ctx);
     for (;;) {
-        auto events = self.mEvents.waitForOneAndReset(kEventTerminating|kEventScroll|kEventVolLevel, -1);
+        auto events = self.mEvents.waitForOneAndReset(kEventTerminating|kEventScroll|kEventVolLevel, 50);
         if (events & kEventTerminating) {
             break;
         }
@@ -699,6 +699,7 @@ void AudioPlayer::lcdScrollTrackTitle()
         title = mTrackTitle.buf();
         mTitleScrollCharOffset = mTitleScrollPixOffset = 0;
     } else {
+        // display first partial char, if any
         if (mTitleScrollPixOffset) {
             mLcd.putc(*(title++), mLcd.kFlagNoAutoNewline, mTitleScrollPixOffset); // can advance to the terminating NULL
         }
