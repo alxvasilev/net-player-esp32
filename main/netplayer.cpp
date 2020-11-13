@@ -324,7 +324,7 @@ void startWebserver(bool isAp)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 4096;
-    config.max_uri_handlers = 12;
+    config.max_uri_handlers = 16;
     config.uri_match_fn = httpd_uri_match_wildcard;
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
     if (httpd_start(&gHttpServer, &config) != ESP_OK) {
@@ -336,9 +336,8 @@ void startWebserver(bool isAp)
     netLogger.registerWithHttpServer(gHttpServer, "/log");
     httpd_register_uri_handler(gHttpServer, &otaUrlHandler);
     httpd_register_uri_handler(gHttpServer, &indexUrl);
-    httpd_register_uri_handler(gHttpServer, &httpFsPut);
-    httpd_register_uri_handler(gHttpServer, &httpFsGet);
     httpd_register_uri_handler(gHttpServer, &changeInputUrl);
+    httpFsRegisterHandlers(gHttpServer);
 }
 
 

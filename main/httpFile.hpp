@@ -2,7 +2,5 @@
 #define HTTP_FILE_H
 #include <esp_http_server.h>
 
-extern const httpd_uri_t httpFsGet;
-extern const httpd_uri_t httpFsPut;
-
+void httpFsRegisterHandlers(httpd_handle_t server);
 #endif

@@ -26,7 +26,31 @@ int pathDirLen(const char* path) {
     }
     return lastSlash ? (lastSlash - path) : 0;
 }
-
+const char* fileGetExtension(const std::string& str) {
+    for (int i = str.size()-1; i>=0; i--) {
+        if (str[i] == '.') {
+            return str.c_str() + i + 1;
+        }
+    }
+    return nullptr;
+}
+const std::string& jsonStringEscape(std::string& json)
+{
+    for (int pos = 0; pos < json.size(); pos++) {
+        char ch = json[pos];
+        switch (ch) {
+            case '\b': json.replace(pos, 2, "\b"); break;
+            case '\f': json.replace(pos, 2, "\f"); break;
+            case '\r': json.replace(pos, 2, "\r"); break;
+            case '\n': json.replace(pos, 2, "\n"); break;
+            case '\t': json.replace(pos, 2, "\t"); break;
+            case '\"': json.replace(pos, 2, "\""); break;
+            case '\\': json.replace(pos, 2, "\\"); break;
+            default: break;
+        }
+    }
+    return json;
+}
 static esp_err_t fsFilePostHandler(httpd_req_t* req)
 {
     auto fn = urlGetPathAfterSlashCnt(req->uri, 1);
@@ -77,43 +101,63 @@ static esp_err_t fsFilePostHandler(httpd_req_t* req)
     ESP_LOGI(TAG, "Success receiving file '%s'", fname.c_str());
     return ESP_OK;
 }
-bool respondWithDirContent(const std::string& fname, httpd_req_t* req)
+bool respondWithDirContent(const std::string& dirname, httpd_req_t* req)
 {
-    DIR* dir = opendir(fname.c_str());
+    DIR* dir = opendir(dirname.c_str());
     if (!dir) {
         std::string msg = "Error opening directory: ";
         msg.append(strerror(errno));
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, msg.c_str());
         return false;
     }
-
+    struct stat info;
     std::string buf;
     buf.reserve(300);
-    int parentDirLen = pathDirLen(fname.c_str());
-    buf = "<html><body><h1>";
-    buf.append(fname).append("</h1><br/>");
-    if (parentDirLen) {
-        buf.append("<button onclick=\"window.location='/file")
-           .append(fname, 0, parentDirLen).append("'\">..</button><br/>");
-    }
+    buf = "{\"dir\":\"";
+    buf.append(dirname).append("\",\"l\":[");
     httpd_resp_send_chunk(req, buf.c_str(), buf.size());
-
+    int cnt = 0;
+    std::string fname;
+    std::string fullName;
     for(;;) {
         struct dirent* entry = readdir(dir);
         if (!entry) {
             break;
         }
-        buf = "<a href='/file";
-        buf.append(fname) += '/';
-        buf.append(entry->d_name).append("'>")
-           .append(entry->d_name).append("</a><br/>");
+        fname = entry->d_name;
+        jsonStringEscape(fname);
+        buf = (cnt++) ? ",{\"n\":\"" : "{\"n\":\"";
+        buf.append(fname).append("\",\"");
+        fullName = dirname + '/' + fname;
+        if (stat(fullName.c_str(), &info) != 0) {
+            ESP_LOGE(TAG, "Can't stat '%s'", fullName.c_str());
+            buf.append("e\":1}");
+            httpd_resp_send_chunk(req, buf.c_str(), buf.size());
+            continue;
+        }
+        if (info.st_mode & S_IFDIR) { // path is a dir
+            buf.append("d\":1}");
+        } else {
+            buf.append("s\":").append(std::to_string(info.st_size)) += '}';
+        }
         httpd_resp_send_chunk(req, buf.c_str(), buf.size());
     }
     closedir(dir);
-    buf = "</body></html>";
-    httpd_resp_send_chunk(req, buf.c_str(), buf.size());
+    httpd_resp_send_chunk(req, "]}", 2);
     httpd_resp_send_chunk(req, nullptr, 0);
     return true;
+}
+static esp_err_t fsDirListHandler(httpd_req_t* req)
+{
+    auto fn = urlGetPathAfterSlashCnt(req->uri, 1);
+    if (!fn) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing file/dir path in URL");
+        return ESP_FAIL;
+    }
+    std::string dirname(fn);
+    unescapeUrlParam(&dirname[0], dirname.size());
+    ESP_LOGI(TAG, "List dir '%s'", dirname.c_str());
+    return respondWithDirContent(dirname, req) ? ESP_OK : ESP_FAIL;
 }
 bool respondWithFileContent(const std::string& fname, httpd_req_t* req)
 {
@@ -127,7 +171,11 @@ bool respondWithFileContent(const std::string& fname, httpd_req_t* req)
     }
 
     ESP_LOGI(TAG, "Sending file '%s'...", fname.c_str());
-    httpd_resp_set_type(req, "application/octet-stream");
+    const char* ext = fileGetExtension(fname);
+    const char* contentType = (ext && (strcasecmp(ext, "html") == 0))
+        ? "text/html"
+        : "application/octet-stream";
+    httpd_resp_set_type(req, contentType);
     for (;;) {
         /* Read the data for the request */
         int readLen = fread(rxBuf.get(), 1, kFileIoBufSize, file.get());
@@ -151,14 +199,13 @@ bool respondWithFileContent(const std::string& fname, httpd_req_t* req)
     return true;
 }
 
-static esp_err_t fsFileGetHandler(httpd_req_t *req)
+static esp_err_t httpGetHandler(const char* urlPath, httpd_req_t* req)
 {
-    auto fn = urlGetPathAfterSlashCnt(req->uri, 1);
-    if (!fn) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing file/dir path in URL");
-        return ESP_FAIL;
+    std::string fname(urlPath);
+    auto pos = fname.find('?');
+    if (pos != std::string::npos) {
+        fname.resize(pos);
     }
-    std::string fname(fn);
     unescapeUrlParam(&fname[0], fname.size());
     ESP_LOGI(TAG, "Get file '%s'", fname.c_str());
     struct stat info;
@@ -169,26 +216,139 @@ static esp_err_t fsFileGetHandler(httpd_req_t *req)
         return ESP_FAIL;
     }
     if (info.st_mode & S_IFDIR) { // path is a dir
-        if (!respondWithDirContent(fname, req)) {
-            return ESP_FAIL;
-        }
-    } else {
-        if (!respondWithFileContent(fname, req)) {
-            return ESP_FAIL;
-        }
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Is a diectory");
+        return ESP_FAIL;
+    }
+    if (!respondWithFileContent(fname, req)) {
+        return ESP_FAIL;
     }
     return ESP_OK;
 }
+static esp_err_t fsWwwGetHandler(httpd_req_t* req) {
+    if (strncmp(req->uri, "/www/", 5)) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Url must start with /www/");
+        return ESP_FAIL;
+    }
+    std::string fname = "/spiffs";
+    fname.append(req->uri + 4);
+    return httpGetHandler(fname.c_str(), req);
+}
 
+static esp_err_t fsFileGetHandler(httpd_req_t *req)
+{
+    auto fn = urlGetPathAfterSlashCnt(req->uri, 1);
+    if (!fn) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing file/dir path in URL");
+        return ESP_FAIL;
+    }
+    return httpGetHandler(fn, req);
+}
+
+bool delDirectory(const char* dirname) {
+    DIR* dir = opendir(dirname);
+    if (!dir) {
+        return false;
+    }
+    bool ok = true;
+    ESP_LOGI(TAG, "Recursively deleting dir %s", dirname);
+    for(;;) {
+        struct dirent* entry = readdir(dir);
+        if (!entry) {
+            break;
+        }
+        std::string fname = dirname;
+        fname += '/';
+        fname.append(entry->d_name);
+        struct stat info;
+        if (stat(fname.c_str(), &info) != 0) {
+            ESP_LOGW(TAG, "Cannot stat '%s' for deletion", fname.c_str());
+            ok = false;
+            continue;
+        }
+        if (info.st_mode & S_IFDIR) { // path is a dir
+            ok &= delDirectory(fname.c_str());
+        } else {
+            ESP_LOGI(TAG, "Deleting file %s", fname.c_str());
+            ok &= (remove(fname.c_str()) == 0);
+        }
+    }
+    closedir(dir);
+    if (ok) {
+        ESP_LOGI(TAG, "Deleted emptied dir %s", dirname);
+        ok &= (remove(dirname) == 0);
+    }
+    return ok;
+}
+
+static esp_err_t fsFileDelHandler(httpd_req_t *req)
+{
+    auto fn = urlGetPathAfterSlashCnt(req->uri, 1);
+    if (!fn) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing file/dir path in URL");
+        return ESP_FAIL;
+    }
+    std::string fname(fn);
+    unescapeUrlParam(&fname[0], fname.size());
+    struct stat info;
+    if (stat(fname.c_str(), &info) != 0) {
+        std::string msg = "File/directory '";
+        msg.append(fname).append("' not found");
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, msg.c_str());
+        return ESP_FAIL;
+    }
+    bool ok;
+    if (info.st_mode & S_IFDIR) { // path is a dir
+        ESP_LOGI(TAG, "Deleting directory '%s'", fname.c_str());
+        ok = delDirectory(fname.c_str());
+    } else {
+        ok = remove(fname.c_str()) == 0;
+    }
+    if (ok) {
+        httpd_resp_send(req, "OK", 2);
+        return ESP_OK;
+    } else {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error deleting file/dir");
+        return ESP_FAIL;
+    }
+}
+
+extern const httpd_uri_t httpFsPost = {
+    .uri       = "/file/*",
+    .method    = HTTP_POST,
+    .handler   = fsFilePostHandler,
+    .user_ctx  = NULL
+};
 extern const httpd_uri_t httpFsGet = {
     .uri       = "/file/*",
     .method    = HTTP_GET,
     .handler   = fsFileGetHandler,
     .user_ctx  = NULL
 };
-extern const httpd_uri_t httpFsPut = {
-    .uri       = "/file/*",
-    .method    = HTTP_POST,
-    .handler   = fsFilePostHandler,
+extern const httpd_uri_t httpWwwGet = {
+    .uri       = "/www/*",
+    .method    = HTTP_GET,
+    .handler   = fsWwwGetHandler,
     .user_ctx  = NULL
 };
+extern const httpd_uri_t httpFsDirList = {
+    .uri       = "/ls/*",
+    .method    = HTTP_GET,
+    .handler   = fsDirListHandler,
+    .user_ctx  = NULL
+};
+
+extern const httpd_uri_t httpFsDel = {
+    .uri       = "/delfile/*",
+    .method    = HTTP_GET,
+    .handler   = fsFileDelHandler,
+    .user_ctx  = NULL
+};
+
+void httpFsRegisterHandlers(httpd_handle_t server)
+{
+    httpd_register_uri_handler(server, &httpFsPost);
+    httpd_register_uri_handler(server, &httpFsGet);
+    httpd_register_uri_handler(server, &httpFsDel);
+    httpd_register_uri_handler(server, &httpFsDirList);
+    httpd_register_uri_handler(server, &httpWwwGet);
+}

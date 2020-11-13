@@ -1,0 +1,266 @@
+<html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    </head>
+<body>
+<style>
+.dir-list-table td {
+    position: relative;
+    padding: 0px;
+    padding-right: 12px;
+    border: 0px;
+    border-bottom: 1px solid #eeeeee;
+}
+.dir-list-table tr:hover {
+    background-color: #eeeeee;
+}
+.file-item, .file-item-download {
+    position:relative;
+}
+.file-item-download {
+    background-color: #eeeeff;
+}
+.dl-progress-div {
+    position: absolute;
+    top: 0px;
+    height: 100%;
+    opacity: 0.2;
+    background-color: green;
+}
+#ctx-menu {
+    position: absolute;
+    display: block;
+    opacity: 0;
+    transform-origin: center;
+    z-index: 2;
+    opacity: 0;
+    transform: scale(0);
+    transition: transform 0.2s, opacity 0.2s;
+    border: 1px solid #eeeeee;
+    border-radius: 2px;
+}
+#ctx-menu.show {
+  background-color: #ffffff;
+  opacity: 1;
+  transform: scale(1);
+  transform-origin: top left;
+}
+.menu-item {
+    display: block;
+    list-style-type: none;
+    padding: 10px 30px;
+    transition: 0.1s;
+    color: #666;
+}
+.menu-item:hover {
+  background-color: #eee;
+  cursor: pointer;
+}
+</style>
+<dl id=ctx-menu>
+    <li class=menu-item id=menu-dl onclick=menuDownload()>Download</li>
+    <li class=menu-item id=menu-cancel-dl style="display: none" onclick=menuCancelDl()>Cancel DL</li>
+    <li class=menu-item onclick=menuDelete()>Delete</li>
+</ul>
+
+<script>
+class FileManager
+{
+    constructor(container) {
+        this.downloads = new Set();
+        this.ctxMenu = document.getElementById("ctx-menu");
+        this.onFolderClickHandler = this.onFolderClick.bind(this);
+        let cont = this.cont = document.createElement("table");
+        cont.setAttribute("class", "dir-list-table");
+        cont.addEventListener("click", (event) => {
+            if (this.ctxMenu.classList.contains("show")) {
+                this.ctxMenu.classList.remove("show");
+                event.stopPropagation();
+            }
+        }, true);
+        container.appendChild(cont);
+    }
+    clear(dir) {
+        this.cont.innerHTML = "<tr><th>" + dir + "</th></tr>";
+    }
+    async loadDir(dir) {
+        this.clear(dir);
+        let url = document.location.href;
+        let rx = /(?<=[\?&])dir=[^\?^&]+/;
+        if (!url.match(rx)) {
+            url += url.match(/\?[a-zA-z_]=/) ? "&" : "?";
+            url += "dir=" + dir;
+        } else {
+            url = url.replace(/(?<=[\?&])dir=[^\?^&]+/, "dir=" + dir);
+        }
+        window.history.pushState(null, dir, url);
+
+        let resp = await fetch("/ls" + dir);
+        let data = await resp.json();
+        if (!data.dir) {
+            this.errorMessage("Invalid directory path '" + dir + "'");
+            return;
+        }
+        this.dir = dir;
+        let parentDir = this.parentDir();
+        if (parentDir) {
+            this.addParentDirItem(parentDir);
+        }
+        for (let entry of data.l) {
+            if (!entry.d) {
+                continue;
+            }
+            this.addFolderItem(entry);
+        }
+        for (let entry of data.l) {
+            if (entry.d) {
+                continue;
+            }
+            new FileItem(this, entry);
+        }
+    }
+    onFolderClick(event) {
+        this.loadDir(this.dir + "/" + event.currentTarget.item.n);
+    }
+    addParentDirItem(dir) {
+        let gui = document.createElement("div");
+        gui.setAttribute("class", "parent-dir-item");
+        gui.innerHTML = "&#8593; ..";
+        gui.onclick = () => {
+            this.loadDir(dir);
+        };
+        gui.oncontextmenu = this.onContextMenu.bind(this);
+        this.cont.insertRow(-1).insertCell(-1).appendChild(gui);
+    }
+    addFolderItem(item) {
+        let gui = document.createElement("div");
+        gui.setAttribute("class", "dir-item");
+        gui.innerHTML = "&#128193; " + item.n;
+        let row = this.cont.insertRow(-1);
+        row.item = item;
+        row.onclick = this.onFolderClickHandler;
+        let cell = row.insertCell(-1);
+        cell.appendChild(gui);
+    }
+    onContextMenu(e) {
+        e.preventDefault();
+        let menu = this.ctxMenu;
+        menu.style.top = e.clientY + 'px';
+        menu.style.left = e.clientX + 'px';
+        menu.entry = e.currentTarget.item;
+        menu.classList.add('show');
+    }
+    parentDir() {
+        let path = this.dir;
+        for (let pos = path.length -1; pos >= 0; pos--) {
+            if (path.charAt(pos) !== "/") {
+                continue;
+            }
+            if (pos === 0) {
+                return null;
+            } else {
+                return path.substring(0, pos);
+            }
+        }
+        return null;
+    }
+    async queueForDownload(fileItem) {
+        if (this.downloads.has(fileItem)) {
+            return false;
+        }
+        this.downloads.add(fileItem);
+        while(this.downloadPromise) {
+            await this.downloadPromise;
+        }
+        this.downloadPromise = fileItem.download();
+        await this.downloadPromise;
+        delete this.downloadPromise;
+        this.downloads.delete(fileItem);
+    }
+    onDownloadComplete(fileItem) {
+    }
+    errorMessage(msg) {
+        document.body.innerHTML = msg;
+    }
+    static prettySize(size) {
+        if (size > 1048576) {
+            return (Math.round(size / 104857.6) / 10) + "M";
+        } else if (size > 1024) {
+            return Math.round(size / 1024) + "K";
+        } else {
+            return size.toString();
+        }
+    }
+}
+class FileItem {
+    constructor(fm, item) {
+        this.fm = fm;
+        this.item = item;
+        let nameDiv = this.nameDiv = document.createElement("div");
+        nameDiv.setAttribute("class", "file-item");
+        nameDiv.innerHTML = item.n;
+        let row = this.gui = fm.cont.insertRow(-1);
+        row.item = item;
+        row.onclick = this.onClick.bind(this);
+        row.oncontextmenu = this.fm.onContextMenu.bind(this.fm);
+        let cell = row.insertCell(-1);
+        cell.appendChild(nameDiv);
+        cell = row.insertCell(-1);
+        cell.setAttribute("class", "file-size");
+        cell.innerHTML = FileManager.prettySize(item.s);
+    }
+    onClick() {
+        this.nameDiv.setAttribute("class", "file-item-download");
+        this.fm.queueForDownload(this);
+    }
+    async download() {
+        let url = "/file" + this.fm.dir + "/" + this.item.n;
+        let response = await fetch(url);
+        let progressDiv = document.createElement("div");
+        progressDiv.setAttribute("class", "dl-progress-div");
+        progressDiv.style.width = "0%";
+        this.nameDiv.appendChild(progressDiv);
+        let strSize = this.gui.cells[1].innerHTML;
+        let total = 0;
+        let reader = response.body.getReader();
+        let data = [];
+        for(;;) {
+            const {done, value} = await reader.read();
+            if (done) {
+                break;
+            }
+            data.push(value);
+            total += value.length;
+            let percent = Math.round(100 * total / this.item.s);
+            progressDiv.style.width = percent + "%";
+            this.gui.cells[1].innerHTML = FileManager.prettySize(total) + " / " + strSize;
+        }
+
+        this.nameDiv.removeChild(progressDiv);
+        this.nameDiv.setAttribute("class", "file-item");
+
+        this.gui.cells[1].innerHTML = strSize;
+        let blob = new Blob(data, { type: "audio/mpeg" });
+        let blobUrl = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = this.item.n;
+        a.click();
+        this.fm.onDownloadComplete(this);
+    }
+}
+
+async function main() {
+
+    var urlParams = (new URL(document.location)).searchParams;
+    let gDir = urlParams.get("dir");
+    if (!gDir) {
+        gDir = "/sdcard";
+    }
+    let gFileManager = new FileManager(document.body, "http://192.168.1.5");
+    gFileManager.loadDir(gDir);
+}
+main();
+</script>
+</body>
+</html>

@@ -638,10 +638,15 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
     enum { kTitleScrollTickPeriodUs = kTitleScrollTickPeriodMs * 1000 };
     int64_t tsLastTitleScroll = esp_timer_get_time() - kTitleScrollTickPeriodUs - 1;
     for (;;) {
-        int timeout = kTitleScrollTickPeriodUs - (esp_timer_get_time() - tsLastTitleScroll);
-        EventBits_t events = (self.mTitleScrollEnabled && timeout > 0)
-            ? self.mEvents.waitForOneAndReset(kEventTerminating|kEventScroll|kEventVolLevel, timeout)
-            : (EventBits_t)kEventScroll;
+        EventBits_t events;
+        if (self.mTitleScrollEnabled) {
+            int timeout = kTitleScrollTickPeriodUs - (esp_timer_get_time() - tsLastTitleScroll);
+            events = (timeout > 0)
+                ? self.mEvents.waitForOneAndReset(kEventTerminating|kEventVolLevel, timeout)
+                : (EventBits_t)0;
+        } else {
+            events = self.mEvents.waitForOneAndReset(kEventTerminating|kEventVolLevel, -1);
+        }
         if (events & kEventTerminating) {
             break;
         }
@@ -649,8 +654,7 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
             MutexLocker locker(self.mutex);
             if (events & kEventVolLevel) {
                 self.lcdUpdateVolLevel();
-            }
-            if (events == 0 || events & kEventScroll) {
+            } else if (events == 0) {
                 tsLastTitleScroll = esp_timer_get_time();
                 self.lcdScrollTrackTitle();
             }
@@ -679,7 +683,7 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int size)
 
 void AudioPlayer::lcdSetupForTrackTitle()
 {
-    mLcd.setFont(Font_5x7, 2);
+    mLcd.setFont(Font_7x11, 2);
     mLcd.setFgColor(255, 255, 128);
     mLcd.gotoXY(0, (mLcd.height() - mLcd.charHeight()) / 2);
 }

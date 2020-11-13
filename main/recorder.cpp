@@ -67,12 +67,14 @@ void TrackRecorder::commit()
         ESP_LOGE(TAG, "commit: Error closing stream sink file, will not save track");
         return;
     }
-    ret = rename(sinkFileName().c_str(), trackNameToPath(mCurrTrackName.c_str()).c_str());
+    auto name = trackNameToPath(mCurrTrackName.c_str());
+    ret = rename(sinkFileName().c_str(), name.c_str());
     if (ret) {
-        ESP_LOGE(TAG, "commit: Error renaming stream sink file to track name, track will not be saved");
+        ESP_LOGE(TAG, "commit: Error renaming sink file to '%s': %s\nTrack will not be saved",
+            name.c_str(), strerror(errno));
         return;
     }
-    ESP_LOGI(TAG, "Recorded track %s on station %s", mCurrTrackName.c_str(), mStationName.c_str());
+    ESP_LOGI(TAG, "Recorded track '%s' on station '%s'", mCurrTrackName.c_str(), mStationName.c_str());
 }
 
 void TrackRecorder::onNewTrack(const char* trackName, StreamFormat fmt)
@@ -100,7 +102,7 @@ void TrackRecorder::onNewTrack(const char* trackName, StreamFormat fmt)
     mCurrTrackName = trackName;
     mCurrTrackName += '.';
     mCurrTrackName.append(fmt.codecTypeStr());
-    ESP_LOGI(TAG, "Starting to record track %s on station %s", mCurrTrackName.c_str(), mStationName.c_str());
+    ESP_LOGI(TAG, "Starting to record track '%s' on station %s", mCurrTrackName.c_str(), mStationName.c_str());
 }
 void TrackRecorder::onData(const void* data, int dataLen)
 {
