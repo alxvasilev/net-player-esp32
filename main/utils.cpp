@@ -134,14 +134,15 @@ bool KeyValParser::parse(char pairDelim, char keyValDelim, Flags flags)
         KeyVal& keyval = mKeyVals.back();
         auto& key = keyval.key;
         key.str = start;
-        key.len = pch - start + 1;
+        key.len = pch - start + 1; // include terminating NULL
 
         start = ++pch;
         for (; (pch < end) && (*pch != pairDelim); pch++);
         auto& val = keyval.val;
-        auto len = pch - start + 1;
+        auto len = pch - start + 1; // include terminating NULL
         if (flags & kUrlUnescape) {
-            if (!unescapeUrlParam(start, len)) {
+            // we are not null terminated yet, but unescapeUrlParam doesn't care
+            if (!unescapeUrlParam(start, len - 1)) {
                 return false;
             }
         }
@@ -224,6 +225,25 @@ const char* getUrlFile(const char* url)
         }
     }
     return lastSlashPos + 1;
+}
+
+std::string jsonStringEscape(const char* str)
+{
+    std::string buf;
+    for (const char* ptr = str; *ptr; ptr++) {
+        char ch = *ptr;
+        switch (ch) {
+            case '\b': buf.append("\b", 2); break;
+            case '\f': buf.append("\f", 2); break;
+            case '\r': buf.append("\r", 2); break;
+            case '\n': buf.append("\n", 2); break;
+            case '\t': buf.append("\t", 2); break;
+            case '\"': buf.append("\"", 2); break;
+            case '\\': buf.append("\\", 2); break;
+            default: buf += ch; break;
+        }
+    }
+    return buf;
 }
 
 int16_t currentCpuFreq() {

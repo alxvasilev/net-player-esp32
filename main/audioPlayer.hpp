@@ -6,6 +6,7 @@
 #include "nvsHandle.hpp"
 #include "eventGroup.hpp"
 #include <st7735.hpp>
+#include "stationList.hpp"
 
 class DecoderNode;
 class EqualizerNode;
@@ -99,7 +100,7 @@ protected:
 public:
     static constexpr const char* const TAG = "AudioPlayer";
     Mutex mutex;
-    Playlist playlist;
+    std::unique_ptr<StationList> stationList;
     void setLogLevel(esp_log_level_t level) { esp_log_level_set(TAG, level); }
     AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, ST7735Display& lcd, bool useEq=true);
     AudioPlayer(ST7735Display& lcd);
@@ -108,7 +109,8 @@ public:
     AudioNode::Type outputType() const { return mStreamOut->type(); }
     NvsHandle& nvs() { return mNvsHandle; }
     void changeInput(AudioNode::Type inType);
-    void playUrl(const char* url, const char* record=nullptr);
+    bool playUrl(const char* url, const char* record=nullptr);
+    bool playCurrentStation();
     bool isStopped() const;
     bool isPaused() const;
     bool isPlaying() const;

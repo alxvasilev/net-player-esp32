@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <esp_log.h>
 #include <memory>
+#include <stdlib.h>
 
 template<typename T>
 struct BufPtr
@@ -48,14 +49,16 @@ class DynBuffer
 protected:
     char* mBuf;
     int mBufSize;
-    int mDataSize = 0;
+    int mDataSize;
 public:
     char* buf() { return mBuf; }
     const char* buf() const { return mBuf; }
     int capacity() const { return mBufSize; }
     int dataSize() const { return mDataSize; }
+    bool isEmpty() const { return mDataSize <= 0; }
     int freeSpace() const { return mBufSize - mDataSize; }
     DynBuffer(size_t allocSize = 0)
+    :mDataSize(0)
     {
         if (!allocSize) {
             mBuf = nullptr;
@@ -69,8 +72,28 @@ public:
         }
         mBufSize = allocSize;
     }
-    ~DynBuffer() { if (mBuf) free(mBuf); }
+    DynBuffer(char* data, size_t size) {
+        if (!data || !size) {
+            mBuf = nullptr;
+            mBufSize = mDataSize = 0;
+            return;
+        }
+        mBuf = (char*)malloc(size);
+        assert(mBuf);
+        memcpy(mBuf, data, size);
+        mBufSize = mDataSize = size;
+    }
+    ~DynBuffer() { if (mBuf) ::free(mBuf); }
     void clear() { mDataSize = 0; }
+    void freeBuf()
+    {
+        if (!mBuf) {
+            return;
+        }
+        ::free(mBuf);
+        mBuf = nullptr;
+        mBufSize = mDataSize = 0;
+    }
     char& operator[](int idx)
     {
         assert(idx >= 0 && idx < mDataSize);
@@ -104,7 +127,7 @@ public:
             reserve(needed);
         }
     }
-    char* appendPtr(int writeLen)
+    char* getAppendPtr(int writeLen)
     {
         ensureFreeSpace(writeLen);
         return mBuf + mDataSize;
@@ -128,25 +151,46 @@ public:
         if (mBuf) {
             ::free(mBuf);
         }
-        mBuf = other.mBuf;
         mBufSize = other.mBufSize;
         mDataSize = other.mDataSize;
-        other.release();
+        mBuf = other.release();
     }
-    void release() {
+    char* release() {
+        auto result = mBuf;
         mBuf = nullptr;
         mBufSize = mDataSize = 0;
+        return result;
     }
-    void append(const char* data, int dataSize)
+    DynBuffer& append(const char* data, int dataSize)
     {
         ensureFreeSpace(dataSize);
         memcpy(mBuf + mDataSize, data, dataSize);
         mDataSize += dataSize;
+        return *this;
     }
-    void appendChar(char ch)
+    template<class T>
+    DynBuffer& append(T val) { return append((const char*)&val, sizeof(val)); }
+    DynBuffer& appendChar(char ch)
     {
         ensureFreeSpace(1);
         mBuf[mDataSize++] = ch;
+        return *this;
+    }
+    DynBuffer& appendStr(const char* str, bool nullTerminate=false)
+    {
+        auto len = strlen(str);
+        if (len) {
+            append(str, nullTerminate ? len+1 : len);
+        } else if (nullTerminate) {
+            appendChar(0);
+        }
+        return *this;
+    }
+    void nullTerminate()
+    {
+        if (!mDataSize || mBuf[mDataSize-1] != 0) {
+            appendChar(0);
+        }
     }
     void truncateChar(int num=1)
     {
@@ -160,7 +204,7 @@ public:
         }
         int writeSize = freeSpace();
         for (;;) {
-            int num = ::vsnprintf(appendPtr(writeSize), writeSize, fmt, args);
+            int num = ::vsnprintf(getAppendPtr(writeSize), writeSize, fmt, args);
             if (num < 0) {
                 return num;
             } else if (num < writeSize) { // completely written
@@ -178,6 +222,26 @@ public:
         int ret = vprintf(fmt, args);
         va_end(args);
         return ret;
+    }
+    const char* toString()
+    {
+        if (!dataSize()) {
+            return nullptr;
+        }
+        DynBuffer result(dataSize());
+        auto end = mBuf + dataSize();
+        for (char* ptr = mBuf; ptr < end; ptr++) {
+            char ch = *ptr;
+            if (ch >= 32 && ch < 127 && ch != '\\') {
+                result.appendChar(ch);
+            } else {
+                result.appendChar('\\');
+                char buf[5];
+                result.appendStr(itoa(ch, buf, 16));
+            }
+        }
+        result.nullTerminate();
+        return result.release();
     }
 };
 

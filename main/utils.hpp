@@ -7,6 +7,7 @@
 #include <esp_log.h>
 #include <freertos/semphr.h>
 #include <memory>
+#include <string>
 #include "buffer.hpp"
 #include "mutex.hpp"
 #include "timer.hpp"
@@ -80,6 +81,7 @@ class UrlParams: public KeyValParser
 public:
     UrlParams(httpd_req_t* req);
 };
+std::string jsonStringEscape(const char* str);
 
 const char* getUrlFile(const char* url);
 class FileHandle: public std::unique_ptr<FILE, void(*)(FILE*)>

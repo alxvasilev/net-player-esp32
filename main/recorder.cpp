@@ -88,8 +88,12 @@ void TrackRecorder::onNewTrack(const char* trackName, StreamFormat fmt)
     assert(!mSinkFile);
     mCurrTrackName.clear();
 
+    std::string name = trackName;
+    name += '.';
+    name += fmt.codecTypeStr();
+
     struct stat info;
-    if (stat(trackNameToPath(trackName).c_str(), &info) == 0) {
+    if (stat(name.c_str(), &info) == 0) {
         ESP_LOGI(TAG, "onNewTrack: Track '%s' already exists, will not record it", trackName);
         return;
     }
@@ -99,9 +103,7 @@ void TrackRecorder::onNewTrack(const char* trackName, StreamFormat fmt)
         ESP_LOGE(TAG, "Error opening stream sink file '%s' for writing: %s", sinkFileName().c_str(), strerror(errno));
         return;
     }
-    mCurrTrackName = trackName;
-    mCurrTrackName += '.';
-    mCurrTrackName.append(fmt.codecTypeStr());
+    mCurrTrackName = name;
     ESP_LOGI(TAG, "Starting to record track '%s' on station %s", mCurrTrackName.c_str(), mStationName.c_str());
 }
 void TrackRecorder::onData(const void* data, int dataLen)

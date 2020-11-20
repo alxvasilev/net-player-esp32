@@ -45,6 +45,9 @@ AudioPlayer::AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, ST7735
     lcdInit();
     mNvsHandle.enableAutoCommit(20000);
     createPipeline(inType, outType);
+    if (inType == AudioNode::kTypeHttpIn) {
+        this->stationList.reset(new StationList());
+    }
     initTimedDrawTask();
 }
 
@@ -54,6 +57,9 @@ AudioPlayer::AudioPlayer(ST7735Display& lcd)
     lcdInit();
     mNvsHandle.enableAutoCommit(20000);
     initFromNvs();
+    if (inputType() == AudioNode::kTypeHttpIn) {
+        stationList.reset(new StationList());
+    }
     initTimedDrawTask();
 }
 
@@ -258,10 +264,12 @@ void AudioPlayer::destroyPipeline()
     mStreamOut.reset();
 }
 
-void AudioPlayer::playUrl(const char* url, const char* record)
+bool AudioPlayer::playUrl(const char* url, const char* record)
 {
     LOCK_PLAYER();
-    assert(mStreamIn && mStreamIn->type() == AudioNode::kTypeHttpIn);
+    if (!mStreamIn || mStreamIn->type() != AudioNode::kTypeHttpIn) {
+        return false;
+    }
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
     http.setUrl(url);
     if (record) {
@@ -270,6 +278,21 @@ void AudioPlayer::playUrl(const char* url, const char* record)
     if (isStopped()) {
         play();
     }
+    return true;
+}
+bool AudioPlayer::playCurrentStation()
+{
+   LOCK_PLAYER();
+   if (!this->stationList) {
+       ESP_LOGW(TAG, "There is no radio station list in this mode");
+       return false;
+   }
+   auto& station = this->stationList->currStation;
+   if (!station.isValid()) {
+       ESP_LOGW(TAG, "Radio station list is empty");
+       return false;
+   }
+   return playUrl(station.url(), (station.flags() & station.kFlagRecord) ? station.id() : nullptr);
 }
 
 bool AudioPlayer::isStopped() const
@@ -453,17 +476,24 @@ esp_err_t AudioPlayer::playUrlHandler(httpd_req_t *req)
     MutexLocker locker(self->mutex);
     UrlParams params(req);
     auto urlParam = params.strVal("url");
-    const char* url;
-    if (!urlParam) {
-        url = self->playlist.getNextTrack();
-        if (!url) {
+    const char* url = nullptr;
+    if (urlParam) {
+        url = urlParam.str;
+        self->playUrl(url);
+    } else {
+        if (!self->stationList) {
+            ESP_LOGW(TAG, "/play: Radio station list not initialized");
+            return ESP_FAIL;
+        }
+        self->stationList->next();
+        auto& station = self->stationList->currStation;
+        if (!station.isValid()) {
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Playlist is empty");
             return ESP_OK;
         }
-    } else {
-        url = urlParam.str;
+        self->playUrl(station.url(), station.flags() & station.kFlagRecord ? station.id() : nullptr);
+        url = station.url();
     }
-    self->playUrl(url);
     DynBuffer buf(128);
     buf.printf("Changing stream url to '%s'", url);
     httpd_resp_send(req, buf.buf(), buf.dataSize());
@@ -618,6 +648,9 @@ void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
     registerHttpGetHandler(server, "/eqget", &equalizerDumpUrlHandler);
     registerHttpGetHandler(server, "/eqset", &equalizerSetUrlHandler);
     registerHttpGetHandler(server, "/status", &getStatusUrlHandler);
+    if (stationList) {
+        stationList->registerHttpHandler(server);
+    }
 }
 
 bool AudioPlayer::onEvent(AudioNode *self, uint32_t event, void *buf, size_t bufSize)

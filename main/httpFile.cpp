@@ -34,23 +34,6 @@ const char* fileGetExtension(const std::string& str) {
     }
     return nullptr;
 }
-const std::string& jsonStringEscape(std::string& json)
-{
-    for (int pos = 0; pos < json.size(); pos++) {
-        char ch = json[pos];
-        switch (ch) {
-            case '\b': json.replace(pos, 2, "\b"); break;
-            case '\f': json.replace(pos, 2, "\f"); break;
-            case '\r': json.replace(pos, 2, "\r"); break;
-            case '\n': json.replace(pos, 2, "\n"); break;
-            case '\t': json.replace(pos, 2, "\t"); break;
-            case '\"': json.replace(pos, 2, "\""); break;
-            case '\\': json.replace(pos, 2, "\\"); break;
-            default: break;
-        }
-    }
-    return json;
-}
 static esp_err_t fsFilePostHandler(httpd_req_t* req)
 {
     auto fn = urlGetPathAfterSlashCnt(req->uri, 1);
@@ -125,7 +108,8 @@ bool respondWithDirContent(const std::string& dirname, httpd_req_t* req)
             break;
         }
         fname = entry->d_name;
-        jsonStringEscape(fname);
+        std::string buf;
+        fname = jsonStringEscape(fname.c_str());
         buf = (cnt++) ? ",{\"n\":\"" : "{\"n\":\"";
         buf.append(fname).append("\",\"");
         fullName = dirname + '/' + fname;
@@ -143,7 +127,7 @@ bool respondWithDirContent(const std::string& dirname, httpd_req_t* req)
         httpd_resp_send_chunk(req, buf.c_str(), buf.size());
     }
     closedir(dir);
-    httpd_resp_send_chunk(req, "]}", 2);
+    httpd_resp_sendstr_chunk(req, "]}");
     httpd_resp_send_chunk(req, nullptr, 0);
     return true;
 }
