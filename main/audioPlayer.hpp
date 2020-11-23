@@ -19,14 +19,15 @@ namespace nvs {
 class AudioPlayer: public AudioNode::EventHandler
 {
 public:
-    static constexpr int kHttpBufSize = 20 * 1024;
+    static constexpr int kHttpBufSize = 16 * 1024;
     static constexpr int kTitleScrollTickPeriodMs = 50;
 protected:
     enum Flags: uint8_t
     { kFlagUseEqualizer = 1, kFlagListenerHooked = 2, kFlagNoWaitPrefill = 4 };
     enum: uint8_t
     { kEventTerminating = 1, kEventScroll = 2, kEventVolLevel = 4, kEventTerminated = 8 };
-    enum { kVuLevelSmoothFactor = 4, kVuPeakHoldTime = 30, kVuPeakDropTime = 2,
+    enum { kLcdTaskStackSize = 1200, kLcdTaskPrio = 10,
+           kVuLevelSmoothFactor = 4, kVuPeakHoldTime = 30, kVuPeakDropTime = 2,
            kVuLedWidth = 20, kVuLedHeight = 8, kVuLedSpacing = 3
     };
     enum { kEqGainPrecisionDiv = 2 };

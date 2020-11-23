@@ -33,11 +33,11 @@ void I2sOutputNode::nodeThreadFunc()
         }
         myassert(mState == kStateRunning);
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
-            DataPullReq dpr(10240); // read all available data
-            auto err = mPrev->pullData(dpr, -1);
+            DataPullReq dpr(kPipelineBufSize); // read all available data
+            auto err = mPrev->pullData(dpr, mReadTimeout);
             if (err == kTimeout || err == kStreamFlush) {
-                ESP_LOGW(mTag, "Read timeout, sending silence");
-                i2s_zero_dma_buffer(mPort);
+                ESP_LOGW(mTag, "Buffer underrun (%dms timeout), code %d", mReadTimeout, err);
+                //i2s_zero_dma_buffer(mPort);
                 continue;
             } else if (err) {
                 i2s_zero_dma_buffer(mPort);

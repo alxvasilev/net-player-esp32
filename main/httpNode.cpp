@@ -82,7 +82,7 @@ bool HttpNode::createClient()
     cfg.event_handler = httpHeaderHandler;
     cfg.user_data = this;
     cfg.timeout_ms = kPollTimeoutMs;
-    cfg.buffer_size = kClientBufSize;
+    cfg.buffer_size = kHttpClientBufSize;
     cfg.method = HTTP_METHOD_GET;
 
     mClient = esp_http_client_init(&cfg);

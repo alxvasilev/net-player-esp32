@@ -23,7 +23,7 @@
 class HttpNode: public AudioNodeWithTask
 {
 protected:
-    enum { kPollTimeoutMs = 1000, kClientBufSize = 512, kReadSize = 1024,
+    enum { kPollTimeoutMs = 1000, kHttpClientBufSize = 512, kReadSize = 1024,
            kStackSize = 3600 };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1,
                     kCommandNotifyFlushed };

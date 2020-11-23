@@ -94,7 +94,7 @@ void AudioPlayer::lcdInit()
 
 void AudioPlayer::initTimedDrawTask()
 {
-    xTaskCreate(&lcdTimedDrawTask, "lcdTask", 3000, this, 20, nullptr);
+    xTaskCreate(&lcdTimedDrawTask, "lcdTask", kLcdTaskStackSize, this, kLcdTaskPrio, nullptr);
     mVolumeInterface->setLevelCallback(audioLevelCb, this);
 }
 

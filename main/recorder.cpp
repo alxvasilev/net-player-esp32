@@ -118,7 +118,7 @@ void TrackRecorder::onData(const void* data, int dataLen)
         ESP_LOGE(TAG, "Error writing to stream sink file: %s", strerror(errno));
     }
     auto msElapsed = timer.msElapsed();
-    if (msElapsed > 20) {
+    if (msElapsed > 80) {
         ESP_LOGW(TAG, "SDCard write took %d ms", msElapsed);
     }
 }

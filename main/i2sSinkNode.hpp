@@ -13,8 +13,10 @@ protected:
     bool mUseInternalDac;
     StreamFormat mFormat;
     int mReadTimeout;
-    enum { kDmaBufLen = 600, kDmaBufCnt = 3,
-           kStackSize = 9000, kDefaultSamplerate = 44100
+    enum {
+        kDmaBufLen = 1023, kDmaBufCnt = 3, // in samples, multiply by 4 for bytes
+        kPipelineBufSize = 4096, // little more than the max size of one decoded frame (i.e. 4 * 1152 for mp3)
+        kStackSize = 9000, kDefaultSamplerate = 44100
     };
     virtual void nodeThreadFunc();
     void adjustSamplesForInternalDac(char* sBuff, int len);
