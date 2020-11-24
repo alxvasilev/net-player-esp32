@@ -85,7 +85,7 @@ ST7735Display::ST7735Display(uint8_t spiHost)
 :SpiMaster(spiHost)
 {}
 
-void ST7735Display::init(int16_t width, int16_t height, const PinCfg& pins)
+void ST7735Display::init(Coord width, Coord height, const PinCfg& pins)
 {
     SpiMaster::init(pins.spi, 3);
     mWidth = width;
@@ -125,7 +125,7 @@ void ST7735Display::prepareSendPixels()
     setDcPin(1);
 }
 
-void ST7735Display::sendNextPixel(uint16_t pixel)
+void ST7735Display::sendNextPixel(Color pixel)
 {
     // WARNING: Requires prepareSendPixels() to have been called before
     spiSendVal(pixel);
@@ -143,7 +143,7 @@ void ST7735Display::sendData(const void* data, int size)
     spiSend(data, size);
 }
 
-uint16_t ST7735Display::rgb(uint8_t R, uint8_t G, uint8_t B)
+ST7735Display::Color ST7735Display::rgb(uint8_t R, uint8_t G, uint8_t B)
 {
   // RGB565
     return ((R >> 3) << 11) | ((G >> 2) << 5) | (B >> 3);
@@ -196,20 +196,20 @@ void ST7735Display::setOrientation(Orientation orientation)
     }
 }
 
-void ST7735Display::setWriteWindow(uint16_t XS, uint16_t YS, uint16_t w, uint16_t h)
+void ST7735Display::setWriteWindow(Coord XS, Coord YS, Coord w, Coord h)
 {
-  sendCmd(ST77XX_CASET, (uint32_t)(htobe16(XS) | (htobe16(XS + w - 1) << 16)));
-  sendCmd(ST77XX_RASET, (uint32_t)(htobe16(YS) | (htobe16(YS + h - 1) << 16)));
+  sendCmd(ST77XX_CASET, (uint32_t)(htobe16((uint16_t)XS) | (htobe16((uint16_t)(XS + w - 1)) << 16)));
+  sendCmd(ST77XX_RASET, (uint32_t)(htobe16((uint16_t)YS) | (htobe16((uint16_t)(YS + h - 1)) << 16)));
   sendCmd(ST77XX_RAMWR); // Memory write
 }
-void ST7735Display::setWriteWindowCoords(uint16_t XS, uint16_t YS, uint16_t XE, uint16_t YE)
+void ST7735Display::setWriteWindowCoords(Coord XS, Coord YS, Coord XE, Coord YE)
 {
-  sendCmd(ST77XX_CASET, (uint32_t)(htobe16(XS) | (htobe16(XE) << 16)));
-  sendCmd(ST77XX_RASET, (uint32_t)(htobe16(YS) | (htobe16(YE) << 16)));
+  sendCmd(ST77XX_CASET, (uint32_t)(htobe16((uint16_t)XS) | (htobe16((uint16_t)XE) << 16)));
+  sendCmd(ST77XX_RASET, (uint32_t)(htobe16((uint16_t)YS) | (htobe16((uint16_t)YE) << 16)));
   sendCmd(ST77XX_RAMWR); // Memory write
 }
 
-void ST7735Display::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
+void ST7735Display::fillRect(Coord x, Coord y, Coord w, Coord h, Color color)
 {
     setWriteWindow(x, y, w, h);
     // TODO: If we want to support SPI bus sharing, we must lock the bus
@@ -227,26 +227,26 @@ void ST7735Display::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_
     } while (num > 0);
 }
 
-void ST7735Display::setPixel(uint16_t x, uint16_t y, uint16_t color)
+void ST7735Display::setPixel(Coord x, Coord y, Color color)
 {
     setWriteWindowCoords(x, y, x, y);
     sendData(color);
 }
 
-void ST7735Display::hLine(uint16_t x1, uint16_t x2, uint16_t y)
+void ST7735Display::hLine(Coord x1, Coord x2, Coord y)
 {
     fillRect(x1, y, x2 - x1 + 1, 1);
 }
 
-void ST7735Display::vLine(uint16_t x, uint16_t y1, uint16_t y2)
+void ST7735Display::vLine(Coord x, Coord y1, Coord y2)
 {
     fillRect(x, y1, 1, y2 - y1 + 1);
 }
 
-void ST7735Display::line(int16_t x1, int16_t y1, int16_t x2, int16_t y2)
+void ST7735Display::line(Coord x1, Coord y1, Coord x2, Coord y2)
 {
-    int16_t dX = x2-x1;
-    int16_t dY = y2-y1;
+    Coord dX = x2-x1;
+    Coord dY = y2-y1;
 
     if (dX == 0) {
         vLine(x1, y1, y2);
@@ -257,13 +257,13 @@ void ST7735Display::line(int16_t x1, int16_t y1, int16_t x2, int16_t y2)
         return;
     }
 
-    int16_t dXsym = (dX > 0) ? 1 : -1;
-    int16_t dYsym = (dY > 0) ? 1 : -1;
+    Coord dXsym = (dX > 0) ? 1 : -1;
+    Coord dYsym = (dY > 0) ? 1 : -1;
     dX *= dXsym;
     dY *= dYsym;
-    int16_t dX2 = dX << 1;
-    int16_t dY2 = dY << 1;
-    int16_t di;
+    Coord dX2 = dX << 1;
+    Coord dY2 = dY << 1;
+    Coord di;
 
     if (dX >= dY) {
         di = dY2 - dX;
@@ -296,7 +296,7 @@ void ST7735Display::line(int16_t x1, int16_t y1, int16_t x2, int16_t y2)
     setPixel(x1, y1, mFgColor);
 }
 
-void ST7735Display::rect(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
+void ST7735Display::rect(Coord x1, Coord y1, Coord x2, Coord y2)
 {
     hLine(x1, x2, y1);
     hLine(x1, x2, y2);
@@ -304,10 +304,10 @@ void ST7735Display::rect(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
     vLine(x2, y1, y2);
 }
 
-void ST7735Display::blitMonoHscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
+void ST7735Display::blitMonoHscan(Coord sx, Coord sy, Coord w, Coord h,
     const uint8_t* binData, int8_t bgSpacing, int scale)
 {
-    int16_t bitW = w / scale;
+    Coord bitW = w / scale;
     setWriteWindow(sx, sy, w + bgSpacing, h);
     prepareSendPixels();
     const uint8_t* bits = binData;
@@ -347,10 +347,10 @@ void ST7735Display::blitMonoHscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
 
 /** @param bgSpacing Draw this number of columns with background color to the right
  */
-void ST7735Display::blitMonoVscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
+void ST7735Display::blitMonoVscan(Coord sx, Coord sy, Coord w, Coord h,
     const uint8_t* binData, int8_t bgSpacing, int scale)
 {
-    int16_t endX = sx + w;
+    Coord endX = sx + w;
     if (endX > mWidth) {
         w = mWidth - sx - 1;
         if (w < 0) {
@@ -362,8 +362,8 @@ void ST7735Display::blitMonoVscan(int16_t sx, int16_t sy, int16_t w, int16_t h,
     }
 
     // scan horizontally in display RAM, but vertically in char data
-    int16_t bitH = h / scale;
-    int16_t bitW = w / scale;
+    Coord bitH = h / scale;
+    Coord bitW = w / scale;
     int8_t byteHeight = (bitH + 7) / 8;
     setWriteWindow(sx, sy, bitW * scale + bgSpacing, h);
     prepareSendPixels();
@@ -443,7 +443,7 @@ bool ST7735Display::putc(uint8_t ch, uint8_t flags, uint8_t startCol)
 
     // we need to calculate new cursor X in order to determine if we
     // should increment cursorY. That's why we do the newCursorX gymnastics
-    int16_t newCursorX = cursorX + width + charSpc;
+    Coord newCursorX = cursorX + width + charSpc;
     if (newCursorX > mWidth) {
         if (cursorX < mWidth && (flags & kFlagAllowPartial)) {
             newCursorX = mWidth;
@@ -494,7 +494,31 @@ void ST7735Display::nputs(const char* str, int len, uint8_t flags)
         }
     }
 }
-
+int ST7735Display::textWidth(const char *str)
+{
+    if (!mFont->widths) {
+        return (mFont->width + mFont->charSpacing) * mFontScale * strlen(str);
+    } else {
+        int w = 0;
+        for (const char* p = str; *p; p++) {
+            int idx = mFont->codeToIdx(*p);
+            if (idx <= 0) {
+                return -1;
+            }
+            w += mFontScale * mFont->widths[idx];
+        }
+        return w;
+    }
+}
+void ST7735Display::putsCentered(const char *str, int reserveRight)
+{
+    int padding = (mWidth - cursorX - reserveRight - textWidth(str)) / 2;
+    if (padding < 0) {
+        padding = 0;
+    }
+    cursorX += padding;
+    puts(str, kFlagNoAutoNewline);
+}
 void ST7735Display::gotoNextChar()
 {
     cursorX += mFont->width * mFontScale + mFont->charSpacing;

@@ -15,7 +15,7 @@
 #include "utils.hpp"
 #include "httpNode.hpp"
 
-static const char *TAG = "HTTP_NODE";
+static const char *TAG = "node-http";
 
 CodecType HttpNode::codecFromContentType(const char* content_type)
 {
@@ -323,6 +323,7 @@ void HttpNode::recv()
                 //ESP_LOGI(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.totalDataAvail());
                 //TODO: Implement IceCast metadata support
                 if (mWaitingPrefill && mRingBuf.totalDataAvail() >= mPrefillAmount) {
+                    ESP_LOGI(mTag, "Buffer prefilled >= %d bytes, allowing read", mPrefillAmount);
                     setWaitingPrefill(false);
                 }
                 return;
@@ -597,9 +598,10 @@ void HttpNode::IcyInfo::clear()
     mIcyMetaBuf.clear();
 }
 
-void HttpNode::startRecording(const char* stationName) {
+void HttpNode::startRecording(const char* stationName, TrackRecorder::IEventHandler* handler) {
     if (!mRecorder) {
         mRecorder.reset(new TrackRecorder("/sdcard/rec"));
     }
+    mRecorder->setEventHandler(handler);
     mRecorder->setStation(stationName);
 }

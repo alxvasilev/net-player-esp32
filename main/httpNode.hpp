@@ -103,5 +103,7 @@ public:
     void setUrl(const char* url);
     bool isConnected() const;
     const char* trackName() const;
-    void startRecording(const char* stationName);
+    void startRecording(const char* stationName, TrackRecorder::IEventHandler* handler = nullptr);
+    bool isRecordingNow() const { return mRecorder && mRecorder->isRecording(); }
+    bool isRecordingEnabled() const { return mRecorder.get() != nullptr; }
 };

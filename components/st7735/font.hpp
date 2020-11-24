@@ -51,6 +51,13 @@ struct Font
             return data + (byteWidth * height) * idx;
         }
     }
+    int charWidth(char ch=0) const {
+        if (!widths) {
+            return width;
+        }
+        auto idx = codeToIdx(ch);
+        return (idx < 0) ? 0 : widths[idx];
+    }
 };
 
 #endif // FONT_HPP

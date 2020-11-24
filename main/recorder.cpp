@@ -50,7 +50,7 @@ bool TrackRecorder::createDirIfNotExist(const char* dirname) const
     return true;
 }
 
-std::string TrackRecorder::trackNameToPath(const char* trackName) const
+std::string TrackRecorder::trackNameToPath(const std::string& trackName) const
 {
     return mRootPath + "/" + mStationName + "/" + trackName;
 }
@@ -67,7 +67,7 @@ void TrackRecorder::commit()
         ESP_LOGE(TAG, "commit: Error closing stream sink file, will not save track");
         return;
     }
-    auto name = trackNameToPath(mCurrTrackName.c_str());
+    auto name = trackNameToPath(mCurrTrackName);
     ret = rename(sinkFileName().c_str(), name.c_str());
     if (ret) {
         ESP_LOGE(TAG, "commit: Error renaming sink file to '%s': %s\nTrack will not be saved",
@@ -93,18 +93,21 @@ void TrackRecorder::onNewTrack(const char* trackName, StreamFormat fmt)
     name += fmt.codecTypeStr();
 
     struct stat info;
-    if (stat(name.c_str(), &info) == 0) {
+    if (stat(trackNameToPath(name).c_str(), &info) == 0) {
         ESP_LOGI(TAG, "onNewTrack: Track '%s' already exists, will not record it", trackName);
+        notifyRecording();
         return;
     }
 
     mSinkFile = fopen(sinkFileName().c_str(), "w+");
     if (!mSinkFile) {
         ESP_LOGE(TAG, "Error opening stream sink file '%s' for writing: %s", sinkFileName().c_str(), strerror(errno));
+        notifyRecording();
         return;
     }
     mCurrTrackName = name;
     ESP_LOGI(TAG, "Starting to record track '%s' on station %s", mCurrTrackName.c_str(), mStationName.c_str());
+    notifyRecording();
 }
 void TrackRecorder::onData(const void* data, int dataLen)
 {
@@ -129,5 +132,18 @@ void TrackRecorder::abortTrack()
         mSinkFile = nullptr;
     }
     mCurrTrackName.clear();
+    notifyRecording();
 }
 
+void TrackRecorder::notifyRecording()
+{
+    if (!mEventHandler) {
+        return;
+    }
+    bool enabled = isRecording();
+    if (enabled == mLastNotifiedRec) {
+        return;
+    }
+    mLastNotifiedRec = enabled;
+    mEventHandler->onRecord(enabled);
+}

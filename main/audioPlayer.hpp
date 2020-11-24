@@ -7,6 +7,7 @@
 #include "eventGroup.hpp"
 #include <st7735.hpp>
 #include "stationList.hpp"
+#include "recorder.hpp"
 
 class DecoderNode;
 class EqualizerNode;
@@ -16,10 +17,10 @@ namespace nvs {
     class NVSHandle;
 }
 
-class AudioPlayer: public AudioNode::EventHandler
+class AudioPlayer: public AudioNode::EventHandler, public TrackRecorder::IEventHandler
 {
 public:
-    static constexpr int kHttpBufSize = 16 * 1024;
+    static constexpr int kHttpBufSize = 20 * 1024;
     static constexpr int kTitleScrollTickPeriodMs = 50;
 protected:
     enum Flags: uint8_t
@@ -30,6 +31,17 @@ protected:
            kVuLevelSmoothFactor = 4, kVuPeakHoldTime = 30, kVuPeakDropTime = 2,
            kVuLedWidth = 20, kVuLedHeight = 8, kVuLedSpacing = 3
     };
+    typedef enum: char {
+        kSymBlank = ' ',
+        kSymStopped = 'S',
+        kSymPaused = 'U',
+        kSymConnecting = '.',
+        kSymPlaying = '>',
+        kSymFavorite = 'F',
+        kSymRecording = 'R',
+        kSymRecEnabled = 'r'
+    } GuiPlayState; // used for displaying pause/connecting icon
+    static constexpr const Font& kPictoFont = Font_7x11;
     enum { kEqGainPrecisionDiv = 2 };
     static const float sDefaultEqGains[];
     Flags mFlags;
@@ -41,6 +53,8 @@ protected:
     NvsHandle mNvsHandle;
     ST7735Display& mLcd;
     EventGroup mEvents;
+// general display stuff
+    ST7735Display::Color mFontColor = ST7735Display::rgb(255, 255, 128);
 // track name scroll stuff
     bool mTitleScrollEnabled = false;
     DynBuffer mTrackTitle;
@@ -82,13 +96,15 @@ protected:
     float equalizerDoSetBandGain(int band, float dbGain);
     void equalizerSaveGains();
     void lcdInit();
+    void lcdDrawGui();
     void initTimedDrawTask();
-    void lcdUpdateModeInfo();
-    void lcdUpdatePlayState();
+    void lcdUpdatePlayState(char state);
     void lcdSetupForTrackTitle();
     void lcdUpdateTrackTitle(const char* buf, int size);
     void lcdScrollTrackTitle();
     void lcdUpdateStationInfo();
+    void lcdUpdateRecIcon();
+    virtual void onRecord(bool enable); // TrackRecorder::IEventHandler interface
     // web URL handlers
     static esp_err_t playUrlHandler(httpd_req_t *req);
     static esp_err_t pauseUrlHandler(httpd_req_t *req);
@@ -111,7 +127,7 @@ public:
     NvsHandle& nvs() { return mNvsHandle; }
     void changeInput(AudioNode::Type inType);
     bool playUrl(const char* url, const char* record=nullptr);
-    bool playCurrentStation();
+    bool playStation(bool next);
     bool isStopped() const;
     bool isPaused() const;
     bool isPlaying() const;

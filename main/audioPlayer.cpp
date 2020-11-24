@@ -85,11 +85,6 @@ void AudioPlayer::lcdInit()
     mVuYellowStartX = mVuRedStartX - kVuLedWidth * 2;
     mVuLeftCtx.barY = mLcd.height() - 2 * kVuLedHeight - kVuLedSpacing;
     mVuRightCtx.barY = mVuLeftCtx.barY + kVuLedHeight + kVuLedSpacing;
-
-    mLcd.setBgColor(0, 0, 128);
-    mLcd.clear();
-    mLcd.setFgColor(0, 128, 128);
-    mLcd.hLine(0, mLcd.width()-1, 15);
 }
 
 void AudioPlayer::initTimedDrawTask()
@@ -149,38 +144,90 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
     detectVolumeNode();
     ESP_LOGI(TAG, "Audio pipeline:\n%s", printPipeline().c_str());
     loadSettings();
-    lcdUpdateModeInfo();
+    lcdDrawGui();
     return true;
 }
 
-void AudioPlayer::lcdUpdateModeInfo()
+void AudioPlayer::lcdDrawGui()
 {
+    LOCK_PLAYER();
+    mLcd.setBgColor(0, 0, 128);
+    mLcd.clear();
     mLcd.setFont(Font_7x11, 2);
-    mLcd.gotoXY(0, 0);
     mLcd.setFgColor(255, 255, 128);
+    mLcd.gotoXY(0, 0);
     auto type = mStreamIn->type();
     if (type == AudioNode::kTypeHttpIn) {
-        mLcd.putc('N');
+        mLcd.puts("Radio");
+        if (stationList) {
+            lcdUpdateStationInfo();
+        }
     } else if (type == AudioNode::kTypeA2dpIn) {
-        mLcd.putc('B');
+        mLcd.puts("Bluetooth");
     } else {
-        mLcd.putc('?');
+        mLcd.puts("?");
     }
-    lcdUpdatePlayState();
+    mLcd.setFgColor(0, 128, 128);
+    mLcd.hLine(0, mLcd.width()-1, mLcd.fontHeight() + 3);
 }
-
-void AudioPlayer::lcdUpdatePlayState()
+void AudioPlayer::lcdUpdateStationInfo()
 {
+    LOCK_PLAYER();
+    assert(mStreamIn && mStreamIn->type() == AudioNode::kTypeHttpIn);
+    auto& station = stationList->currStation;
+    if (!station.isValid()) {
+        return;
+    }
+// station name
     mLcd.setFont(Font_7x11, 2);
     mLcd.setFgColor(255, 255, 128);
-    mLcd.gotoXY(mLcd.charWidth() + 1, 0);
-    if (isPlaying()) {
-        mLcd.putc('>');
-    } else if (isStopped()) {
-        mLcd.putc('O');
-    } else {
-        mLcd.putc('\"');
+    mLcd.clear(0, mLcd.fontHeight() + 6, mLcd.width(), mLcd.fontHeight());
+    mLcd.gotoXY(0, mLcd.fontHeight() + 6);
+    mLcd.putsCentered(station.name());
+// station flags
+    mLcd.setFont(Font_7x11, 2); //TODO: Use pictogram font
+    mLcd.cursorY = 0;
+    if (station.flags() & Station::kFlagFavorite) {
+        mLcd.cursorX = mLcd.width() - mLcd.charWidth(kSymPlaying) - mLcd.charWidth(kSymRecording) - mLcd.charWidth(kSymFavorite) - 4;
+        mLcd.setFgColor(255, 0, 0);
+        mLcd.putc(kSymFavorite);
     }
+    lcdUpdateRecIcon();
+}
+void AudioPlayer::lcdUpdateRecIcon()
+{
+    char sym;
+    do {
+        if (!stationList) {
+            sym = kSymBlank;
+            break;
+        }
+        auto& station = stationList->currStation;
+        if (!station.isValid()) {
+            sym = kSymBlank;
+            break;
+        }
+        bool recEnabled = station.flags() & Station::kFlagRecord;
+        if (recEnabled) {
+            auto& httpNode = *static_cast<HttpNode*>(mStreamIn.get());
+            sym = httpNode.isRecordingNow() ? kSymRecording : kSymRecEnabled;
+        } else {
+            sym = kSymBlank;
+        }
+    } while(false);
+    mLcd.gotoXY(mLcd.width() - mLcd.charWidth(kSymPlaying) - mLcd.charWidth(sym) - 4, 0);
+    mLcd.setFgColor(200, 0, 0);
+    mLcd.putc(sym);
+}
+
+void AudioPlayer::lcdUpdatePlayState(char sym)
+{
+    LOCK_PLAYER();
+    mLcd.setFont(Font_7x11, 2); // TODO: use pictogram font
+    mLcd.setFgColor(255, 255, 128);
+    auto symWidth = mLcd.charWidth(sym);
+    mLcd.gotoXY(mLcd.width() - symWidth, 0);
+    mLcd.putc(sym);
 }
 
 std::string AudioPlayer::printPipeline()
@@ -273,25 +320,29 @@ bool AudioPlayer::playUrl(const char* url, const char* record)
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
     http.setUrl(url);
     if (record) {
-        http.startRecording(record);
+        http.startRecording(record, this);
     }
     if (isStopped()) {
         play();
     }
     return true;
 }
-bool AudioPlayer::playCurrentStation()
+bool AudioPlayer::playStation(bool next)
 {
    LOCK_PLAYER();
    if (!this->stationList) {
        ESP_LOGW(TAG, "There is no radio station list in this mode");
        return false;
    }
+   if (next) {
+       this->stationList->next();
+   }
    auto& station = this->stationList->currStation;
    if (!station.isValid()) {
        ESP_LOGW(TAG, "Radio station list is empty");
        return false;
    }
+   lcdUpdateStationInfo();
    return playUrl(station.url(), (station.flags() & station.kFlagRecord) ? station.id() : nullptr);
 }
 
@@ -318,7 +369,7 @@ void AudioPlayer::play()
     LOCK_PLAYER();
     mStreamIn->run();
     mStreamOut->run();
-    lcdUpdatePlayState();
+    lcdUpdatePlayState(kSymPlaying);
 }
 
 void AudioPlayer::pause()
@@ -328,7 +379,7 @@ void AudioPlayer::pause()
     mStreamOut->pause();
     mStreamIn->waitForState(AudioNodeWithTask::kStatePaused);
     mStreamOut->waitForState(AudioNodeWithTask::kStatePaused);
-    lcdUpdatePlayState();
+    lcdUpdatePlayState(kSymPaused);
 }
 
 void AudioPlayer::resume()
@@ -347,7 +398,7 @@ void AudioPlayer::stop()
    if (mVolumeInterface) {
        mVolumeInterface->clearAudioLevels();
    }
-   lcdUpdatePlayState();
+   lcdUpdatePlayState(kSymStopped);
 }
 
 bool AudioPlayer::volumeSet(uint16_t vol)
@@ -473,26 +524,19 @@ AudioPlayer::~AudioPlayer()
 esp_err_t AudioPlayer::playUrlHandler(httpd_req_t *req)
 {
     auto self = static_cast<AudioPlayer*>(req->user_ctx);
-    MutexLocker locker(self->mutex);
     UrlParams params(req);
     auto urlParam = params.strVal("url");
     const char* url = nullptr;
+    MutexLocker locker(self->mutex); // needed only to get the url for http response
     if (urlParam) {
         url = urlParam.str;
         self->playUrl(url);
     } else {
-        if (!self->stationList) {
-            ESP_LOGW(TAG, "/play: Radio station list not initialized");
+        if (!self->playStation(true)) {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Playlist is empty");
             return ESP_FAIL;
         }
-        self->stationList->next();
-        auto& station = self->stationList->currStation;
-        if (!station.isValid()) {
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Playlist is empty");
-            return ESP_OK;
-        }
-        self->playUrl(station.url(), station.flags() & station.kFlagRecord ? station.id() : nullptr);
-        url = station.url();
+        url = self->stationList->currStation.url();
     }
     DynBuffer buf(128);
     buf.printf("Changing stream url to '%s'", url);
@@ -659,7 +703,7 @@ bool AudioPlayer::onEvent(AudioNode *self, uint32_t event, void *buf, size_t buf
         if (event == HttpNode::kEventTrackInfo) {
             lcdUpdateTrackTitle((const char*)buf, bufSize);
         } else if (event == HttpNode::kEventConnected) {
-            lcdUpdateStationInfo();
+            lcdUpdatePlayState(kSymPlaying);
         }
     }
     return true;
@@ -842,7 +886,11 @@ void AudioPlayer::vuDrawChannel(VuLevelCtx& ctx, int16_t level)
         mLcd.clear(x + kVuLedWidth, ctx.barY, afterBg, kVuLedHeight);
     }
 }
-
+void AudioPlayer::onRecord(bool rec) {
+    LOCK_PLAYER();
+    lcdUpdateRecIcon();
+}
+/*
 void AudioPlayer::lcdUpdateStationInfo()
 {
     LOCK_PLAYER();
@@ -859,3 +907,4 @@ void AudioPlayer::lcdUpdateStationInfo()
     mLcd.setFgColor(255, 255, 128);
     mLcd.nputs(name, 3 * mLcd.charsPerLine());
 }
+*/
