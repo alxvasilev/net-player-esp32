@@ -20,7 +20,7 @@ namespace nvs {
 class AudioPlayer: public AudioNode::EventHandler, public TrackRecorder::IEventHandler
 {
 public:
-    static constexpr int kHttpBufSize = 20 * 1024;
+    static constexpr int kHttpBufSize = 35 * 1024;
     static constexpr int kTitleScrollTickPeriodMs = 50;
 protected:
     enum Flags: uint8_t
@@ -33,13 +33,13 @@ protected:
     };
     typedef enum: char {
         kSymBlank = ' ',
-        kSymStopped = 'S',
-        kSymPaused = 'U',
-        kSymConnecting = '.',
-        kSymPlaying = '>',
-        kSymFavorite = 'F',
-        kSymRecording = 'R',
-        kSymRecEnabled = 'r'
+        kSymStopped = 38,
+        kSymPaused = 37,
+        kSymConnecting = 34,
+        kSymPlaying = 36,
+        kSymFavorite = 33,
+        kSymRecording = 34,
+        kSymRecEnabled = 35
     } GuiPlayState; // used for displaying pause/connecting icon
     static constexpr const Font& kPictoFont = Font_7x11;
     enum { kEqGainPrecisionDiv = 2 };
@@ -81,7 +81,6 @@ protected:
     void vuDrawChannel(VuLevelCtx& ctx, int16_t level);
 
 //====
-    static void titleSrollTickCb(void* ctx);
     static void lcdTimedDrawTask(void* ctx);
 
     void createInputA2dp();
@@ -101,7 +100,7 @@ protected:
     void lcdUpdatePlayState(char state);
     void lcdSetupForTrackTitle();
     void lcdUpdateTrackTitle(const char* buf, int size);
-    void lcdScrollTrackTitle();
+    void lcdScrollTrackTitle(int step=1);
     void lcdUpdateStationInfo();
     void lcdUpdateRecIcon();
     virtual void onRecord(bool enable); // TrackRecorder::IEventHandler interface

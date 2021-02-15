@@ -9,6 +9,10 @@
 #include "equalizerNode.hpp"
 #include "a2dpInputNode.hpp"
 #include <stdfonts.hpp>
+extern Font font_CamingoBold43;
+extern Font font_Camingo22;
+extern Font font_Camingo32;
+extern Font font_Icons22;
 
 #define LOCK_PLAYER() MutexLocker locker(mutex)
 
@@ -153,7 +157,7 @@ void AudioPlayer::lcdDrawGui()
     LOCK_PLAYER();
     mLcd.setBgColor(0, 0, 128);
     mLcd.clear();
-    mLcd.setFont(Font_7x11, 2);
+    mLcd.setFont(font_Camingo22);
     mLcd.setFgColor(255, 255, 128);
     mLcd.gotoXY(0, 0);
     auto type = mStreamIn->type();
@@ -179,23 +183,28 @@ void AudioPlayer::lcdUpdateStationInfo()
         return;
     }
 // station name
-    mLcd.setFont(Font_7x11, 2);
+    mLcd.setFont(font_Camingo32);
     mLcd.setFgColor(255, 255, 128);
     mLcd.clear(0, mLcd.fontHeight() + 6, mLcd.width(), mLcd.fontHeight());
     mLcd.gotoXY(0, mLcd.fontHeight() + 6);
     mLcd.putsCentered(station.name());
 // station flags
-    mLcd.setFont(Font_7x11, 2); //TODO: Use pictogram font
+    mLcd.setFont(font_Icons22); //TODO: Use pictogram font
     mLcd.cursorY = 0;
+    mLcd.cursorX = (mLcd.width() - mLcd.charWidth(kSymFavorite)) / 2;
     if (station.flags() & Station::kFlagFavorite) {
-        mLcd.cursorX = mLcd.width() - mLcd.charWidth(kSymPlaying) - mLcd.charWidth(kSymRecording) - mLcd.charWidth(kSymFavorite) - 4;
         mLcd.setFgColor(255, 0, 0);
         mLcd.putc(kSymFavorite);
+    } else {
+        mLcd.putc(kSymBlank);
     }
+
     lcdUpdateRecIcon();
 }
 void AudioPlayer::lcdUpdateRecIcon()
 {
+    mLcd.setFont(font_Icons22);
+    mLcd.setFgColor(200, 0, 0);
     char sym;
     do {
         if (!stationList) {
@@ -216,14 +225,13 @@ void AudioPlayer::lcdUpdateRecIcon()
         }
     } while(false);
     mLcd.gotoXY(mLcd.width() - mLcd.charWidth(kSymPlaying) - mLcd.charWidth(sym) - 4, 0);
-    mLcd.setFgColor(200, 0, 0);
     mLcd.putc(sym);
 }
 
 void AudioPlayer::lcdUpdatePlayState(char sym)
 {
     LOCK_PLAYER();
-    mLcd.setFont(Font_7x11, 2); // TODO: use pictogram font
+    mLcd.setFont(font_Icons22);
     mLcd.setFgColor(255, 255, 128);
     auto symWidth = mLcd.charWidth(sym);
     mLcd.gotoXY(mLcd.width() - symWidth, 0);
@@ -754,24 +762,17 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int size)
     mTrackTitle.assign(buf, size - 1);
     mTrackTitle.append(" * ", 4);
     mTitleScrollCharOffset = mTitleScrollPixOffset = 0;
-    titleSrollTickCb(this);
     mTitleScrollEnabled = true;
 }
 
 void AudioPlayer::lcdSetupForTrackTitle()
 {
-    mLcd.setFont(Font_7x11, 2);
+    mLcd.setFont(font_CamingoBold43);
     mLcd.setFgColor(255, 255, 128);
     mLcd.gotoXY(0, (mLcd.height() - mLcd.charHeight()) / 2);
 }
 
-void AudioPlayer::titleSrollTickCb(void* ctx)
-{
-    auto& self = *static_cast<AudioPlayer*>(ctx);
-    self.mEvents.setBits(kEventScroll);
-}
-
-void AudioPlayer::lcdScrollTrackTitle()
+void AudioPlayer::lcdScrollTrackTitle(int step)
 {
     if (mTrackTitle.dataSize() <= 1) {
         return;
@@ -788,7 +789,8 @@ void AudioPlayer::lcdScrollTrackTitle()
         if (mTitleScrollPixOffset) {
             mLcd.putc(*(title++), mLcd.kFlagNoAutoNewline, mTitleScrollPixOffset); // can advance to the terminating NULL
         }
-        if (++mTitleScrollPixOffset >= mLcd.font()->width + mLcd.font()->charSpacing) {
+        mTitleScrollPixOffset += step;
+        if (mTitleScrollPixOffset >= mLcd.font()->width + mLcd.font()->charSpacing) {
             mTitleScrollPixOffset = 0;
             mTitleScrollCharOffset++;
         }

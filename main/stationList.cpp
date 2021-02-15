@@ -487,7 +487,7 @@ esp_err_t StationList::httpEditStation(httpd_req_t* req, UrlParams& params, bool
         station.setNotes(p.str);
     }
     auto flags = params.intVal("f", -1);
-    if (flags > 0) {
+    if (flags > -1) {
         station.setFlags(flags);
     }
     if (!station.isValid()) {

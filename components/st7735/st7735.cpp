@@ -372,15 +372,9 @@ void ST7735Display::blitMonoVscan(Coord sx, Coord sy, Coord w, Coord h,
     for (int y = 0; y < h; y++) {
         const uint8_t* bits = binData;
         for (int x = 0; x < bitW; x++) {
-            auto fg = (*bits) & mask;
-            if (fg) {
-                for (int rptX = 0; rptX < scale; rptX++) {
-                    sendNextPixel(mFgColor);
-                }
-            } else {
-                for (int rptX = 0; rptX < scale; rptX++) {
-                    sendNextPixel(mBgColor);
-                }
+            auto color = ((*bits) & mask) ? mFgColor : mBgColor;
+            for (int rptX = 0; rptX < scale; rptX++) {
+                sendNextPixel(color);
             }
             bits += byteHeight;
         }
@@ -496,16 +490,12 @@ void ST7735Display::nputs(const char* str, int len, uint8_t flags)
 }
 int ST7735Display::textWidth(const char *str)
 {
-    if (!mFont->widths) {
+    if (mFont->isMono()) {
         return (mFont->width + mFont->charSpacing) * mFontScale * strlen(str);
     } else {
         int w = 0;
         for (const char* p = str; *p; p++) {
-            int idx = mFont->codeToIdx(*p);
-            if (idx <= 0) {
-                return -1;
-            }
-            w += mFontScale * mFont->widths[idx];
+            w += mFontScale * mFont->charWidth(*p);
         }
         return w;
     }
