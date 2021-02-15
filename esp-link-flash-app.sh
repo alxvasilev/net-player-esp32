@@ -1,0 +1,1 @@
+esptool.py --chip esp32 --port socket://192.168.1.78:23 --baud 115200 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 80m --flash_size detect 0xd000 ./build/netplayer.bin
