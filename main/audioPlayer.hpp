@@ -21,7 +21,7 @@ class AudioPlayer: public AudioNode::EventHandler, public TrackRecorder::IEventH
 {
 public:
     static constexpr int kHttpBufSize = 35 * 1024;
-    static constexpr int kTitleScrollTickPeriodMs = 50;
+    static constexpr int kTitleScrollTickPeriodMs = 40;
 protected:
     enum Flags: uint8_t
     { kFlagUseEqualizer = 1, kFlagListenerHooked = 2, kFlagNoWaitPrefill = 4 };

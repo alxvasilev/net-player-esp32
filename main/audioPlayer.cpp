@@ -233,8 +233,7 @@ void AudioPlayer::lcdUpdatePlayState(char sym)
     LOCK_PLAYER();
     mLcd.setFont(font_Icons22);
     mLcd.setFgColor(255, 255, 128);
-    auto symWidth = mLcd.charWidth(sym);
-    mLcd.gotoXY(mLcd.width() - symWidth, 0);
+    mLcd.gotoXY(mLcd.width() - mLcd.charWidth(sym) - 1, 0);
     mLcd.putc(sym);
 }
 
@@ -755,7 +754,7 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int size)
     if (size <= 1) {
         mTitleScrollEnabled = false;
         lcdSetupForTrackTitle();
-        mLcd.puts("----------------", mLcd.kFlagNoAutoNewline|mLcd.kFlagAllowPartial);
+        mLcd.clear(mLcd.cursorX, mLcd.cursorY, mLcd.width(), mLcd.fontHeight());
         return;
     }
     mTrackTitle.reserve(size + 3);
