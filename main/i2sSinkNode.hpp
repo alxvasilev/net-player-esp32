@@ -14,7 +14,7 @@ protected:
     StreamFormat mFormat;
     int mReadTimeout;
     enum {
-        kDmaBufLen = 1023, kDmaBufCnt = 3, // in samples, multiply by 4 for bytes
+        kDmaBufLen = 1023, kDmaBufCnt = 2, // in samples, multiply by 4 for bytes
         kPipelineBufSize = 4096, // little more than the max size of one decoded frame (i.e. 4 * 1152 for mp3)
         kStackSize = 9000, kDefaultSamplerate = 44100
     };

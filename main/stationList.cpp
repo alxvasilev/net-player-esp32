@@ -439,6 +439,7 @@ esp_err_t StationList::httpDumpAllStations(httpd_req_t* req, UrlParams& params)
         }
         station.appendToJson(str);
         httpd_resp_send_chunk(req, str.c_str(), str.size());
+        vTaskDelay(2);
     });
     if (currStation.isValid()) {
         str = "],\"curr\":\"";
