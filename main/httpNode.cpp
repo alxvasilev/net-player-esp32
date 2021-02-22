@@ -171,10 +171,15 @@ bool HttpNode::connect(bool isReconnect)
     }
     sendEvent(kEventConnecting, nullptr, isReconnect);
 
-    for (int tries = 0; tries < 4; tries++) {
+    for (int tries = 0; tries < 26; tries++) {
         auto err = esp_http_client_open(mClient, 0);
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to open http stream, error %s", esp_err_to_name(err));
+            int msDelay = delayFromRetryCnt(tries);
+            ESP_LOGE(TAG, "Failed to open http stream, error %s. Will retry in %d ms", esp_err_to_name(err), msDelay);
+            if (mCmdQueue.waitForMessage(msDelay)) {
+                ESP_LOGD(mTag, "Command received while delaying retry, aborting");
+                return false;
+            }
             continue;
         }
 
@@ -184,16 +189,21 @@ bool HttpNode::connect(bool isReconnect)
         ESP_LOGI(TAG, "Connected to '%s': http code: %d, content-length: %u",
             mUrl, status_code, mContentLen);
 
-        if (status_code == 301 || status_code == 302) {
+        if (status_code < 0) {
+            auto msDelay = delayFromRetryCnt(tries);
+            ESP_LOGE(mTag, "Negative http status code while connecting, will retry in %d ms", msDelay);
+            if (mCmdQueue.waitForMessage(msDelay)) {
+                ESP_LOGD(mTag, "Command received while delaying retry, aborting");
+                return false;
+            }
+            continue;
+        }
+        else if (status_code == 301 || status_code == 302) {
             ESP_LOGI(TAG, "Following redirect...");
             esp_http_client_set_redirection(mClient);
             continue;
         }
         else if (status_code != 200 && status_code != 206) {
-            if (status_code < 0) {
-                ESP_LOGE(mTag, "Error connecting, will retry");
-                continue;
-            }
             ESP_LOGE(mTag, "Non-200 response code %d", status_code);
             return false;
         }
@@ -285,69 +295,57 @@ bool HttpNode::nextTrack()
     return true;
 }
 
-void HttpNode::recv()
+bool HttpNode::recv()
 {
-    for(;;) { // retry with next playlist track
-        for (int retries = 0; retries < 4; retries++) { // retry net errors
-            char* buf;
-            auto bufSize = mRingBuf.getWriteBuf(buf, kReadSize);
-
-            if (bufSize < 0) { // command queued
-                return;
+    for (int retries = 0; retries < 26; retries++) { // retry net errors
+        char* buf;
+        auto bufSize = mRingBuf.getWriteBuf(buf, kReadSize);
+        if (bufSize < 0) { // stop flag was set
+            return false;
+        }
+        int rlen = esp_http_client_read(mClient, buf, bufSize);
+        if (rlen <= 0) {
+            mRingBuf.abortWrite();
+            if (errno == ETIMEDOUT) {
+                continue;
             }
-            int rlen;
-            for (;;) { // periodic timeout - check abort request flag
-                rlen = esp_http_client_read(mClient, buf, bufSize);
-                if (rlen <= 0) {
-                    if (errno == ETIMEDOUT) {
-                        return;
-                    }
-                    ESP_LOGW(TAG, "Error receiving http stream, errno: %d, contentLen: %u, rlen = %d",
-                        errno, mContentLen, rlen);
-                }
-                break;
-            }
-            if (rlen > 0) {
-                if (mIcyInterval) {
-                    rlen = icyProcessRecvData(buf, rlen);
-                }
-                mRingBuf.commitWrite(rlen);
-                // First commit the write, only after that record to SD card,
-                // to avoid blocking the stream consumer
-                // Note: The buffer is still valid, even if it has been consumed
-                // before we reach the next line - ringbuf consumers are read-only
-                if (mRecorder) {
-                    mRecorder->onData(buf, rlen);
-                }
-                mBytePos += rlen;
-                //ESP_LOGI(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.totalDataAvail());
-                //TODO: Implement IceCast metadata support
-                if (mWaitingPrefill && mRingBuf.totalDataAvail() >= mPrefillAmount) {
-                    ESP_LOGI(mTag, "Buffer prefilled >= %d bytes, allowing read", mPrefillAmount);
-                    setWaitingPrefill(false);
-                }
-                return;
-            }
+            ESP_LOGW(TAG, "Error receiving http stream, errno: %d, contentLen: %d, recv len = %d",
+                errno, mContentLen, rlen);
             // even though len == 0 means graceful disconnect, i.e.
             //track end => should go to next track, this often happens when
             // network lags and stream sender aborts sending to us
             // => we should reconnect.
-            ESP_LOGW(TAG, "Reconnecting and retrying...");
+            int msDelay = delayFromRetryCnt(retries);
+            ESP_LOGW(TAG, "Reconnecting in %d ms...", msDelay);
+            if (mCmdQueue.waitForMessage(msDelay)) {
+                return false;
+            }
             destroyClient(); // just in case
             connect(true);
+            continue;
         }
-        // network retry gave up
-        if (!nextTrack()) {
-            setState(kStatePaused);
-            sendEvent(kEventNoMoreTracks, nullptr, 0);
-            return;
+        if (mIcyInterval) {
+            rlen = icyProcessRecvData(buf, rlen);
         }
-        // Try next track
-        mBytePos = 0;
-        sendEvent(kEventNextTrack, mUrl, 0);
-        destroyClient(); // just in case
-        connect();
+        mRingBuf.commitWrite(rlen);
+        // First commit the write, only after that record to SD card,
+        // to avoid blocking the stream consumer
+        // Note: The buffer is still valid, even if it has been consumed
+        // before we reach the next line - ringbuf consumers are read-only
+        if (mRecorder) {
+            mRecorder->onData(buf, rlen);
+        }
+        mBytePos += rlen;
+        //ESP_LOGI(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.totalDataAvail());
+        //TODO: Implement IceCast metadata support
+        if (mWaitingPrefill && mRingBuf.totalDataAvail() >= mPrefillAmount) {
+            ESP_LOGI(mTag, "Buffer prefilled >= %d bytes, allowing read", mPrefillAmount);
+            setWaitingPrefill(false);
+        }
+        return true;
     }
+    setState(kStatePaused);
+    return false;
 }
 int HttpNode::icyProcessRecvData(char* buf, int rlen)
 {
@@ -463,13 +461,14 @@ bool HttpNode::dispatchCommand(Command &cmd)
     case kCommandSetUrl:
         destroyClient();
         doSetUrl((const char*)cmd.arg);
+
         free(cmd.arg);
         cmd.arg = nullptr;
         mRingBuf.clear();
+
         mFlushRequested = true; // request flush along the pipeline
         setWaitingPrefill(true);
         setState(kStateRunning);
-        ESP_LOGI(TAG, "Url set, switched to running state");
         break;
     default: return false;
     }
@@ -604,4 +603,14 @@ void HttpNode::startRecording(const char* stationName, TrackRecorder::IEventHand
     }
     mRecorder->setEventHandler(handler);
     mRecorder->setStation(stationName);
+}
+int HttpNode::delayFromRetryCnt(int tries) {
+    if (tries < 4) {
+        return 0;
+    }
+    if (tries < 10) {
+        return tries * 100;
+    }
+    int delay = tries * 1000;
+    return (delay <= 30000) ? delay : 30000;
 }

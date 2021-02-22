@@ -41,7 +41,7 @@ protected:
     volatile bool mWaitingPrefill = true;
     volatile bool mFlushRequested = false;
     int mPrefillAmount;
-    uint32_t mContentLen;
+    int mContentLen;
     int32_t mIcyCtr = 0;
     int32_t mIcyInterval = 0;
     int16_t mIcyRemaining = 0;
@@ -60,7 +60,7 @@ protected:
     void disconnect();
     void destroyClient();
     bool nextTrack();
-    void recv();
+    bool recv();
     void setWaitingPrefill(bool prefill);
     int8_t waitPrefillChange(int msTimeout);
     void nodeThreadFunc();
@@ -106,4 +106,6 @@ public:
     void startRecording(const char* stationName, TrackRecorder::IEventHandler* handler = nullptr);
     bool isRecordingNow() const { return mRecorder && mRecorder->isRecording(); }
     bool isRecordingEnabled() const { return mRecorder.get() != nullptr; }
+    int delayFromRetryCnt(int tries);
+
 };

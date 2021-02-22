@@ -32,11 +32,15 @@ void I2sOutputNode::nodeThreadFunc()
             return;
         }
         myassert(mState == kStateRunning);
+        bool lastWasUnderrun = false;
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
             DataPullReq dpr(kPipelineBufSize); // read all available data
             auto err = mPrev->pullData(dpr, mReadTimeout);
             if (err == kTimeout || err == kStreamFlush) {
-                ESP_LOGW(mTag, "Buffer underrun (%dms timeout), code %d", mReadTimeout, err);
+                if (!lastWasUnderrun) {
+                    lastWasUnderrun = true;
+                    ESP_LOGW(mTag, "Buffer underrun (%dms timeout), code %d", mReadTimeout, err);
+                }
                 //i2s_zero_dma_buffer(mPort);
                 continue;
             } else if (err) {
@@ -44,6 +48,7 @@ void I2sOutputNode::nodeThreadFunc()
                 setState(kStatePaused);
                 break;
             }
+            lastWasUnderrun = false;
             if (dpr.fmt != mFormat) {
                 setFormat(dpr.fmt);
             }

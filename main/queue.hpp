@@ -29,6 +29,12 @@ public:
             (msTimeout < 0) ? portMAX_DELAY: msTimeout / portTICK_PERIOD_MS);
         return ret == pdTRUE;
     }
+    bool waitForMessage(int msTimeout)
+    {
+        Item item;
+        auto ret = xQueuePeek(mHandle, &item, msTimeout / portTICK_PERIOD_MS);
+        return ret == pdTRUE;
+    }
     UBaseType_t numMessages()
     {
         return uxQueueMessagesWaiting(mHandle);

@@ -27,6 +27,7 @@ class RingBuf
 protected:
     enum: uint8_t { kFlagHasData = 1, kFlagIsEmpty = 2, kFlagHasEmpty = 4,
                     kFlagWriteOp = 8, kFlagReadOp = 16, kFlagStop = 32 };
+    enum: uint8_t { kReadInProgress = 1, kWriteInProgress = 2 };
     char* mBuf;
     char* mBufEnd;
     char* mWritePtr;
@@ -34,9 +35,9 @@ protected:
     Mutex mMutex;
     // Prevents clearing the ringbuffer while someone is using the
     // buffer returned by contigRead()
-    Mutex mReadBufMutex;
     int mDataSize;
     EventGroup mEvents;
+    uint8_t mOpInProgress = 0;
     int bufSize() const { return mBufEnd - mBuf; }
     int availableForContigRead()
     {
@@ -97,15 +98,15 @@ protected:
         mEvents.setBits(kFlagWriteOp | kFlagHasData);
     }
     // -1: stopped, 0: timeout, 1: event occurred
-    int8_t waitFor(uint32_t flag, int msTimeout)
+    int8_t waitFor(uint32_t flags, int msTimeout)
     {
-        auto bits = mEvents.waitForOneNoReset(flag|kFlagStop, msTimeout);
+        auto bits = mEvents.waitForOneNoReset(flags | kFlagStop, msTimeout);
         if (bits & kFlagStop) {
             return -1;
         } else if (!bits) { //timeout
             return 0;
         }
-        assert(bits == flag);
+        assert(bits & flags);
         return 1;
     }
     int8_t waitAndReset(EventBits_t flag, int msTimeout)
@@ -161,11 +162,20 @@ public:
         }
     }
     int size() const { return mBufEnd - mBuf; }
+    /* NOTE: This is NOT safe if a read or write is in progress
+     * (commitRead/Write has not yet been called)
+     */
     void clear()
     {
-        MutexLocker locker(mMutex);
-        MutexLocker locker2(mReadBufMutex);
-        doClear();
+        for (;;) {
+            MutexLocker locker(mMutex);
+            if (!mOpInProgress) {
+                doClear();
+                return;
+            } else {
+                waitFor(kFlagReadOp | kFlagWriteOp, -1);
+            }
+        }
     }
     int totalDataAvail()
     {
@@ -249,7 +259,7 @@ public:
                 }
             }
         }
-        mReadBufMutex.lock();
+        mOpInProgress |= kReadInProgress;
         buf = mReadPtr;
         return avail > maxSize ? maxSize : avail;
     }
@@ -299,6 +309,7 @@ public:
             auto contig = availableForContigWrite();
             if (contig >= reqSize) {
                 buf = mWritePtr;
+                mOpInProgress |= kWriteInProgress;
                 return contig;
             }
             {
@@ -313,14 +324,19 @@ public:
     void commitWrite(int size) {
         MutexLocker locker(mMutex);
         commitContigWrite(size);
+        mOpInProgress &= ~kWriteInProgress;
+    }
+    void abortWrite() {
+        MutexLocker locker(mMutex);
+        mOpInProgress &= ~kWriteInProgress;
     }
     void commitContigRead(int size)
     {
         {
             MutexLocker locker(mMutex);
             doCommitContigRead(size);
+            mOpInProgress &= ~kReadInProgress;
         }
-        mReadBufMutex.unlock();
     }
     void setStopSignal()
     {
