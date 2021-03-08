@@ -15,7 +15,7 @@ protected:
     int mReadTimeout;
     enum {
         kDmaBufLen = 1023, kDmaBufCnt = 2, // in samples, multiply by 4 for bytes
-        kPipelineBufSize = 4096, // little more than the max size of one decoded frame (i.e. 4 * 1152 for mp3)
+        kDataPullSize = kDmaBufLen * 4, // one dma buffer
         kStackSize = 9000, kDefaultSamplerate = 44100
     };
     virtual void nodeThreadFunc();

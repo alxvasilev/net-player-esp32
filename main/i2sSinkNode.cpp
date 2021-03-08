@@ -34,7 +34,7 @@ void I2sOutputNode::nodeThreadFunc()
         myassert(mState == kStateRunning);
         bool lastWasUnderrun = false;
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
-            DataPullReq dpr(kPipelineBufSize); // read all available data
+            DataPullReq dpr(kDataPullSize); // read all available data
             auto err = mPrev->pullData(dpr, mReadTimeout);
             if (err == kTimeout || err == kStreamFlush) {
                 if (!lastWasUnderrun) {

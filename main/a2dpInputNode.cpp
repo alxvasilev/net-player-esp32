@@ -103,7 +103,7 @@ A2dpInputNode::A2dpInputNode(const char* btName)
     }
     gSelf = this;
     if (!BluetoothStack::instance()) {
-        BluetoothStack::startInClassicMode(btName);
+        BluetoothStack::start(ESP_BT_MODE_CLASSIC_BT, btName);
     }
 }
 

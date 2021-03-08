@@ -48,7 +48,7 @@ void BluetoothStack::avrcControllerCallback(esp_avrc_ct_cb_event_t event,
     ESP_LOGI(TAG, "remote control cb event: %d", event);
 }
 
-bool BluetoothStack::startInClassicMode(const char* discoName)
+bool BluetoothStack::start(esp_bt_mode_t mode, const char* discoName)
 {
     if (gInstance) {
         ESP_LOGE(TAG, "Bluetooth alreay started");
@@ -56,13 +56,14 @@ bool BluetoothStack::startInClassicMode(const char* discoName)
     }
 //    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
     esp_err_t err;
-    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-    if ((err = esp_bt_controller_init(&bt_cfg)) != ESP_OK) {
+    esp_bt_controller_config_t cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+    cfg.mode = mode;
+    if ((err = esp_bt_controller_init(&cfg)) != ESP_OK) {
         ESP_LOGE(TAG, "%s initialize controller failed: %s\n", __func__, esp_err_to_name(err));
         return false;
     }
 
-    if ((err = esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT)) != ESP_OK) {
+    if ((err = esp_bt_controller_enable(mode)) != ESP_OK) {
         ESP_LOGE(TAG, "%s enable controller failed: %s\n", __func__, esp_err_to_name(err));
         return false;
     }
