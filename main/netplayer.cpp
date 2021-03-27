@@ -222,8 +222,17 @@ extern "C" void app_main(void)
         auto before = xPortGetFreeHeapSize();
         BluetoothStack::disableClassic();
         ESP_LOGW(TAG, "Releasing Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
+/*
+        BluetoothStack::start(ESP_BT_MODE_BLE, "test");
+
+        BluetoothStack::discoverDevices([](BluetoothStack::DeviceList& devices) {
+            for (auto& item: devices) {
+                ESP_LOGI(TAG, "%s(%s): class: %x, rssi: %d", item.second.name.c_str(),
+                         item.first.toString().c_str(), item.second.devClass, item.second.rssi);
+            }
+        });
+*/
         player->playStation(false);
-        //player->playUrl("https://mediaserv38.live-streams.nl:18030/stream", "synthfm");
     } else if (player->inputType() == AudioNode::kTypeA2dpIn) {
         ESP_LOGI(TAG, "Player input set to Bluetooth A2DP sink");
         player->play();
