@@ -303,6 +303,9 @@ bool HttpNode::recv()
         if (bufSize < 0) { // stop flag was set
             return false;
         }
+        if (bufSize > kReadSize) { // ringbuf will return max possible value, which may be more than the requested
+            bufSize = kReadSize;
+        }
         int rlen = esp_http_client_read(mClient, buf, bufSize);
         if (rlen <= 0) {
             mRingBuf.abortWrite();
@@ -336,7 +339,7 @@ bool HttpNode::recv()
             mRecorder->onData(buf, rlen);
         }
         mBytePos += rlen;
-        //ESP_LOGI(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.totalDataAvail());
+        ESP_LOGD(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.totalDataAvail());
         //TODO: Implement IceCast metadata support
         if (mWaitingPrefill && mRingBuf.totalDataAvail() >= mPrefillAmount) {
             ESP_LOGI(mTag, "Buffer prefilled >= %d bytes, allowing read", mPrefillAmount);
@@ -509,9 +512,9 @@ HttpNode::~HttpNode()
     clearAllIcyInfo();
 }
 
-HttpNode::HttpNode(size_t bufSize)
-: AudioNodeWithTask("node-http", kStackSize), mRingBuf(bufSize),
-  mPrefillAmount(bufSize * 3 / 4)
+HttpNode::HttpNode(size_t bufSize, size_t prefillAmount, bool useSpiRam)
+: AudioNodeWithTask("node-http", kStackSize), mRingBuf(bufSize, useSpiRam),
+  mPrefillAmount(prefillAmount)
 {
 }
 

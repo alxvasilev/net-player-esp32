@@ -7,12 +7,14 @@ class WifiBase
 protected:
     EventGroup mEvents;
     const bool mIsAp;
+    esp_ip4_addr mLocalIp;
     void eventLoopCreateAndRegisterHandler(esp_event_handler_t handler);
 public:
     enum { kBitConnected = 1, kBitAborted = 2 };
     WifiBase(bool isAp): mEvents(kBitAborted), mIsAp(isAp){}
     virtual ~WifiBase() {}
     bool isAp() const { return mIsAp; }
+    const esp_ip4_addr& localIp() const { return mLocalIp; }
     bool waitForConnect(int msTimeout);
 };
 

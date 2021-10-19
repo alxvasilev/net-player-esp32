@@ -46,27 +46,45 @@ AudioPlayer::AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, ST7735
 :mFlags(useEq ? kFlagUseEqualizer : (Flags)0),
  mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd), mEvents(kEventTerminating)
 {
-    lcdInit();
-    mNvsHandle.enableAutoCommit(20000);
-    createPipeline(inType, outType);
-    if (inType == AudioNode::kTypeHttpIn) {
-        this->stationList.reset(new StationList());
-    }
-    initTimedDrawTask();
+    init(inType, outType);
 }
 
 AudioPlayer::AudioPlayer(ST7735Display& lcd)
 :mFlags((Flags)0), mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd)
 {
+    init(AudioNode::kTypeUnknown, AudioNode::kTypeUnknown);
+}
+
+void AudioPlayer::init(AudioNode::Type inType, AudioNode::Type outType)
+{
+    // Detect SPI RAM presence
+    auto buf = heap_caps_malloc(4, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (buf)
+    {
+        mHaveSpiRam = true;
+        free(buf);
+        ESP_LOGI(TAG, "SPI RAM available");
+    }
+    else
+    {
+        ESP_LOGI(TAG, "SPI RAM NOT available");
+    }
+    // ====
     lcdInit();
     mNvsHandle.enableAutoCommit(20000);
-    initFromNvs();
+    if (inType == AudioNode::kTypeUnknown)
+    {
+        initFromNvs();
+    }
+    else
+    {
+        createPipeline(inType, outType);
+    }
     if (inputType() == AudioNode::kTypeHttpIn) {
         stationList.reset(new StationList());
     }
     initTimedDrawTask();
 }
-
 void AudioPlayer::initFromNvs()
 {
     uint8_t useEq = mNvsHandle.readDefault("useEq", 1);
@@ -103,7 +121,9 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
     AudioNode* pcmSource = nullptr;
     switch(inType) {
     case AudioNode::kTypeHttpIn:
-        mStreamIn.reset(new HttpNode(kHttpBufSize));
+        mStreamIn.reset(mHaveSpiRam
+            ? new HttpNode(kHttpBufSizeSpiRam, 32768, true)
+            : new HttpNode(kHttpBufSizeInternal, kHttpBufSizeInternal * 3 / 4, false));
         mStreamIn->subscribeToEvents(HttpNode::kEventTrackInfo | HttpNode::kEventConnecting | HttpNode::kEventConnected);
         mStreamIn->setEventHandler(this);
 
@@ -133,7 +153,7 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         cfg.data_out_num = 27;
         cfg.data_in_num = -1;
 
-        mStreamOut.reset(new I2sOutputNode(0, &cfg));
+        mStreamOut.reset(new I2sOutputNode(0, &cfg, mHaveSpiRam));
         break;
     /*
     case kOutputA2dp:

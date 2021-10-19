@@ -38,6 +38,7 @@ void WifiClient::gotIpEventHandler(void* userp, esp_event_base_t event_base,
     myassert(event_id == IP_EVENT_STA_GOT_IP);
     ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
     auto self = static_cast<WifiClient*>(userp);
+    self->mLocalIp = event->ip_info.ip;
     ESP_LOGI(TAG, "Connected, got ip: " IPSTR, IP2STR(&event->ip_info.ip));
     self->mRetryNum = 0;
     self->mEvents.setBits(kBitConnected);

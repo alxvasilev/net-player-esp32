@@ -1,5 +1,3 @@
-#!/bin/sh
-if [ -z "$ESP_IP" ]; then
-    ESP_IP=192.168.1.5
-fi
+#!/bin/bash
+source ./esp-ip.sh
 curl ${ESP_IP}:80/log

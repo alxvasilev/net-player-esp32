@@ -35,11 +35,11 @@ void I2sOutputNode::nodeThreadFunc()
         bool lastWasUnderrun = false;
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
             DataPullReq dpr(kDataPullSize); // read all available data
-            auto err = mPrev->pullData(dpr, mReadTimeout);
+            auto err = mPrev->pullData(dpr, kPipelineReadTimeout);
             if (err == kTimeout || err == kStreamFlush) {
                 if (!lastWasUnderrun) {
                     lastWasUnderrun = true;
-                    ESP_LOGW(mTag, "Buffer underrun (%dms timeout), code %d", mReadTimeout, err);
+                    ESP_LOGW(mTag, "Buffer underrun (%dms timeout), code %d", kPipelineReadTimeout, err);
                 }
                 //i2s_zero_dma_buffer(mPort);
                 continue;
@@ -104,17 +104,10 @@ bool I2sOutputNode::setFormat(StreamFormat fmt)
         return false;
     }
     mFormat = fmt;
-    recalcReadTimeout(samplerate);
     return true;
 }
 
-void I2sOutputNode::recalcReadTimeout(int samplerate)
-{
-    mReadTimeout = 1000 * (kDmaBufCnt * kDmaBufLen) / samplerate;
-    ESP_LOGW(mTag, "Setting read timeout to %d ms", mReadTimeout);
-}
-
-I2sOutputNode::I2sOutputNode(int port, i2s_pin_config_t* pinCfg)
+I2sOutputNode::I2sOutputNode(int port, i2s_pin_config_t* pinCfg, bool haveSpiRam)
 :AudioNodeWithTask("node-i2s-out", kStackSize, 16), mFormat(kDefaultSamplerate, 16, 2)
 {
     if (port == 0xff) {
@@ -130,9 +123,9 @@ I2sOutputNode::I2sOutputNode(int port, i2s_pin_config_t* pinCfg)
     cfg.bits_per_sample = (i2s_bits_per_sample_t) 16;
     cfg.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
     cfg.communication_format = I2S_COMM_FORMAT_I2S_MSB;
-    cfg.dma_buf_count = kDmaBufCnt;
+    cfg.dma_buf_count = haveSpiRam ? kDmaBufCntSpiRam : kDmaBufCntInternalRam;
     cfg.dma_buf_len = kDmaBufLen;
-    cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL2;
+    cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL3|ESP_INTR_FLAG_IRAM;
     cfg.tx_desc_auto_clear = true;
 
     if (mUseInternalDac) {
@@ -153,7 +146,6 @@ I2sOutputNode::I2sOutputNode(int port, i2s_pin_config_t* pinCfg)
     }
 //  i2s_mclk_gpio_select(i2s->config.i2s_port, GPIO_NUM_0);
     i2s_zero_dma_buffer(mPort);
-    recalcReadTimeout(kDefaultSamplerate);
 }
 
 I2sOutputNode::~I2sOutputNode()

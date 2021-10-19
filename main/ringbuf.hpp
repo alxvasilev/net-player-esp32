@@ -145,8 +145,9 @@ public:
     // If user wants to keep some external state in sync with the ringbuffer,
     // they can use the ringbuf's mutex to protect that state
     Mutex& mutex() { return mMutex; }
-    RingBuf(size_t bufSize)
-    : mBuf((char*)malloc(bufSize)), mEvents(kFlagStop)
+    RingBuf(size_t bufSize, bool useSpiRam=false)
+        : mBuf((char*)heap_caps_malloc(bufSize, useSpiRam ? MALLOC_CAP_8BIT|MALLOC_CAP_SPIRAM : MALLOC_CAP_8BIT)),
+          mEvents(kFlagStop)
     {
         if (!mBuf) {
             ESP_LOGE("RINGBUF", "Out of memory allocation %zu bytes", bufSize);

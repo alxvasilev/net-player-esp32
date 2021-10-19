@@ -178,25 +178,29 @@ extern "C" void app_main(void)
     mountSpiffs();
 
     if (!gpio_get_level(kPinButton)) {
-        ESP_LOGW(TAG, "Button pressed at boot, start as access point for configuration");
+        ESP_LOGW(TAG, "Started as WiFi access point");
         wifi.reset(new WifiAp);
-        static_cast<WifiAp*>(wifi.get())->start("netplayer", "net12player", 8);
+        static_cast<WifiAp*>(wifi.get())->start("netplayer", "alexisthebest", 1);
         startWebserver(true);
         return;
     }
 
-    lcd.puts("Connecting to WiFi...\n");
-
     //== WIFI
+    lcd.puts("Connecting to WiFi...\n");
     wifi.reset(new WifiClient);
     static_cast<WifiClient*>(wifi.get())->start(CONFIG_WIFI_SSID, CONFIG_WIFI_PASSWORD);
     if (!wifi->waitForConnect(20000)) {
-        lcd.puts("Timed out, starting AP\n");
+        lcd.puts("...timed out, starting AP\n");
         lcd.puts("ssid: netplayer\n");
         lcd.puts("key: alexisthebest\n");
         wifi.reset(new WifiAp);
         static_cast<WifiAp*>(wifi.get())->start("netplayer", "alexisthebest", 1);
     }
+    char localIp[17];
+    snprintf(localIp, 17, IPSTR, IP2STR(&wifi->localIp()));
+    lcd.puts("Local IP is ");
+    lcd.puts(localIp);
+    lcd.newLine();
  //====
     lcd.puts("Starting webserver...\n");
     startWebserver();    

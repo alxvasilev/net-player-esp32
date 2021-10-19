@@ -95,7 +95,7 @@ public:
         const char* staUrl() const { return mStaUrl.ptr(); }
     };
     IcyInfo icyInfo;
-    HttpNode(size_t bufSize);
+    HttpNode(size_t bufSize, size_t prefillAmount, bool useSpiRam=false);
     virtual ~HttpNode();
     virtual Type type() const { return kTypeHttpIn; }
     virtual StreamError pullData(DataPullReq &dp, int timeout);

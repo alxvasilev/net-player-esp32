@@ -14,17 +14,18 @@ protected:
     StreamFormat mFormat;
     int mReadTimeout;
     enum {
-        kDmaBufLen = 1023, kDmaBufCnt = 2, // in samples, multiply by 4 for bytes
+        kDmaBufLen = 1023,
+        kDmaBufCntInternalRam = 2, kDmaBufCntSpiRam = 4, // in samples, multiply by 4 for bytes
         kDataPullSize = kDmaBufLen * 4, // one dma buffer
+        kPipelineReadTimeout = 1000, // in milliseconds
         kStackSize = 9000, kDefaultSamplerate = 44100
     };
     virtual void nodeThreadFunc();
     void adjustSamplesForInternalDac(char* sBuff, int len);
     void dmaFillWithSilence();
     bool setFormat(StreamFormat fmt);
-    void recalcReadTimeout(int samplerate);
 public:
-    I2sOutputNode(int port, i2s_pin_config_t* pinCfg);
+    I2sOutputNode(int port, i2s_pin_config_t* pinCfg, bool haveSpiRam);
     ~I2sOutputNode();
     virtual Type type() const { return kTypeI2sOut; }
     virtual IAudioVolume* volumeInterface() override { return this; }

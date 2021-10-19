@@ -109,6 +109,7 @@ public:
     int8_t charHeight() const { return (mFont->height + mFont->lineSpacing) * mFontScale; }
     int8_t charsPerLine() const { return mWidth / charWidth(); }
     void skipCharsX(int n) { cursorX += textWidth(n); }
+    void newLine();
     bool putc(uint8_t ch, uint8_t flags = 0, uint8_t startCol=0);
     void puts(const char* str, uint8_t flags = 0);
     void nputs(const char* str, int len, uint8_t flag=0);

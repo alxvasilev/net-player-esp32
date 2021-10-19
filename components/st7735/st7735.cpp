@@ -464,14 +464,17 @@ void ST7735Display::puts(const char* str, uint8_t flags)
     char ch;
     while((ch = *(str++))) {
         if (ch == '\n') {
-            cursorX = 0;
-            cursorY += (mFont->height + mFont->lineSpacing) * mFontScale;
+            newLine();
         } else if (ch != '\r') {
             putc(ch, flags);
         }
     }
 }
-
+void ST7735Display::newLine()
+{
+    cursorX = 0;
+    cursorY += (mFont->height + mFont->lineSpacing) * mFontScale;
+}
 void ST7735Display::nputs(const char* str, int len, uint8_t flags)
 {
     auto end = str + len;

@@ -20,7 +20,8 @@ namespace nvs {
 class AudioPlayer: public AudioNode::EventHandler, public TrackRecorder::IEventHandler
 {
 public:
-    static constexpr int kHttpBufSize = 35 * 1024;
+    static constexpr int kHttpBufSizeInternal = 35 * 1024;
+    static constexpr int kHttpBufSizeSpiRam = 350 * 1024;
     static constexpr int kTitleScrollTickPeriodMs = 40;
 protected:
     enum Flags: uint8_t
@@ -45,6 +46,7 @@ protected:
     enum { kEqGainPrecisionDiv = 2 };
     static const float sDefaultEqGains[];
     Flags mFlags;
+    bool mHaveSpiRam = false;
     std::unique_ptr<AudioNodeWithState> mStreamIn;
     std::unique_ptr<DecoderNode> mDecoder;
     std::unique_ptr<EqualizerNode> mEqualizer;
@@ -91,6 +93,7 @@ protected:
     void detectVolumeNode();
     std::string printPipeline();
     void loadSettings();
+    void init(AudioNode::Type inType, AudioNode::Type outType);
     void initFromNvs();
     float equalizerDoSetBandGain(int band, float dbGain);
     void equalizerSaveGains();
