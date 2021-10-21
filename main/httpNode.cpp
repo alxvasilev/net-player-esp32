@@ -15,6 +15,8 @@
 #include "utils.hpp"
 #include "httpNode.hpp"
 
+#define LOCK() MutexLocker locker(mMutex)
+
 static const char *TAG = "node-http";
 
 CodecType HttpNode::codecFromContentType(const char* content_type)
@@ -63,13 +65,20 @@ bool HttpNode::isPlaylist()
     return (dot && ((strcasecmp(dot, ".m3u") == 0 || strcasecmp(dot, ".m3u8") == 0)));
 }
 
-void HttpNode::doSetUrl(const char *url)
+void HttpNode::doSetUrl(const char *url, const char* recStaName=nullptr)
 {
     ESP_LOGI(mTag, "Setting url to %s", url);
     if (mUrl) {
         free(mUrl);
     }
     mUrl = strdup(url);
+    if (mRecordingStationName) {
+        free(mRecordingStationName);
+        mRecordingStationName = nullptr;
+    }
+    if (recStaName) {
+        mRecordingStationName = strdup(recStaName);
+    }
     if (mClient) {
         esp_http_client_set_url(mClient, mUrl); // do it here to avoid keeping reference to the old, freed one
     }
@@ -109,23 +118,8 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
         self->mStreamFormat.codec = self->codecFromContentType(evt->header_value);
         ESP_LOGI(TAG, "Parsed content-type '%s' as %s", evt->header_value,
             self->mStreamFormat.codecTypeStr());
-    } else if (strcasecmp(key, "icy-metaint") == 0) {
-        auto self = static_cast<HttpNode*>(evt->user_data);
-        self->mIcyInterval = atoi(evt->header_value);
-        self->mIcyCtr = 0;
-        ESP_LOGI(TAG, "Response contains ICY metadata with interval %d", self->mIcyInterval);
-    } else if (strcasecmp(key, "icy-name") == 0) {
-        MutexLocker locker(self->icyInfo.mutex);
-        self->icyInfo.mStaName.freeAndReset(strdup(evt->header_value));
-    } else if (strcasecmp(key, "icy-description") == 0) {
-        MutexLocker locker(self->icyInfo.mutex);
-        self->icyInfo.mStaDesc.freeAndReset(strdup(evt->header_value));
-    } else if (strcasecmp(key, "icy-genre") == 0) {
-        MutexLocker locker(self->icyInfo.mutex);
-        self->icyInfo.mStaGenre.freeAndReset(strdup(evt->header_value));
-    } else if (strcasecmp(key, "icy-url") == 0) {
-        MutexLocker locker(self->icyInfo.mutex);
-        self->icyInfo.mStaUrl.freeAndReset(strdup(evt->header_value));
+    } else {
+        self->mIcyParser.parseHeader(key, evt->header_value);
     }
     return ESP_OK;
 }
@@ -153,6 +147,9 @@ bool HttpNode::connect(bool isReconnect)
         ESP_LOGI(mTag, "connect: Buffer drained");
         mStreamFormat.reset();
         mBytePos = 0;
+        recordingMaybeStart();
+    } else {
+        recordingCancelCurrent();
     }
 
     if (!mClient) {
@@ -162,14 +159,14 @@ bool HttpNode::connect(bool isReconnect)
         }
     }
     // request IceCast stream metadata
-    clearAllIcyInfo();
+    mIcyParser.reset();
 
     if (mBytePos) { // we are resuming, send position
         char rang_header[32];
         snprintf(rang_header, 32, "bytes=%lld-", mBytePos);
         esp_http_client_set_header(mClient, "Range", rang_header);
     }
-    sendEvent(kEventConnecting, nullptr, isReconnect);
+    sendEvent(kEventConnecting, isReconnect);
 
     for (int tries = 0; tries < 26; tries++) {
         auto err = esp_http_client_open(mClient, 0);
@@ -218,16 +215,10 @@ bool HttpNode::connect(bool isReconnect)
             doSetUrl(url);
             continue;
         }
-        if (!mIcyInterval) {
+        if (!mIcyParser.icyInterval()) {
             ESP_LOGW(TAG, "Source does not send ShoutCast metadata");
         }
-        {
-            MutexLocker locker(icyInfo.mutex);
-            if (!icyInfo.mStaUrl) {
-                icyInfo.mStaUrl.freeAndReset(strdup(mUrl));
-            }
-        }
-        sendEvent(kEventConnected, nullptr, isReconnect);
+        sendEvent(kEventConnected, isReconnect);
         return true;
     }
     return false;
@@ -327,8 +318,18 @@ bool HttpNode::recv()
             connect(true);
             continue;
         }
-        if (mIcyInterval) {
-            rlen = icyProcessRecvData(buf, rlen);
+        if (mIcyParser.icyInterval()) {
+            bool isFirst = !mIcyParser.trackName();
+            bool gotTitle = mIcyParser.processRecvData(buf, rlen);
+            if (gotTitle) {
+                mIcyEventAfterBytes = isFirst ? 0 : mRingBuf.dataSize();
+                ESP_LOGW(TAG, "Track title changed to: '%s', will signal after %d bytes", mIcyParser.trackName(), mIcyEventAfterBytes);
+                if (mRecorder && mBytePos) {
+                    LOCK();
+                    bool ok = mRecorder->onNewTrack(mIcyParser.trackName(), mStreamFormat);
+                    sendEvent(kEventRecording, ok);
+                }
+            }
         }
         mRingBuf.commitWrite(rlen);
         // First commit the write, only after that record to SD card,
@@ -339,9 +340,9 @@ bool HttpNode::recv()
             mRecorder->onData(buf, rlen);
         }
         mBytePos += rlen;
-        ESP_LOGD(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.totalDataAvail());
+        ESP_LOGD(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.dataSize());
         //TODO: Implement IceCast metadata support
-        if (mWaitingPrefill && mRingBuf.totalDataAvail() >= mPrefillAmount) {
+        if (mWaitingPrefill && mRingBuf.dataSize() >= mPrefillAmount) {
             ESP_LOGI(mTag, "Buffer prefilled >= %d bytes, allowing read", mPrefillAmount);
             setWaitingPrefill(false);
         }
@@ -350,108 +351,24 @@ bool HttpNode::recv()
     setState(kStatePaused);
     return false;
 }
-int HttpNode::icyProcessRecvData(char* buf, int rlen)
-{
-    if (mIcyRemaining) { // we are receiving metadata
-        MutexLocker locker(icyInfo.mutex);
-        auto& icyMeta = icyInfo.mIcyMetaBuf;
-        myassert(icyMeta.buf());
-        auto metaLen = std::min(rlen, (int)mIcyRemaining);
-        icyMeta.append(buf, metaLen);
-        mIcyRemaining -= metaLen;
-        if (mIcyRemaining <= 0) { // meta data complete
-            myassert(mIcyRemaining == 0);
-            icyMeta.appendChar(0);
-            mIcyCtr = rlen - metaLen;
-            if (mIcyCtr > 0) {
-                // there is stream data after end of metadata
-                memmove(buf, buf + metaLen, mIcyCtr);
-            } else { // no stream data after meta
-                myassert(mIcyCtr == 0);
-            }
-            icyParseMetaData();
-            return mIcyCtr;
-        } else { // metadata continues in next chunk
-            return 0; // all this chunk was metadata
-        }
-    } else { // not receiving metadata
-        if (mIcyCtr + rlen <= mIcyInterval) {
-            mIcyCtr += rlen;
-            return rlen; // no metadata in buffer
-        }
-        // metadata starts somewhere in our buffer
-        int metaOffset = mIcyInterval - mIcyCtr;
-        auto metaStart = buf + metaOffset;
-        int metaSize = (*metaStart << 4) + 1;
-        mIcyRemaining = metaSize; // includes the length byte
-        int metaChunkSize = std::min(rlen - metaOffset, metaSize);
 
-        MutexLocker locker(icyInfo.mutex);
-        auto& icyMeta = icyInfo.mIcyMetaBuf;
-        if (metaSize > 1) {
-            icyMeta.clear();
-            icyMeta.ensureFreeSpace(mIcyRemaining); // includes terminating null
-            if (metaChunkSize > 1) {
-                icyMeta.append(metaStart+1, metaChunkSize-1);
-            }
-        }
-        mIcyRemaining -= metaChunkSize;
-        if (mIcyRemaining > 0) { // metadata continues in next chunk
-            mIcyCtr = 0;
-            return metaOffset;
-        }
-        // meta starts and ends in our buffer
-        myassert(mIcyRemaining == 0);
-        int remLen = rlen - metaOffset - metaSize;
-        mIcyCtr = remLen;
-        if (metaSize > 1) {
-            icyMeta.appendChar(0);
-            icyParseMetaData();
-        }
-        if (remLen > 0) { // we have stream data after the metadata
-            memmove(metaStart, metaStart + metaSize, remLen);
-            return metaOffset + remLen;
-        } else {
-            return metaOffset; // no stream data after metadata
-        }
-    }
-}
-void HttpNode::icyParseMetaData()
-{
-    const char kStreamTitlePrefix[] = "StreamTitle='";
-    auto& icyMetaBuf = icyInfo.mIcyMetaBuf;
-    auto start = strstr(icyMetaBuf.buf(), kStreamTitlePrefix);
-    if (!start) {
-        ESP_LOGW(TAG, "ICY parse error: StreamTitle= string not found");
-        return;
-    }
-    start += sizeof(kStreamTitlePrefix)-1; //sizeof(kStreamTitlePreix) incudes the terminating NULL
-    auto end = strchr(start, ';');
-    int titleSize;
-    if (!end) {
-        ESP_LOGW(TAG, "ICY parse error: Closing quote of StreamTitle not found");
-        titleSize = icyMetaBuf.dataSize() - sizeof(kStreamTitlePrefix) - 1;
-    } else {
-        end--; // move to closing quote
-        titleSize = end - start;
-    }
-    memmove(icyMetaBuf.buf(), start, titleSize);
-    icyMetaBuf[titleSize] = 0;
-    icyMetaBuf.setDataSize(titleSize + 1);
-    ESP_LOGW(TAG, "Track title changed to: '%s'", icyMetaBuf.buf());
-    sendEvent(kEventTrackInfo, icyMetaBuf.buf(), icyMetaBuf.dataSize());
-    if (mRecorder && mBytePos) {
-        mRecorder->onNewTrack(icyMetaBuf.buf(), mStreamFormat);
-    }
-}
-
-void HttpNode::setUrl(const char* url)
+void HttpNode::setUrl(const char* url, const char* recStaName)
 {
     if (!mTaskId) {
-        doSetUrl(url);
+        doSetUrl(url, recStaName);
     } else {
         ESP_LOGI(mTag, "Posting setUrl command");
-        mCmdQueue.post(kCommandSetUrl, strdup(url));
+        auto urlLen = strlen(url);
+        auto staNameLen = recStaName ? strlen(recStaName) : 0;
+        char* data = (char*)malloc(urlLen + staNameLen + 2);
+        strcpy(data, url);
+        data[urlLen] = 0;
+        if (recStaName) {
+            strcpy(data+urlLen+1, recStaName);
+        } else {
+            data[urlLen+1] = 0;
+        }
+        mCmdQueue.post(kCommandSetUrl, data);
     }
 }
 
@@ -461,9 +378,11 @@ bool HttpNode::dispatchCommand(Command &cmd)
         return true;
     }
     switch(cmd.opcode) {
-    case kCommandSetUrl:
+    case kCommandSetUrl: {
         destroyClient();
-        doSetUrl((const char*)cmd.arg);
+        const char* url = (const char*)cmd.arg;
+        const char* staName = strchr(url, 0) + 1;
+        doSetUrl(url, staName);
 
         free(cmd.arg);
         cmd.arg = nullptr;
@@ -473,7 +392,9 @@ bool HttpNode::dispatchCommand(Command &cmd)
         setWaitingPrefill(true);
         setState(kStateRunning);
         break;
-    default: return false;
+    }
+    default:
+        return false;
     }
     return true;
 }
@@ -509,12 +430,13 @@ HttpNode::~HttpNode()
 {
     stop();
     destroyClient();
-    clearAllIcyInfo();
+    free(mUrl);
+    free(mRecordingStationName);
 }
 
 HttpNode::HttpNode(size_t bufSize, size_t prefillAmount, bool useSpiRam)
 : AudioNodeWithTask("node-http", kStackSize), mRingBuf(bufSize, useSpiRam),
-  mPrefillAmount(prefillAmount)
+  mPrefillAmount(prefillAmount), mIcyParser(mMutex)
 {
 }
 
@@ -558,6 +480,15 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp, int timeout)
         return kTimeout;
     } else {
         dp.size = ret;
+        if (mIcyEventAfterBytes >= 0) {
+            mIcyEventAfterBytes -= ret;
+            if (mIcyEventAfterBytes <= 0) {
+                mIcyEventAfterBytes = -1;
+                // no need to lock icy info, as our thread is the one who modifies it
+                ESP_LOGI(TAG, "Sending title event '%s'", mIcyParser.trackName());
+                sendEvent(kEventTrackInfo, (uintptr_t)mIcyParser.trackName());
+            }
+        }
         return kNoError;
     }
 }
@@ -585,28 +516,47 @@ int8_t HttpNode::waitPrefillChange(int msTimeout)
     }
 }
 
-void HttpNode::clearAllIcyInfo()
-{
-    mIcyInterval = mIcyCtr = mIcyRemaining = 0;
-    icyInfo.clear();
-}
-
-void HttpNode::IcyInfo::clear()
-{
-    mStaName.free();
-    mStaDesc.free();
-    mStaGenre.free();
-    mStaUrl.free();
-    mIcyMetaBuf.clear();
-}
-
-void HttpNode::startRecording(const char* stationName, TrackRecorder::IEventHandler* handler) {
+bool HttpNode::recordingMaybeStart() {
+    LOCK();
+    if (!mRecordingStationName) {
+        return false;
+    }
     if (!mRecorder) {
         mRecorder.reset(new TrackRecorder("/sdcard/rec"));
     }
-    mRecorder->setEventHandler(handler);
-    mRecorder->setStation(stationName);
+    mRecorder->setStation(mRecordingStationName);
+    sendEvent(kEventRecording, true);
+    return true;
 }
+
+void HttpNode::recordingCancelCurrent() {
+    LOCK();
+    if (!mRecorder) {
+        return;
+    }
+    mRecorder->abortTrack();
+    sendEvent(kEventRecording, false);
+}
+void HttpNode::recordingStop() {
+    LOCK();
+    mRecorder.reset();
+    if (mRecordingStationName) {
+        free(mRecordingStationName);
+        mRecordingStationName = nullptr;
+    }
+    sendEvent(kEventRecording, false);
+}
+bool HttpNode::recordingIsActive() const
+{
+    LOCK();
+    return mRecorder && mRecorder->isRecording();
+}
+bool HttpNode::recordingIsEnabled() const
+{
+    LOCK();
+    return mRecorder.get() != nullptr;
+}
+
 int HttpNode::delayFromRetryCnt(int tries) {
     if (tries < 4) {
         return 0;

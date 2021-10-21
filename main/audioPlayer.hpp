@@ -17,7 +17,7 @@ namespace nvs {
     class NVSHandle;
 }
 
-class AudioPlayer: public AudioNode::EventHandler, public TrackRecorder::IEventHandler
+class AudioPlayer: public AudioNode::EventHandler
 {
 public:
     static constexpr int kHttpBufSizeInternal = 35 * 1024;
@@ -102,11 +102,10 @@ protected:
     void initTimedDrawTask();
     void lcdUpdatePlayState(char state);
     void lcdSetupForTrackTitle();
-    void lcdUpdateTrackTitle(const char* buf, int size);
+    void lcdUpdateTrackTitle(const char* buf);
     void lcdScrollTrackTitle(int step=1);
     void lcdUpdateStationInfo();
     void lcdUpdateRecIcon();
-    virtual void onRecord(bool enable); // TrackRecorder::IEventHandler interface
     // web URL handlers
     static esp_err_t playUrlHandler(httpd_req_t *req);
     static esp_err_t pauseUrlHandler(httpd_req_t *req);
@@ -146,7 +145,7 @@ public:
     bool equalizerSetGainsBulk(char* str, size_t len);
     void registerUrlHanlers(httpd_handle_t server);
     // AudioNode::EventHandler interface
-    virtual bool onEvent(AudioNode *self, uint32_t type, void *buf, size_t bufSize) override;
+    virtual bool onEvent(AudioNode *self, uint32_t type, uintptr_t arg, size_t bufSize) override;
 };
 
 #endif

@@ -5,6 +5,7 @@
 #include <esp_log.h>
 #include <memory>
 #include <stdlib.h>
+#include <string.h>
 
 template<typename T>
 struct BufPtr
@@ -99,7 +100,18 @@ public:
         assert(idx >= 0 && idx < mDataSize);
         return mBuf[idx];
     }
-    operator bool() const { return mBuf && mDataSize > 0; }
+    operator bool() const {
+#ifdef NDEBUG
+        return mDataSize > 0;
+#else
+        if (mDataSize > 0) {
+            assert(mBuf);
+            return true;
+        } else {
+            return false;
+        }
+#endif
+    }
     void reserve(int newSize)
     {
         if (newSize <= mBufSize) {
@@ -140,7 +152,8 @@ public:
     }
     void setDataSize(int newSize)
     {
-        mDataSize = (newSize > mBufSize) ? mBufSize : newSize;
+        assert(newSize <= mBufSize);
+        mDataSize = newSize;
     }
     void assign(const char* data, int size) {
         resize(size);

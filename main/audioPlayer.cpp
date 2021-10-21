@@ -124,8 +124,8 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         mStreamIn.reset(mHaveSpiRam
             ? new HttpNode(kHttpBufSizeSpiRam, 32768, true)
             : new HttpNode(kHttpBufSizeInternal, kHttpBufSizeInternal * 3 / 4, false));
-        mStreamIn->subscribeToEvents(HttpNode::kEventTrackInfo | HttpNode::kEventConnecting | HttpNode::kEventConnected);
         mStreamIn->setEventHandler(this);
+        mStreamIn->subscribeToEvents(0xffff);
 
         mDecoder.reset(new DecoderNode);
         mDecoder->linkToPrev(mStreamIn.get());
@@ -239,7 +239,7 @@ void AudioPlayer::lcdUpdateRecIcon()
         bool recEnabled = station.flags() & Station::kFlagRecord;
         if (recEnabled) {
             auto& httpNode = *static_cast<HttpNode*>(mStreamIn.get());
-            sym = httpNode.isRecordingNow() ? kSymRecording : kSymRecEnabled;
+            sym = httpNode.recordingIsActive() ? kSymRecording : kSymRecEnabled;
         } else {
             sym = kSymBlank;
         }
@@ -345,10 +345,7 @@ bool AudioPlayer::playUrl(const char* url, const char* record)
         return false;
     }
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
-    http.setUrl(url);
-    if (record) {
-        http.startRecording(record, this);
-    }
+    http.setUrl(url, record);
     if (isStopped()) {
         play();
     }
@@ -688,8 +685,8 @@ esp_err_t AudioPlayer::getStatusUrlHandler(httpd_req_t* req)
     if (in->state() == AudioNode::kStateRunning &&
         in->type() == AudioNode::kTypeHttpIn) {
             auto http = static_cast<HttpNode*>(in);
-            auto& icy = http->icyInfo;
-            MutexLocker locker(icy.mutex);
+            MutexLocker locker(http->mMutex);
+            auto& icy = http->icyInfo();
             if (icy.staName()) {
                 buf.printf(",\"sname\":\"%s\"", icy.staName());
             }
@@ -724,13 +721,16 @@ void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
     }
 }
 
-bool AudioPlayer::onEvent(AudioNode *self, uint32_t event, void *buf, size_t bufSize)
+bool AudioPlayer::onEvent(AudioNode *self, uint32_t event, uintptr_t buf, size_t bufSize)
 {
     if (self->type() == AudioNode::kTypeHttpIn) {
         if (event == HttpNode::kEventTrackInfo) {
-            lcdUpdateTrackTitle((const char*)buf, bufSize);
+            lcdUpdateTrackTitle((const char*)buf);
         } else if (event == HttpNode::kEventConnected) {
             lcdUpdatePlayState(kSymPlaying);
+        } else if (event == HttpNode::kEventRecording) {
+            LOCK_PLAYER();
+            lcdUpdateRecIcon();
         }
     }
     return true;
@@ -768,17 +768,18 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
     vTaskDelete(nullptr);
 }
 
-void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int size)
+void AudioPlayer::lcdUpdateTrackTitle(const char* buf)
 {
     LOCK_PLAYER();
-    if (size <= 1) {
+    auto len = strlen(buf);
+    if (!len) {
         mTitleScrollEnabled = false;
         lcdSetupForTrackTitle();
         mLcd.clear(mLcd.cursorX, mLcd.cursorY, mLcd.width(), mLcd.fontHeight());
         return;
     }
-    mTrackTitle.reserve(size + 3);
-    mTrackTitle.assign(buf, size - 1);
+    mTrackTitle.reserve(len + 4);
+    mTrackTitle.assign(buf, len);
     mTrackTitle.append(" * ", 4);
     mTitleScrollCharOffset = mTitleScrollPixOffset = 0;
     mTitleScrollEnabled = true;
@@ -906,10 +907,6 @@ void AudioPlayer::vuDrawChannel(VuLevelCtx& ctx, int16_t level)
     if (afterBg > 0) {
         mLcd.clear(x + kVuLedWidth, ctx.barY, afterBg, kVuLedHeight);
     }
-}
-void AudioPlayer::onRecord(bool rec) {
-    LOCK_PLAYER();
-    lcdUpdateRecIcon();
 }
 /*
 void AudioPlayer::lcdUpdateStationInfo()

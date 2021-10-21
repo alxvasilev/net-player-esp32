@@ -120,7 +120,7 @@ public:
     };
     struct EventHandler
     {
-        virtual bool onEvent(AudioNode* self, uint32_t type, void* buf, size_t bufSize) = 0;
+        virtual bool onEvent(AudioNode* self, uint32_t type, uintptr_t arg, size_t bufSize) = 0;
     };
     const char* tag() { return mTag; }
 protected:
@@ -131,7 +131,7 @@ protected:
     void* mUserp = nullptr;
     uint32_t mSubscribedEvents = 0;
     EventHandler* mEventHandler = nullptr;
-    inline void sendEvent(uint32_t type, void* buf=nullptr, int bufSize=0);
+    inline void sendEvent(uint32_t type, uintptr_t arg=0, int bufSize=0);
     AudioNode(const char* tag): mTag(tag) {}
 public:
     virtual Type type() const = 0;
@@ -247,13 +247,13 @@ public:
     void setPriority(UBaseType_t prio) { mTaskPrio = prio; }
 };
 
-inline void AudioNode::sendEvent(uint32_t type, void *buf, int bufSize)
+inline void AudioNode::sendEvent(uint32_t type, uintptr_t arg, int bufSize)
 {
     if (!mEventHandler) {
         return;
     }
     if (mSubscribedEvents & type) {
-        mEventHandler->onEvent(this, type, buf, bufSize);
+        mEventHandler->onEvent(this, type, arg, bufSize);
     }
 }
 

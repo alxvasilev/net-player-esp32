@@ -77,10 +77,10 @@ void TrackRecorder::commit()
     ESP_LOGI(TAG, "Recorded track '%s' on station '%s'", mCurrTrackName.c_str(), mStationName.c_str());
 }
 
-void TrackRecorder::onNewTrack(const char* trackName, StreamFormat fmt)
+bool TrackRecorder::onNewTrack(const char* trackName, StreamFormat fmt)
 {
     if (mStationName.empty()) {
-        return;
+        return false;
     }
     if (mSinkFile) {
         commit();
@@ -95,19 +95,17 @@ void TrackRecorder::onNewTrack(const char* trackName, StreamFormat fmt)
     struct stat info;
     if (stat(trackNameToPath(name).c_str(), &info) == 0) {
         ESP_LOGI(TAG, "onNewTrack: Track '%s' already exists, will not record it", trackName);
-        notifyRecording();
-        return;
+        return false;
     }
 
     mSinkFile = fopen(sinkFileName().c_str(), "w+");
     if (!mSinkFile) {
         ESP_LOGE(TAG, "Error opening stream sink file '%s' for writing: %s", sinkFileName().c_str(), strerror(errno));
-        notifyRecording();
-        return;
+        return false;
     }
     mCurrTrackName = name;
     ESP_LOGI(TAG, "Starting to record track '%s' on station %s", mCurrTrackName.c_str(), mStationName.c_str());
-    notifyRecording();
+    return true;
 }
 void TrackRecorder::onData(const void* data, int dataLen)
 {
@@ -132,18 +130,4 @@ void TrackRecorder::abortTrack()
         mSinkFile = nullptr;
     }
     mCurrTrackName.clear();
-    notifyRecording();
-}
-
-void TrackRecorder::notifyRecording()
-{
-    if (!mEventHandler) {
-        return;
-    }
-    bool enabled = isRecording();
-    if (enabled == mLastNotifiedRec) {
-        return;
-    }
-    mLastNotifiedRec = enabled;
-    mEventHandler->onRecord(enabled);
 }

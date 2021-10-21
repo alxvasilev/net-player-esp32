@@ -178,7 +178,7 @@ public:
             }
         }
     }
-    int totalDataAvail()
+    int dataSize()
     {
         MutexLocker locker(mMutex);
         return mDataSize;
@@ -196,7 +196,7 @@ public:
         for (;;) {
             int64_t tsStart = esp_timer_get_time();
             mMutex.lock();
-            if (totalDataAvail() >= size) {
+            if (dataSize() >= size) {
                 break;
             }
             mMutex.unlock();

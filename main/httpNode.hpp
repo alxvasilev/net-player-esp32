@@ -18,6 +18,7 @@
 #include "utils.hpp"
 #include "audioNode.hpp"
 #include "playlist.hpp"
+#include "icyParser.hpp"
 #include "recorder.hpp"
 
 class HttpNode: public AudioNodeWithTask
@@ -32,6 +33,7 @@ protected:
     // are flags
     enum: uint8_t { kEvtPrefillChange = kEvtLast << 1 };
     char* mUrl = nullptr;
+    char* mRecordingStationName = nullptr;
     StreamFormat mStreamFormat;
     esp_http_client_handle_t mClient = nullptr;
     bool mAutoNextTrack = true; /* connect next track without open/close */
@@ -42,20 +44,16 @@ protected:
     volatile bool mFlushRequested = false;
     int mPrefillAmount;
     int mContentLen;
-    int32_t mIcyCtr = 0;
-    int32_t mIcyInterval = 0;
-    int16_t mIcyRemaining = 0;
-    void clearAllIcyInfo();
+    IcyParser mIcyParser;
+    int mIcyEventAfterBytes = -1;
     std::unique_ptr<TrackRecorder> mRecorder;
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     static CodecType codecFromContentType(const char* content_type);
     bool isPlaylist();
-    int icyProcessRecvData(char* buf, int len);
-    void icyParseMetaData();
     bool createClient();
     bool parseContentType();
     bool parseResponseAsPlaylist();
-    void doSetUrl(const char* url);
+    void doSetUrl(const char* url, const char* staName);
     bool connect(bool isReconnect=false);
     void disconnect();
     void destroyClient();
@@ -66,46 +64,31 @@ protected:
     void nodeThreadFunc();
     virtual bool dispatchCommand(Command &cmd);
     virtual void doStop();
+// recording stuff
+    bool recordingMaybeStart();
+    void recordingStop();
+    void recordingCancelCurrent();
+
 public:
     enum: uint32_t {
         kEventConnecting = kEventLastGeneric << 1,
         kEventConnected = kEventLastGeneric << 2,
         kEventNextTrack = kEventLastGeneric << 3,
         kEventNoMoreTracks = kEventLastGeneric << 4,
-        kEventTrackInfo = kEventLastGeneric << 5
+        kEventTrackInfo = kEventLastGeneric << 5,
+        kEventRecording = kEventLastGeneric << 6
     };
-    class IcyInfo
-    {
-    protected:
-        friend class HttpNode;
-        DynBuffer mIcyMetaBuf;
-        BufPtr<char> mStaName = nullptr;
-        BufPtr<char> mStaDesc = nullptr;
-        BufPtr<char> mStaGenre = nullptr;
-        BufPtr<char> mStaUrl = nullptr;
-        void clear();
-    public:
-        Mutex mutex;
-        const char* trackName() const {
-            return mIcyMetaBuf.dataSize() ? mIcyMetaBuf.buf() : nullptr;
-        }
-        const char* staName() const { return mStaName.ptr(); }
-        const char* staDesc() const { return mStaDesc.ptr(); }
-        const char* staGenre() const { return mStaGenre.ptr(); }
-        const char* staUrl() const { return mStaUrl.ptr(); }
-    };
-    IcyInfo icyInfo;
+    mutable Mutex mMutex;
+    IcyInfo& icyInfo() { return mIcyParser; }
     HttpNode(size_t bufSize, size_t prefillAmount, bool useSpiRam=false);
     virtual ~HttpNode();
     virtual Type type() const { return kTypeHttpIn; }
     virtual StreamError pullData(DataPullReq &dp, int timeout);
     virtual void confirmRead(int size);
-    void setUrl(const char* url);
+    void setUrl(const char* url, const char* recStationName);
     bool isConnected() const;
     const char* trackName() const;
-    void startRecording(const char* stationName, TrackRecorder::IEventHandler* handler = nullptr);
-    bool isRecordingNow() const { return mRecorder && mRecorder->isRecording(); }
-    bool isRecordingEnabled() const { return mRecorder.get() != nullptr; }
+    bool recordingIsActive() const;
+    bool recordingIsEnabled() const;
     int delayFromRetryCnt(int tries);
-
 };

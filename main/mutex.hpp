@@ -1,6 +1,7 @@
 #ifndef MUTEX_HPP_INCLUDED
 #define MUTEX_HPP_INCLUDED
 
+#include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
 class Mutex
