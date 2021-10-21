@@ -9,6 +9,7 @@
 #include "equalizerNode.hpp"
 #include "a2dpInputNode.hpp"
 #include <stdfonts.hpp>
+
 extern Font font_CamingoBold43;
 extern Font font_Camingo22;
 extern Font font_Camingo32;
@@ -81,7 +82,7 @@ void AudioPlayer::init(AudioNode::Type inType, AudioNode::Type outType)
         createPipeline(inType, outType);
     }
     if (inputType() == AudioNode::kTypeHttpIn) {
-        stationList.reset(new StationList());
+        stationList.reset(new StationList(mutex));
     }
     initTimedDrawTask();
 }
@@ -551,7 +552,7 @@ esp_err_t AudioPlayer::playUrlHandler(httpd_req_t *req)
     UrlParams params(req);
     auto urlParam = params.strVal("url");
     const char* url = nullptr;
-    MutexLocker locker(self->mutex); // needed only to get the url for http response
+    MutexLocker locker(self->mutex);
     if (urlParam) {
         url = urlParam.str;
         self->playUrl(url);

@@ -5,11 +5,13 @@
 #include <string>
 #include "utils.hpp"
 #include "autoString.hpp"
+#include <cJSON.h>
 
 static const char* TAG = "STALIST";
+using namespace std;
 
-StationList::StationList(const char *nsName)
-    :mNsName(strdup(nsName)), currStation(*this)
+StationList::StationList(Mutex& aMutex, const char *nsName)
+    :mNsName(strdup(nsName)), mutex(aMutex), currStation(*this)
 {
     auto err = nvs_open_from_partition("nvs", mNsName, NVS_READWRITE, &mNvsHandle);
     if (err != ESP_OK) {
@@ -116,12 +118,20 @@ bool StationList::next()
         return getNext(nullptr, currStation);
     }
 }
+bool StationList::stationExists(const char* id)
+{
+    size_t len;
+    return nvs_get_blob(mNvsHandle, id, nullptr, &len) == ESP_OK;
+}
 
 bool Station::load(const char* id)
 {
     size_t len;
-    if (nvs_get_blob(mParent.nvsHandle(), id, nullptr, &len) != ESP_OK) {
-        ESP_LOGW(TAG, "Station::load: Error reading record for id '%s'", id);
+    auto ret = nvs_get_blob(mParent.nvsHandle(), id, nullptr, &len);
+    if (ret != ESP_OK) {
+        if (ret != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(TAG, "Station::load: Error reading record for id '%s'", id);
+        }
         return false;
     }
     char* data = (char*)malloc(len + 1);
@@ -331,7 +341,12 @@ bool Station::saveFlags()
     DynBuffer key(idLen + 2);
     key.appendChar(':').append(mId, idLen).nullTerminate();
     uint16_t flags;
-    if (nvs_get_u16(mParent.nvsHandle(), key.buf(), &flags) == ESP_OK && flags == mFlags) {
+    if (nvs_get_u16(mParent.nvsHandle(), key.buf(), &flags) == ESP_OK)
+    {
+        if (flags == mFlags) {
+            return true;
+        }
+    } else if (mFlags == 0) {
         return true;
     }
     auto err = nvs_set_u16(mParent.nvsHandle(), key.buf(), mFlags);
@@ -343,11 +358,6 @@ bool Station::saveFlags()
     return true;
 }
 
-bool Station::exists(const char* id) const
-{
-    size_t len;
-    return nvs_get_blob(mParent.nvsHandle(), id, nullptr, &len) == ESP_OK;
-}
 bool Station::appendToJson(std::string& json)
 {
     if (!isValid()) {
@@ -363,6 +373,53 @@ bool Station::appendToJson(std::string& json)
     }
     json.append("\",\"f\":").append(std::to_string(mFlags)) +='}';
     return true;
+}
+const char* Station::jsonStringProp(const cJSON* json, const char* name, bool mustExist)
+{
+    auto prop = cJSON_GetObjectItem(json, name);
+    if (!prop) {
+        if (!mustExist) {
+            return nullptr;
+        }
+        throw runtime_error("Missing property '" + string(name) + "'");
+    }
+    if (prop->type != cJSON_String) {
+        throw runtime_error("Property '" + string(name) + "' is not a string");
+    }
+    return prop->valuestring;
+}
+
+int Station::jsonIntProp(const cJSON* json, const char* name, bool mustExist, int defaultVal)
+{
+    auto prop = cJSON_GetObjectItem(json, name);
+    if (!prop) {
+        if (!mustExist) {
+            return defaultVal;
+        }
+        throw runtime_error("Missing property '" + string(name) + "'");
+    }
+    if (prop->type != cJSON_Number) {
+        throw runtime_error("Property '" + string(name) + "' is not a number");
+    }
+    return prop->valueint;
+}
+
+void Station::loadFromJson(const cJSON* json, const char* id)
+{
+    if (!id) {
+        id = jsonStringProp(json, "id", true);
+    }
+    setId(id);
+    setUrl(jsonStringProp(json, "url", true));
+    setName(jsonStringProp(json, "n", true));
+    auto notes = jsonStringProp(json, "nts", false);
+    if (notes) {
+        setNotes(notes);
+    }
+    auto flags = jsonIntProp(json, "f", false, -1);
+    if (flags >= 0) {
+        setFlags(flags);
+    }
 }
 
 bool StationList::remove(const char* id)
@@ -393,18 +450,27 @@ void StationList::enumerate(CB&& callback)
 }
 void StationList::registerHttpHandler(httpd_handle_t server)
 {
-    httpd_uri_t desc = {
+/*    httpd_uri_t desc = {
         .uri       = "/slist",
         .method    = HTTP_GET,
         .handler   = httpHandler,
         .user_ctx  = this
     };
-    httpd_register_uri_handler(server, &desc);
+    httpd_register_uri_handler(server, &desc);*/
+    httpd_uri_t desc2 = {
+        .uri       = "/slist/import",
+        .method    = HTTP_POST,
+        .handler   = httpImportHandler,
+        .user_ctx  = this
+    };
+    httpd_register_uri_handler(server, &desc2);
 }
 
 esp_err_t StationList::httpHandler(httpd_req_t* req)
 {
     auto& self = *static_cast<StationList*>(req->user_ctx);
+    MutexLocker locker(self.mutex);
+
     UrlParams params(req);
     auto action = params.strVal("a");
     if (!action) {
@@ -466,7 +532,7 @@ esp_err_t StationList::httpEditStation(httpd_req_t* req, UrlParams& params, bool
             return ESP_FAIL;
         }
     } else {
-        if (!params.intVal("ovr", 0) && station.exists(id.str)) {
+        if (!params.intVal("ovr", 0) && stationExists(id.str)) {
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Station with that id already exists");
             return ESP_FAIL;
         }
@@ -539,4 +605,65 @@ esp_err_t StationList::httpDelStation(httpd_req_t* req, UrlParams& params)
         return ESP_FAIL;
     }
     return ESP_OK;
+}
+esp_err_t StationList::httpImportHandler(httpd_req_t* req)
+{
+  try {
+    auto& self = *static_cast<StationList*>(req->user_ctx);
+    MutexLocker locker(self.mutex);
+
+    int contentLen = req->content_len;
+    if (contentLen > SLIST_IMPORT_MAX_SIZE) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Data too big (>" MY_STRINGIFY(SLIST_IMPORT_MAX_SIZE) ")\r\n");
+        return ESP_FAIL;
+    } else if (contentLen < 2) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Data too short\r\n");
+        return ESP_FAIL;
+    }
+    std::unique_ptr<char[]> rxBuf(new char[contentLen + 1]);
+    for (int received = 0; received < contentLen;) {
+        /* Read the data for the request */
+        int recvLen;
+        for (int numWaits = 0; numWaits < 4; numWaits++) {
+            recvLen = httpd_req_recv(req, rxBuf.get() + received, contentLen - received);
+            if (recvLen != HTTPD_SOCK_ERR_TIMEOUT) {
+                break;
+            }
+        }
+        if (recvLen <= 0) {
+            ESP_LOGI(TAG, "PostData recv error %d", recvLen);
+            return ESP_FAIL;
+        }
+        received += recvLen;
+    }
+    rxBuf.get()[contentLen] = 0;
+
+    UrlParams params(req);
+    cJSON* json = cJSON_Parse(rxBuf.get());
+    cJSON* list = cJSON_GetObjectItem(json ,"sl");
+    if (!list) {
+        throw runtime_error("Json has no 'sl' member");
+    }
+    ESP_LOGI(TAG, "Importing webradio stations...");
+    int overwrite = params.intVal("ovr", 0);
+    for (cJSON* item = list->child; item; item = item->next) {
+        auto id = cJSON_GetObjectItem(item, "id");
+        if (!id || id->type != cJSON_String) {
+            throw runtime_error("Station item has no 'id' member");
+        }
+        if (!overwrite && self.stationExists(id->valuestring)) {
+            ESP_LOGI(TAG, "Skip existing station %s", id->valuestring);
+            continue;
+        }
+        Station station(self);
+        station.loadFromJson(item, id->valuestring);
+        station.save();
+        ESP_LOGI(TAG, "Imported station %s", id->valuestring);
+    }
+  } catch(exception& e) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, e.what());
+    return ESP_FAIL;
+  }
+  httpd_resp_sendstr(req, "{\"ok\"}");
+  return ESP_OK;
 }

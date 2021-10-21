@@ -18,6 +18,9 @@
 
 #define TRACE ESP_LOGI("TRC", "%s:%d", __FILE__, __LINE__);
 
+#define MY_STRINGIFY_HELPER(x) #x
+#define MY_STRINGIFY(x) MY_STRINGIFY_HELPER(x)
+
 char* binToHex(const uint8_t* data, size_t len, char* str);
 
 extern const char* _utils_hexDigits;
