@@ -124,6 +124,7 @@ public:
     };
     const char* tag() { return mTag; }
 protected:
+    static bool sHaveSpiRam;
     const char* mTag;
     Mutex mMutex;
     AudioNode* mPrev = nullptr;
@@ -134,6 +135,8 @@ protected:
     inline void sendEvent(uint32_t type, uintptr_t arg=0, int bufSize=0);
     AudioNode(const char* tag): mTag(tag) {}
 public:
+    static void detectSpiRam();
+    static bool haveSpiRam() { return sHaveSpiRam; }
     virtual Type type() const = 0;
     virtual IAudioVolume* volumeInterface() { return nullptr; }
     virtual ~AudioNode() {}

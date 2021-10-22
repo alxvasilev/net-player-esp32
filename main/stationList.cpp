@@ -448,15 +448,15 @@ void StationList::enumerate(CB&& callback)
     }
     nvs_release_iterator(it);
 }
-void StationList::registerHttpHandler(httpd_handle_t server)
+void StationList::registerHttpHandlers(httpd_handle_t server)
 {
-/*    httpd_uri_t desc = {
+    httpd_uri_t desc = {
         .uri       = "/slist",
         .method    = HTTP_GET,
         .handler   = httpHandler,
         .user_ctx  = this
     };
-    httpd_register_uri_handler(server, &desc);*/
+    httpd_register_uri_handler(server, &desc);
     httpd_uri_t desc2 = {
         .uri       = "/slist/import",
         .method    = HTTP_POST,

@@ -46,6 +46,7 @@ protected:
     int mContentLen;
     IcyParser mIcyParser;
     int mIcyEventAfterBytes = -1;
+    bool mIcyHadNewTrack = false;
     std::unique_ptr<TrackRecorder> mRecorder;
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     static CodecType codecFromContentType(const char* content_type);
@@ -65,7 +66,7 @@ protected:
     virtual bool dispatchCommand(Command &cmd);
     virtual void doStop();
 // recording stuff
-    bool recordingMaybeStart();
+    bool recordingMaybeEnable();
     void recordingStop();
     void recordingCancelCurrent();
 
@@ -80,7 +81,7 @@ public:
     };
     mutable Mutex mMutex;
     IcyInfo& icyInfo() { return mIcyParser; }
-    HttpNode(size_t bufSize, size_t prefillAmount, bool useSpiRam=false);
+    HttpNode(size_t bufSize, size_t prefillAmount);
     virtual ~HttpNode();
     virtual Type type() const { return kTypeHttpIn; }
     virtual StreamError pullData(DataPullReq &dp, int timeout);

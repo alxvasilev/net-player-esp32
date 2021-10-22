@@ -46,7 +46,6 @@ protected:
     enum { kEqGainPrecisionDiv = 2 };
     static const float sDefaultEqGains[];
     Flags mFlags;
-    bool mHaveSpiRam = false;
     std::unique_ptr<AudioNodeWithState> mStreamIn;
     std::unique_ptr<DecoderNode> mDecoder;
     std::unique_ptr<EqualizerNode> mEqualizer;

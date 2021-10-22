@@ -11,6 +11,7 @@ bool SDCard::init(int spiPort, SDCard::PinCfg pins, const char* mountPoint)
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     host.slot = spiPort;
+    host.flags = SDMMC_HOST_FLAG_SPI;
     sdspi_slot_config_t slotCfg = SDSPI_SLOT_CONFIG_DEFAULT();
     slotCfg.gpio_miso = (gpio_num_t)pins.miso;
     slotCfg.gpio_mosi = (gpio_num_t)pins.mosi;
@@ -27,11 +28,9 @@ bool SDCard::init(int spiPort, SDCard::PinCfg pins, const char* mountPoint)
 
     if (ret != ESP_OK) {
         if (ret == ESP_FAIL) {
-            ESP_LOGE(TAG, "Failed to mount filesystem. "
-                "If you want the card to be formatted, set format_if_mount_failed = true.");
+            ESP_LOGE(TAG, "Failed to mount filesystem"); // If you want the card to be formatted, set format_if_mount_failed = true
         } else {
-            ESP_LOGE(TAG, "Failed to initialize the card (%s). "
-                "Make sure SD card lines have pull-up resistors in place.", esp_err_to_name(ret));
+            ESP_LOGE(TAG, "Failed to initialize the card: %s", esp_err_to_name(ret)); // Make sure SD card lines have pull-up resistors in place
         }
         return false;
     }

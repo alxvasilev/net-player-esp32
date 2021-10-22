@@ -64,7 +64,7 @@ bool WifiClient::start(const char* ssid, const char* key, ConnGaveUpHandler onGa
         ESP_LOGE(TAG, "esp_wifi_set_mode error %s", esp_err_to_name(err));
         return err;
     }
-    if ((err = esp_wifi_set_config(ESP_IF_WIFI_STA, &staConfig)) != ESP_OK) {
+    if ((err = esp_wifi_set_config(WIFI_IF_STA, &staConfig)) != ESP_OK) {
         ESP_LOGE(TAG, "esp_wifi_set_config error %s", esp_err_to_name(err));
         return err;
     }

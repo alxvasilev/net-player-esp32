@@ -131,7 +131,6 @@ bool HttpNode::connect(bool isReconnect)
         ESP_LOGE(mTag, "connect: URL has not been set");
         return false;
     }
-
     ESP_LOGI(mTag, "Connecting to '%s'...", mUrl);
     if (!isReconnect) {
         ESP_LOGI(mTag, "connect: Waiting for buffer to drain...");
@@ -147,7 +146,7 @@ bool HttpNode::connect(bool isReconnect)
         ESP_LOGI(mTag, "connect: Buffer drained");
         mStreamFormat.reset();
         mBytePos = 0;
-        recordingMaybeStart();
+        recordingMaybeEnable();
     } else {
         recordingCancelCurrent();
     }
@@ -160,6 +159,7 @@ bool HttpNode::connect(bool isReconnect)
     }
     // request IceCast stream metadata
     mIcyParser.reset();
+    mIcyHadNewTrack = false;
 
     if (mBytePos) { // we are resuming, send position
         char rang_header[32];
@@ -324,11 +324,12 @@ bool HttpNode::recv()
             if (gotTitle) {
                 mIcyEventAfterBytes = isFirst ? 0 : mRingBuf.dataSize();
                 ESP_LOGW(TAG, "Track title changed to: '%s', will signal after %d bytes", mIcyParser.trackName(), mIcyEventAfterBytes);
-                if (mRecorder && mBytePos) {
+                if (mRecorder && mIcyHadNewTrack) { // start recording only on second icy track event - first track may be incomplete
                     LOCK();
                     bool ok = mRecorder->onNewTrack(mIcyParser.trackName(), mStreamFormat);
                     sendEvent(kEventRecording, ok);
                 }
+                mIcyHadNewTrack = true;
             }
         }
         mRingBuf.commitWrite(rlen);
@@ -434,8 +435,8 @@ HttpNode::~HttpNode()
     free(mRecordingStationName);
 }
 
-HttpNode::HttpNode(size_t bufSize, size_t prefillAmount, bool useSpiRam)
-: AudioNodeWithTask("node-http", kStackSize), mRingBuf(bufSize, useSpiRam),
+HttpNode::HttpNode(size_t bufSize, size_t prefillAmount)
+: AudioNodeWithTask("node-http", kStackSize), mRingBuf(bufSize, haveSpiRam()),
   mPrefillAmount(prefillAmount), mIcyParser(mMutex)
 {
 }
@@ -516,7 +517,7 @@ int8_t HttpNode::waitPrefillChange(int msTimeout)
     }
 }
 
-bool HttpNode::recordingMaybeStart() {
+bool HttpNode::recordingMaybeEnable() {
     LOCK();
     if (!mRecordingStationName) {
         return false;

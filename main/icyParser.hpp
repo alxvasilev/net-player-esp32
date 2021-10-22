@@ -26,7 +26,6 @@ protected:
     int32_t mIcyCtr = 0;
     int32_t mIcyInterval = 0;
     int16_t mIcyRemaining = 0;
-    int32_t mIcyEventAfterBytes = -1;
     DynBuffer mIcyMetaBuf;
 public:
     IcyParser(Mutex& infoMutex): IcyInfo(infoMutex) {}

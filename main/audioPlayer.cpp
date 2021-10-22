@@ -58,19 +58,6 @@ AudioPlayer::AudioPlayer(ST7735Display& lcd)
 
 void AudioPlayer::init(AudioNode::Type inType, AudioNode::Type outType)
 {
-    // Detect SPI RAM presence
-    auto buf = heap_caps_malloc(4, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (buf)
-    {
-        mHaveSpiRam = true;
-        free(buf);
-        ESP_LOGI(TAG, "SPI RAM available");
-    }
-    else
-    {
-        ESP_LOGI(TAG, "SPI RAM NOT available");
-    }
-    // ====
     lcdInit();
     mNvsHandle.enableAutoCommit(20000);
     if (inType == AudioNode::kTypeUnknown)
@@ -122,9 +109,9 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
     AudioNode* pcmSource = nullptr;
     switch(inType) {
     case AudioNode::kTypeHttpIn:
-        mStreamIn.reset(mHaveSpiRam
-            ? new HttpNode(kHttpBufSizeSpiRam, 32768, true)
-            : new HttpNode(kHttpBufSizeInternal, kHttpBufSizeInternal * 3 / 4, false));
+        mStreamIn.reset(AudioNode::haveSpiRam()
+            ? new HttpNode(kHttpBufSizeSpiRam, 32768)
+            : new HttpNode(kHttpBufSizeInternal, kHttpBufSizeInternal * 3 / 4));
         mStreamIn->setEventHandler(this);
         mStreamIn->subscribeToEvents(0xffff);
 
@@ -154,7 +141,7 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         cfg.data_out_num = 27;
         cfg.data_in_num = -1;
 
-        mStreamOut.reset(new I2sOutputNode(0, &cfg, mHaveSpiRam));
+        mStreamOut.reset(new I2sOutputNode(0, &cfg, AudioNode::haveSpiRam()));
         break;
     /*
     case kOutputA2dp:
@@ -718,7 +705,7 @@ void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
     registerHttpGetHandler(server, "/eqset", &equalizerSetUrlHandler);
     registerHttpGetHandler(server, "/status", &getStatusUrlHandler);
     if (stationList) {
-        stationList->registerHttpHandler(server);
+        stationList->registerHttpHandlers(server);
     }
 }
 

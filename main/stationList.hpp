@@ -80,6 +80,6 @@ public:
     bool remove(const char* id);
     template<class CB>
     void enumerate(CB&& callback);
-    void registerHttpHandler(httpd_handle_t server);
+    void registerHttpHandlers(httpd_handle_t server);
 };
 #endif

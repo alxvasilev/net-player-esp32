@@ -1,4 +1,5 @@
 #include <string.h>
+//#include <esp32/spiram.h>
 #include "freertos/FreeRTOS.h"
 #include <esp_log.h>
 #include <driver/gpio.h>
@@ -166,6 +167,7 @@ static constexpr ST7735Display::PinCfg lcdPins = {
 extern "C" void app_main(void)
 {
 //  esp_log_level_set("*", ESP_LOG_DEBUG);
+    AudioNode::detectSpiRam();
     configGpios();
 
     rollbackCheckUserForced();
@@ -246,15 +248,22 @@ extern "C" void app_main(void)
 
 static esp_err_t indexUrlHandler(httpd_req_t *req)
 {
-    httpd_resp_sendstr_chunk(req, "<html><head /><body><h1 align='center'>NetPlayer HTTP inteface</h1><pre>Free heap memory: ");
+    httpd_resp_sendstr_chunk(req,
+        "<html><head /><body><h1 align='center'>NetPlayer HTTP inteface</h1><pre>Free internal RAM: ");
     DynBuffer buf(128);
-
     /* Print chip information */
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
-    buf.printf("%d\nchip type: %s\nnum cores: %d\nrunning at %d MHz\nsilicon revision: %d\n",
-        xPortGetFreeHeapSize(), CONFIG_IDF_TARGET,
-        chip_info.cores, currentCpuFreq(), chip_info.revision
+    buf.printf("%zu of %zu\nFree external RAM: ",
+        heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_total_size(MALLOC_CAP_INTERNAL));
+    if (AudioNode::haveSpiRam()) {
+        buf.printf("%zu of %zu\n",
+            heap_caps_get_free_size(MALLOC_CAP_SPIRAM), heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
+    } else {
+        buf.printf("Not available\n");
+    }
+    buf.printf("chip type: %s\nnum cores: %d\nrunning at %d MHz\nsilicon revision: %d\n",
+        CONFIG_IDF_TARGET, chip_info.cores, currentCpuFreq(), chip_info.revision
     );
     httpd_resp_send_chunk(req, buf.buf(), buf.dataSize());
     buf.clear();
@@ -339,7 +348,7 @@ void startWebserver(bool isAp)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 4096;
-    config.max_uri_handlers = 16;
+    config.max_uri_handlers = 20;
     config.uri_match_fn = httpd_uri_match_wildcard;
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
     if (httpd_start(&gHttpServer, &config) != ESP_OK) {
