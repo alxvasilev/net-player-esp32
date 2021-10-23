@@ -137,6 +137,11 @@ protected:
 public:
     static void detectSpiRam();
     static bool haveSpiRam() { return sHaveSpiRam; }
+    static void* mallocTrySpiram(size_t internalSize, size_t spiramSize)
+    {
+        return sHaveSpiRam
+            ? heap_caps_malloc(spiramSize, MALLOC_CAP_SPIRAM) : malloc(internalSize);
+    }
     virtual Type type() const = 0;
     virtual IAudioVolume* volumeInterface() { return nullptr; }
     virtual ~AudioNode() {}

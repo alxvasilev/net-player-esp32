@@ -1,7 +1,7 @@
 #include "decoderMp3.hpp"
 #include <mad.h>
 
-const char* TAG = "mp3dec";
+static const char* TAG = "mp3dec";
 
 DecoderMp3::DecoderMp3()
 {
@@ -79,7 +79,7 @@ void DecoderMp3::logEncodingInfo()
         case MAD_MODE_STEREO: stmode = "stereo"; break;
         default: stmode = "unknown"; break;
     }
-    ESP_LOGW(TAG, "MPEG1 Layer %d, 16-bit %s, %d kHz, %lu bps",
+    ESP_LOGW(TAG, "MPEG1 Layer %d, 16-bit %s, %d Hz, %lu bps",
         mMadFrame.header.layer, stmode, mMadFrame.header.samplerate,
         mMadFrame.header.bitrate);
 }

@@ -161,6 +161,8 @@ bool HttpNode::connect(bool isReconnect)
     mIcyParser.reset();
     mIcyHadNewTrack = false;
 
+    esp_http_client_set_header(mClient, "User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36");
+
     if (mBytePos) { // we are resuming, send position
         char rang_header[32];
         snprintf(rang_header, 32, "bytes=%lld-", mBytePos);

@@ -1,12 +1,17 @@
 #include "decoderNode.hpp"
 #include "decoderMp3.hpp"
+#include "decoderAac.hpp"
 
 bool DecoderNode::createDecoder(CodecType type)
 {
     switch (type) {
     case kCodecMp3:
-        ESP_LOGI(mTag, "Created MP3 decoder");
+        ESP_LOGI(mTag, "Creating MP3 decoder");
         mDecoder = new DecoderMp3();
+        return true;
+    case kCodecAac:
+        ESP_LOGI(mTag, "Creating AAC decoder");
+        mDecoder = new DecoderAac();
         return true;
     default:
         ESP_LOGW(mTag, "No decoder for codec type %s", StreamFormat::codecTypeToStr(type));
