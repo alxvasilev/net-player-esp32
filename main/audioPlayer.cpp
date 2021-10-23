@@ -9,6 +9,7 @@
 #include "equalizerNode.hpp"
 #include "a2dpInputNode.hpp"
 #include <stdfonts.hpp>
+#include <string>
 
 extern Font font_CamingoBold43;
 extern Font font_Camingo22;
@@ -211,6 +212,7 @@ void AudioPlayer::lcdUpdateStationInfo()
 }
 void AudioPlayer::lcdUpdateRecIcon()
 {
+    LOCK_PLAYER();
     mLcd.setFont(font_Icons22);
     mLcd.setFgColor(200, 0, 0);
     char sym;
@@ -339,23 +341,33 @@ bool AudioPlayer::playUrl(const char* url, const char* record)
     }
     return true;
 }
-bool AudioPlayer::playStation(bool next)
+esp_err_t AudioPlayer::playStation(const char* id)
 {
-   LOCK_PLAYER();
-   if (!this->stationList) {
-       ESP_LOGW(TAG, "There is no radio station list in this mode");
-       return false;
-   }
-   if (next) {
-       this->stationList->next();
-   }
-   auto& station = this->stationList->currStation;
-   if (!station.isValid()) {
-       ESP_LOGW(TAG, "Radio station list is empty");
-       return false;
-   }
-   lcdUpdateStationInfo();
-   return playUrl(station.url(), (station.flags() & station.kFlagRecord) ? station.id() : nullptr);
+    LOCK_PLAYER();
+    if (!this->stationList) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!id) {
+        if (!this->stationList->currStation.isValid() && !this->stationList->next()) {
+            return ESP_ERR_NOT_FOUND;
+        }
+    }
+    else if (strcmp(id, "+") == 0) { // "+" = next station
+        if (!this->stationList->next()) {
+            return ESP_ERR_NOT_FOUND;
+        }
+    }
+    else if (!this->stationList->setCurrent(id)) {
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    auto& station = this->stationList->currStation;
+    assert(station.isValid());
+    if (!playUrl(station.url(), (station.flags() & station.kFlagRecord) ? station.id() : nullptr)) {
+        return ESP_ERR_NOT_SUPPORTED; // stream source node is not http client
+    }
+    lcdUpdateStationInfo();
+    return ESP_OK;
 }
 
 bool AudioPlayer::isStopped() const
@@ -537,21 +549,33 @@ esp_err_t AudioPlayer::playUrlHandler(httpd_req_t *req)
 {
     auto self = static_cast<AudioPlayer*>(req->user_ctx);
     UrlParams params(req);
-    auto urlParam = params.strVal("url");
-    const char* url = nullptr;
-    MutexLocker locker(self->mutex);
-    if (urlParam) {
-        url = urlParam.str;
-        self->playUrl(url);
-    } else {
-        if (!self->playStation(true)) {
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Playlist is empty");
+    DynBuffer buf(128);
+    auto param = params.strVal("url");
+    if (param) {
+        self->playUrl(param.str);
+        buf.printf("Playing url '%s'", param.str);
+    }
+    else {
+        auto err = self->playStation(params.strVal("sta").str);
+        if (err != ESP_OK) {
+            switch(err) {
+                case ESP_ERR_INVALID_STATE:
+                    httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No station list present");
+                    break;
+                case ESP_ERR_NOT_FOUND:
+                    httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Station not found");
+                    break;
+                case ESP_ERR_NOT_SUPPORTED:
+                    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Radio stations not supported in this mode");
+                    break;
+                default:
+                    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Unknown error");
+                    break;
+            }
             return ESP_FAIL;
         }
-        url = self->stationList->currStation.url();
+        buf.printf("Playing station '%s'", self->stationList->currStation.name());
     }
-    DynBuffer buf(128);
-    buf.printf("Changing stream url to '%s'", url);
     httpd_resp_send(req, buf.buf(), buf.dataSize());
     return ESP_OK;
 }
@@ -711,15 +735,25 @@ void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
 
 bool AudioPlayer::onEvent(AudioNode *self, uint32_t event, uintptr_t buf, size_t bufSize)
 {
-    if (self->type() == AudioNode::kTypeHttpIn) {
-        if (event == HttpNode::kEventTrackInfo) {
-            lcdUpdateTrackTitle((const char*)buf);
-        } else if (event == HttpNode::kEventConnected) {
-            lcdUpdatePlayState(kSymPlaying);
-        } else if (event == HttpNode::kEventRecording) {
-            LOCK_PLAYER();
-            lcdUpdateRecIcon();
-        }
+    if (self->type() != AudioNode::kTypeHttpIn) {
+        return true;
+    }
+    // We are in the http node's thread, must not do any locking from here, so we call
+    // into the player via async messages
+    if (event == HttpNode::kEventTrackInfo) {
+        asyncCall([this, title = std::string((const char*)buf)]() {
+            lcdUpdateTrackTitle(title.c_str());
+        });
+    } else {
+        asyncCall([this, event]() {
+            if (event == HttpNode::kEventConnected) {
+                lcdUpdatePlayState(kSymPlaying);
+            } else if (event == HttpNode::kEventConnecting) {
+                lcdUpdatePlayState(kSymConnecting);
+            } else if (event == HttpNode::kEventRecording) {
+                lcdUpdateRecIcon();
+            }
+        });
     }
     return true;
 }
@@ -896,21 +930,3 @@ void AudioPlayer::vuDrawChannel(VuLevelCtx& ctx, int16_t level)
         mLcd.clear(x + kVuLedWidth, ctx.barY, afterBg, kVuLedHeight);
     }
 }
-/*
-void AudioPlayer::lcdUpdateStationInfo()
-{
-    LOCK_PLAYER();
-    myassert(mStreamIn->type() == AudioNode::kTypeHttpIn);
-    auto& icy = static_cast<HttpNode*>(mStreamIn.get())->icyInfo;
-    MutexLocker locker1(icy.mutex);
-    const char* name = icy.staName();
-    if (!name) {
-        name = icy.staUrl();
-    }
-    mLcd.clear(0, 20, mLcd.width()-1, mLcd.charHeight() * 3);
-    mLcd.gotoXY(0, 20);
-    mLcd.setFont(Font_7x11, 1);
-    mLcd.setFgColor(255, 255, 128);
-    mLcd.nputs(name, 3 * mLcd.charsPerLine());
-}
-*/

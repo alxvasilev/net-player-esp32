@@ -112,6 +112,48 @@ static inline void msDelay(uint32_t ms)
     usDelay(ms * 1000);
 }
 
+struct AsyncMsgBase
+{
+    esp_timer_handle_t mTimer = nullptr;
+    void post()
+    {
+        ESP_ERROR_CHECK(esp_timer_start_once(mTimer, 0));
+    }
+    ~AsyncMsgBase() {
+        if (mTimer) {
+            esp_timer_stop(mTimer);
+            esp_timer_delete(mTimer);
+        }
+    }
+};
+
+template <class Cb>
+static void asyncCall(Cb&& func)
+{
+    struct AsyncMsg: public AsyncMsgBase {
+        Cb mCallback;
+        AsyncMsg(Cb&& cb): mCallback(std::forward<Cb>(cb))
+        {
+            esp_timer_create_args_t args = {};
+            args.dispatch_method = ESP_TIMER_TASK;
+            args.name = "setTimeout timer";
+            args.arg = this;
+            args.callback = &onTimer;
+            ESP_ERROR_CHECK(esp_timer_create(&args, &mTimer));
+        }
+        static void onTimer(void* ctx) {
+            auto self = static_cast<AsyncMsg*>(ctx);
+            try {
+                self->mCallback();
+            } catch(std::exception& e) {
+            }
+            delete self;
+        }
+    };
+    auto msg = new AsyncMsg(std::forward<Cb>(func));
+    msg->post();
+}
+
 class ElapsedTimer
 {
 protected:

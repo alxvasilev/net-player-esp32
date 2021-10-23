@@ -1,7 +1,7 @@
 #ifndef STATION_LIST_HPP
 #define STATION_LIST_HPP
 
-#include <nvs.h>
+#include "nvsHandle.hpp"
 #include <esp_http_server.h>
 #include <string>
 #include "mutex.hpp"
@@ -56,8 +56,8 @@ class UrlParams;
 class StationList
 {
 protected:
-    nvs_handle mNvsHandle;
     const char* mNsName;
+    NvsHandle mNvsHandle;
     bool loadCurrent();
     bool stationExists(const char* id);
     bool getNext(const char* after, Station& station);
@@ -73,9 +73,9 @@ public:
     Station currStation;
     StationList(Mutex& aMutex, const char* nsName="stations");
     ~StationList();
-    nvs_handle_t nvsHandle() const { return mNvsHandle; }
-    bool setCurrent(const char* id);
-    bool bookmarkCurrent();
+    NvsHandle& nvsHandle() { return mNvsHandle; }
+    bool setCurrent(const char* id, bool noSave=false);
+    bool saveCurrent();
     bool next();
     bool remove(const char* id);
     template<class CB>

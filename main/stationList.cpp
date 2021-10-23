@@ -11,25 +11,24 @@ static const char* TAG = "STALIST";
 using namespace std;
 
 StationList::StationList(Mutex& aMutex, const char *nsName)
-    :mNsName(strdup(nsName)), mutex(aMutex), currStation(*this)
+:mNsName(strdup(nsName)), mNvsHandle(nsName, NVS_READWRITE), mutex(aMutex),
+ currStation(*this)
 {
-    auto err = nvs_open_from_partition("nvs", mNsName, NVS_READWRITE, &mNvsHandle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
-        mNvsHandle = 0;
+    if (!mNvsHandle.isValid()) {
         return;
     }
+    mNvsHandle.enableAutoCommit(30000);
     loadCurrent();
 }
 char* StationList::getString(const char* key)
 {
     size_t len;
-    if (nvs_get_str(mNvsHandle, key, nullptr, &len) != ESP_OK) {
+    if (mNvsHandle.readString(key, nullptr, len) != ESP_OK) {
         return nullptr;
     }
     char* result = (char*)malloc(len + 1);
     esp_err_t err;
-    if ((err = nvs_get_str(mNvsHandle, key, result, &len)) != ESP_OK) {
+    if ((err = mNvsHandle.readString(key, result, len)) != ESP_OK) {
         ESP_LOGE(TAG, "getString: Error reading string value: %s", esp_err_to_name(err));
         free(result);
         return nullptr;
@@ -68,14 +67,11 @@ bool StationList::getNext(const char* after, Station& station)
     for(; it; it = nvs_entry_next(it)) {
         nvs_entry_info_t info;
         nvs_entry_info(it, &info);
-        if (info.key[0] == '_') {
+        char ch = info.key[0];
+        if (ch == '_' || ch == ':') {
             continue;
         }
-        const char* key = (info.key[0] == ':') ? info.key + 1 : info.key;
-        if (!key) {
-            continue;
-        }
-        if (station.load(key)) {
+        if (station.load(info.key)) {
             nvs_release_iterator(it);
             return true;
         }
@@ -83,7 +79,7 @@ bool StationList::getNext(const char* after, Station& station)
     nvs_release_iterator(it); // should already be null
     return false;
 }
-bool StationList::setCurrent(const char* id)
+bool StationList::setCurrent(const char* id, bool noSave)
 {
     if (currStation.isValid() && strcmp(currStation.id(), id) == 0) {
         return true;
@@ -91,43 +87,45 @@ bool StationList::setCurrent(const char* id)
     if (!currStation.load(id)) { // will not destroy current data if load fails
         return false;
     }
+    if (!noSave) {
+        saveCurrent();
+    }
     return true;
 }
 
-bool StationList::bookmarkCurrent() {
+bool StationList::saveCurrent() {
     if (!currStation.isValid()) {
         return false;
     }
     AutoCString curr = getString("_curr");
-    if (strcmp(curr.c_str(), currStation.id()) == 0) {
+    if (curr && strcmp(curr.c_str(), currStation.id()) == 0) {
         return true;
     }
-    bool ok = nvs_set_str(mNvsHandle, "_curr", currStation.id()) == ESP_OK;
-    nvs_commit(mNvsHandle);
-    return ok;
+    return mNvsHandle.writeString("_curr", currStation.id()) == ESP_OK;
 }
 
 bool StationList::next()
 {
-    if (!currStation.isValid()) {
-        return getNext(nullptr, currStation);
-    } else {
-        if (getNext(currStation.id(), currStation)) {
-            return true;
-        }
-        return getNext(nullptr, currStation);
+    bool ok = currStation.isValid() ? getNext(currStation.id(), currStation) : false;
+    if (!ok) {
+        ok = getNext(nullptr, currStation);
     }
+    if (ok) {
+        saveCurrent();
+    }
+    return ok;
 }
+
 bool StationList::stationExists(const char* id)
 {
     size_t len;
-    return nvs_get_blob(mNvsHandle, id, nullptr, &len) == ESP_OK;
+    return mNvsHandle.readBlob(id, nullptr, len) == ESP_OK;
 }
 
 bool Station::load(const char* id)
 {
     size_t len;
-    auto ret = nvs_get_blob(mParent.nvsHandle(), id, nullptr, &len);
+    auto ret = mParent.nvsHandle().readBlob(id, nullptr, len);
     if (ret != ESP_OK) {
         if (ret != ESP_ERR_NVS_NOT_FOUND) {
             ESP_LOGW(TAG, "Station::load: Error reading record for id '%s'", id);
@@ -135,7 +133,7 @@ bool Station::load(const char* id)
         return false;
     }
     char* data = (char*)malloc(len + 1);
-    auto err = nvs_get_blob(mParent.nvsHandle(), id, data, &len);
+    auto err = mParent.nvsHandle().readBlob(id, data, len);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "loadStation: Error reading data for station '%s': %s", id, esp_err_to_name(err));
         return false;
@@ -196,7 +194,7 @@ bool Station::loadFlags()
 {
     std::string key = ":";
     key.append(mId);
-    if (nvs_get_u16(mParent.nvsHandle(), key.c_str(), &mFlags) != ESP_OK) {
+    if (mParent.nvsHandle().read(key.c_str(), mFlags) != ESP_OK) {
         ESP_LOGI(TAG, "loadFlags: No flags record for station %s", mId);
         mFlags = 0;
         return false;
@@ -283,10 +281,6 @@ Station& Station::setNotes(const char* notes)
 
 StationList::~StationList()
 {
-    if (mNvsHandle) {
-        nvs_close(mNvsHandle);
-        mNvsHandle = 0;
-    }
 }
 
 bool Station::save()
@@ -324,14 +318,14 @@ bool Station::save()
     } else {
         data.append<uint8_t>(0);
     }
-    auto err = nvs_set_blob(mParent.nvsHandle(), mId, data.buf(), data.dataSize());
+    auto err = mParent.nvsHandle().writeBlob(mId, data.buf(), data.dataSize());
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "save: Error writing station data: %s", esp_err_to_name(err));
         return false;
     }
     data.freeBuf(); // we don't need this memory anymore
     saveFlags();
-    nvs_commit(mParent.nvsHandle());
+    mParent.nvsHandle().commit();
     mDirty = false;
     return true;
 }
@@ -341,7 +335,7 @@ bool Station::saveFlags()
     DynBuffer key(idLen + 2);
     key.appendChar(':').append(mId, idLen).nullTerminate();
     uint16_t flags;
-    if (nvs_get_u16(mParent.nvsHandle(), key.buf(), &flags) == ESP_OK)
+    if (mParent.nvsHandle().read(key.buf(), flags) == ESP_OK)
     {
         if (flags == mFlags) {
             return true;
@@ -349,12 +343,12 @@ bool Station::saveFlags()
     } else if (mFlags == 0) {
         return true;
     }
-    auto err = nvs_set_u16(mParent.nvsHandle(), key.buf(), mFlags);
+    auto err = mParent.nvsHandle().write(key.buf(), mFlags);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "save: Error writing flags: %s", esp_err_to_name(err));
         return false;
     }
-    nvs_commit(mParent.nvsHandle());
+    mParent.nvsHandle().commit();
     return true;
 }
 
@@ -426,8 +420,8 @@ bool StationList::remove(const char* id)
 {
     DynBuffer buf(16);
     buf.appendChar(':').appendStr(id);
-    nvs_erase_key(mNvsHandle, buf.buf());
-    return (nvs_erase_key(mNvsHandle, id) == ESP_OK);
+    mNvsHandle.eraseKey(buf.buf());
+    return mNvsHandle.eraseKey(id) == ESP_OK;
 }
 
 template<class CB>

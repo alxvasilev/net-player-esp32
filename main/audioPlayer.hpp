@@ -127,7 +127,7 @@ public:
     NvsHandle& nvs() { return mNvsHandle; }
     void changeInput(AudioNode::Type inType);
     bool playUrl(const char* url, const char* record=nullptr);
-    bool playStation(bool next);
+    esp_err_t playStation(const char* id);
     bool isStopped() const;
     bool isPaused() const;
     bool isPlaying() const;

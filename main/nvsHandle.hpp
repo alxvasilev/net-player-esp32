@@ -20,9 +20,10 @@ public:
         if (err != ESP_OK) {
             ESP_LOGE(tag(), "Error opening NVS handle: %s", esp_err_to_name(err));
             mHandle = 0;
-            return;
         }
     }
+    bool isValid() const { return mHandle != 0; }
+    nvs_handle handle() { return mHandle; }
     virtual ~NvsHandle() {
         if (mCommitTimer) {
             esp_timer_stop(mCommitTimer);
@@ -32,15 +33,19 @@ public:
         commit();
         nvs_close(mHandle);
     }
-    void enableAutoCommit(uint32_t delay) {
-        mAutoCommitDelayMs = delay;
+    /** This starts a periodic timer with period msDelay. The timer handler
+     * checks if the time elapsed since the last write is >= msDelay. If not,
+     * the handler does nothing, leaving the timer running. On the next tick,
+     * if no new writes were performed, the timer handler commits che changes
+     * and stops the timer. Thus, the maximum commit delay is 2 * msDelay
+     */
+    void enableAutoCommit(uint32_t msDelay) {
+        mAutoCommitDelayMs = msDelay;
         if (mCommitTimer) {
             if (mTimerRunning) {
                 esp_timer_stop(mCommitTimer);
-                mTimerRunning = false;
             }
         } else {
-            mTimerRunning = false;
             esp_timer_create_args_t args = {};
             args.dispatch_method = ESP_TIMER_TASK;
             args.callback = &commitTimerHandler;
@@ -48,6 +53,7 @@ public:
             args.name = "commitTimer";
             ESP_ERROR_CHECK(esp_timer_create(&args, &mCommitTimer));
         }
+        mTimerRunning = false;
     }
     void onWrite()
     {
@@ -56,7 +62,7 @@ public:
             return;
         }
         if (!mTimerRunning) {
-            ESP_ERROR_CHECK(esp_timer_start_periodic(mCommitTimer, mAutoCommitDelayMs * 1000));
+            ESP_ERROR_CHECK(esp_timer_start_periodic(mCommitTimer, mAutoCommitDelayMs * 1000 / 2));
             mTimerRunning = true;
         }
     }
@@ -158,6 +164,11 @@ public:
         MutexLocker locker(mMutex);
         onWrite();
         return nvs_set_i8(mHandle, key, val);
+    }
+    esp_err_t eraseKey(const char* key) {
+        MutexLocker locker(mMutex);
+        onWrite();
+        return nvs_erase_key(mHandle, key);
     }
     template <typename T>
     T readDefault(const char* key, T defVal) {

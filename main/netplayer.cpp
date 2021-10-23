@@ -238,7 +238,7 @@ extern "C" void app_main(void)
             }
         });
 */
-        player->playStation(false);
+        player->playStation(nullptr);
     } else if (player->inputType() == AudioNode::kTypeA2dpIn) {
         ESP_LOGI(TAG, "Player input set to Bluetooth A2DP sink");
         player->play();
