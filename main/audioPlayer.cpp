@@ -7,7 +7,9 @@
 #include "i2sSinkNode.hpp"
 #include "decoderNode.hpp"
 #include "equalizerNode.hpp"
-#include "a2dpInputNode.hpp"
+#if CONFIG_BT_ENABLED
+    #include "a2dpInputNode.hpp"
+#endif
 #include <stdfonts.hpp>
 #include <string>
 
@@ -120,11 +122,13 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         mDecoder->linkToPrev(mStreamIn.get());
         pcmSource = mDecoder.get();
         break;
+#if CONFIG_BT_ENABLED
     case AudioNode::kTypeA2dpIn:
         mStreamIn.reset(new A2dpInputNode("NetPlayer"));
         mDecoder.reset();
         pcmSource = mStreamIn.get();
         break;
+#endif
     default:
         ESP_LOGE(TAG, "Unknown pipeline input node type %d", inType);
         return false;

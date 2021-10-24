@@ -1,3 +1,5 @@
+#if CONFIG_BT_ENABLED
+
 #include "esp_system.h"
 #include "esp_log.h"
 
@@ -264,3 +266,4 @@ static bool get_name_from_eir(uint8_t *eir, char* bdname, uint8_t len)
     bdname[rmt_bdname_len] = '\0';
     return true;
 }
+#endif

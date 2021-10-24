@@ -1,3 +1,5 @@
+#if CONFIG_BT_ENABLED
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -11,8 +13,6 @@
 #include "audioNode.hpp"
 #include "bluetooth.hpp"
 #include "a2dpInputNode.hpp"
-
-#if CONFIG_BT_ENABLED
 
 static const char *TAG = "a2dp_in";
 A2dpInputNode* A2dpInputNode::gSelf = nullptr;

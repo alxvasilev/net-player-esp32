@@ -21,10 +21,13 @@
 #include "ota.hpp"
 #include "audioPlayer.hpp"
 #include "wifi.hpp"
-#include "bluetooth.hpp"
 #include "taskList.hpp"
 #include <st7735.hpp>
 #include "sdcard.hpp"
+
+#if CONFIG_BT_ENABLED
+    #include "bluetooth.hpp"
+#endif
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
@@ -225,24 +228,29 @@ extern "C" void app_main(void)
     };
     if (player->inputType() == AudioNode::kTypeHttpIn) {
         ESP_LOGI(TAG, "Player input set to HTTP stream");
+#if CONFIG_BT_ENABLED
         auto before = xPortGetFreeHeapSize();
         BluetoothStack::disableClassic();
         ESP_LOGW(TAG, "Releasing Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
-/*
-        BluetoothStack::start(ESP_BT_MODE_BLE, "test");
-
-        BluetoothStack::discoverDevices([](BluetoothStack::DeviceList& devices) {
-            for (auto& item: devices) {
-                ESP_LOGI(TAG, "%s(%s): class: %x, rssi: %d", item.second.name.c_str(),
-                         item.first.toString().c_str(), item.second.devClass, item.second.rssi);
-            }
-        });
-*/
+#endif
         player->playStation(nullptr);
-    } else if (player->inputType() == AudioNode::kTypeA2dpIn) {
+    }
+#if CONFIG_BT_ENABLED
+    else if (player->inputType() == AudioNode::kTypeA2dpIn) {
         ESP_LOGI(TAG, "Player input set to Bluetooth A2DP sink");
         player->play();
+        /*
+                BluetoothStack::start(ESP_BT_MODE_BLE, "test");
+
+                BluetoothStack::discoverDevices([](BluetoothStack::DeviceList& devices) {
+                    for (auto& item: devices) {
+                        ESP_LOGI(TAG, "%s(%s): class: %x, rssi: %d", item.second.name.c_str(),
+                                 item.first.toString().c_str(), item.second.devClass, item.second.rssi);
+                    }
+                });
+        */
     }
+#endif
     ESP_LOGI(TAG, "player started");
 }
 
