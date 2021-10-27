@@ -24,10 +24,7 @@
 #include "taskList.hpp"
 #include <st7735.hpp>
 #include "sdcard.hpp"
-
-#if CONFIG_BT_ENABLED
-    #include "bluetooth.hpp"
-#endif
+#include "bluetooth.hpp"
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
@@ -214,7 +211,10 @@ extern "C" void app_main(void)
     lcd.puts("Waiting log conn...\n");
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
-
+//===
+    auto before = xPortGetFreeHeapSize();
+    BluetoothStack::disableBLE();
+    ESP_LOGW(TAG, "Releasing Bluetooth BLE memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
 //===
     lcd.puts("Mounting SDCard...\n");
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };
@@ -228,14 +228,8 @@ extern "C" void app_main(void)
     };
     if (player->inputType() == AudioNode::kTypeHttpIn) {
         ESP_LOGI(TAG, "Player input set to HTTP stream");
-#if CONFIG_BT_ENABLED
-        auto before = xPortGetFreeHeapSize();
-        BluetoothStack::disableClassic();
-        ESP_LOGW(TAG, "Releasing Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
-#endif
         player->playStation(nullptr);
     }
-#if CONFIG_BT_ENABLED
     else if (player->inputType() == AudioNode::kTypeA2dpIn) {
         ESP_LOGI(TAG, "Player input set to Bluetooth A2DP sink");
         player->play();
@@ -250,7 +244,6 @@ extern "C" void app_main(void)
                 });
         */
     }
-#endif
     ESP_LOGI(TAG, "player started");
 }
 

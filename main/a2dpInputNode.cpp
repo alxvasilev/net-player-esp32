@@ -1,5 +1,3 @@
-#if CONFIG_BT_ENABLED
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -143,4 +141,3 @@ void A2dpInputNode::confirmRead(int amount)
 {
     mRingBuf.commitContigRead(amount);
 }
-#endif

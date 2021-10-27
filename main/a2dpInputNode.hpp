@@ -1,5 +1,4 @@
-#include "sdkconfig.h"
-#if !defined(A2DP_INPUT_NODE_HPP) && defined(CONFIG_BT_ENABLED)
+#ifndef A2DP_INPUT_NODE_HPP
 #define A2DP_INPUT_NODE_HPP
 
 #include <stdio.h>
@@ -38,5 +37,4 @@ public:
     virtual StreamError pullData(DataPullReq& dpr, int timeout);
     virtual void confirmRead(int amount);
 };
-
 #endif

@@ -6,6 +6,7 @@ static const char* TAG = "mp3dec";
 DecoderMp3::DecoderMp3()
 {
     initMadState();
+    ESP_LOGI(TAG, "Mp3 decoder uses approx %zu bytes of RAM", sizeof(DecoderMp3));
 }
 DecoderMp3::~DecoderMp3()
 {

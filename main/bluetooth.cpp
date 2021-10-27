@@ -1,5 +1,3 @@
-#if CONFIG_BT_ENABLED
-
 #include "esp_system.h"
 #include "esp_log.h"
 
@@ -90,6 +88,10 @@ bool BluetoothStack::start(esp_bt_mode_t mode, const char* discoName)
         ESP_LOGE(TAG, "Bluetooth alreay started");
         return false;
     }
+#if CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY == TRUE
+    hidh_set_dynamic_memory(malloc(sizeof(tHID_HOST_CTB), MALLOC_CAP_SPIRAM));
+#endif
+
 //    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
     esp_err_t err;
     esp_bt_controller_config_t cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
@@ -266,4 +268,3 @@ static bool get_name_from_eir(uint8_t *eir, char* bdname, uint8_t len)
     bdname[rmt_bdname_len] = '\0';
     return true;
 }
-#endif

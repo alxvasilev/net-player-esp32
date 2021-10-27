@@ -7,9 +7,7 @@
 #include "i2sSinkNode.hpp"
 #include "decoderNode.hpp"
 #include "equalizerNode.hpp"
-#if CONFIG_BT_ENABLED
-    #include "a2dpInputNode.hpp"
-#endif
+#include "a2dpInputNode.hpp"
 #include <stdfonts.hpp>
 #include <string>
 
@@ -112,9 +110,13 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
     AudioNode* pcmSource = nullptr;
     switch(inType) {
     case AudioNode::kTypeHttpIn:
-        mStreamIn.reset(AudioNode::haveSpiRam()
-            ? new HttpNode(kHttpBufSizeSpiRam, 32768)
-            : new HttpNode(kHttpBufSizeInternal, kHttpBufSizeInternal * 3 / 4));
+        if (AudioNode::haveSpiRam()) {
+            ESP_LOGI(TAG, "Allocating %d bytes in SPIRAM for http buffer", kHttpBufSizeSpiRam);
+            mStreamIn.reset(new HttpNode(kHttpBufSizeSpiRam, 32768));
+        } else {
+            ESP_LOGI(TAG, "Allocating %d bytes internal RAM for http buffer", kHttpBufSizeSpiRam);
+            mStreamIn.reset(new HttpNode(kHttpBufSizeInternal, kHttpBufSizeInternal * 3 / 4));
+        }
         mStreamIn->setEventHandler(this);
         mStreamIn->subscribeToEvents(0xffff);
 
@@ -122,13 +124,11 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         mDecoder->linkToPrev(mStreamIn.get());
         pcmSource = mDecoder.get();
         break;
-#if CONFIG_BT_ENABLED
     case AudioNode::kTypeA2dpIn:
         mStreamIn.reset(new A2dpInputNode("NetPlayer"));
         mDecoder.reset();
         pcmSource = mStreamIn.get();
         break;
-#endif
     default:
         ESP_LOGE(TAG, "Unknown pipeline input node type %d", inType);
         return false;

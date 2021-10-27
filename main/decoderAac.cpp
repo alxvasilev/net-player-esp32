@@ -16,10 +16,12 @@ void DecoderAac::initDecoder()
     mInputLen = 0;
     mNextFrameOffs = 0;
     mOutputSize = 0;
+    auto before = xPortGetFreeHeapSize();
     mDecoder = AACInitDecoder();
     if (!mDecoder) {
         ESP_LOGE(TAG, "Out of memory creating AAC decoder.");
     }
+    ESP_LOGW(TAG, "Allocating AAC decoder took %d bytes of RAM", before - xPortGetFreeHeapSize() + sizeof(DecoderAac));
 }
 void DecoderAac::freeDecoder()
 {
