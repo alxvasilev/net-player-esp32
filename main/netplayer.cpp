@@ -166,7 +166,7 @@ static constexpr ST7735Display::PinCfg lcdPins = {
 
 extern "C" void app_main(void)
 {
-//  esp_log_level_set("*", ESP_LOG_DEBUG);
+//    esp_log_level_set("*", ESP_LOG_INFO);
     AudioNode::detectSpiRam();
     configGpios();
 
@@ -212,9 +212,26 @@ extern "C" void app_main(void)
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
 //===
+    esp_log_level_set("BT_HIDH", ESP_LOG_VERBOSE);
+    esp_log_level_set("BT_APPL", ESP_LOG_VERBOSE);
+
     auto before = xPortGetFreeHeapSize();
     BluetoothStack::disableBLE();
     ESP_LOGW(TAG, "Releasing Bluetooth BLE memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
+    BluetoothStack::start(ESP_BT_MODE_CLASSIC_BT, "test");
+    BluetoothStack::startHidHost();
+    BluetoothStack::discoverDevices([](BluetoothStack::DeviceList& devices) {
+        static const BluetoothStack::Addr myDeviceAddr({0x11, 0x22, 0x33, 0x98, 0x93, 0x52});
+        for (auto& item: devices) {
+            ESP_LOGI(TAG, "%s(%s): class: %x, rssi: %d", item.second.name.c_str(),
+                     item.first.toString().c_str(), item.second.devClass, item.second.rssi);
+            if (strcmp(item.first.toString().c_str(), "11:22:33:98:93:52") == 0) {
+                ESP_LOGW(TAG, "Found, connecting");
+                BluetoothStack::connectHidDeviceBtClassic(item.first.data());
+            }
+        }
+    });
+
 //===
     lcd.puts("Mounting SDCard...\n");
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };

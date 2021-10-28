@@ -1,12 +1,15 @@
 #include "esp_system.h"
 #include "esp_log.h"
-
 #include "esp_bt.h"
 #include "esp_bt_main.h"
 #include "esp_bt_device.h"
 #include "esp_a2dp_api.h"
+#include "esp_hidh.h"
+#include <esp_heap_caps.h>
 #include "bluetooth.hpp"
 #include <cstring>
+#include "buffer.hpp"
+#include "utils.hpp"
 
 static const char* TAG = "btstack";
 BluetoothStack* BluetoothStack::gInstance = nullptr;
@@ -82,15 +85,79 @@ void BluetoothStack::avrcControllerCallback(esp_avrc_ct_cb_event_t event,
     ESP_LOGI(TAG, "remote control cb event: %d", event);
 }
 
+esp_hidh_dev_t* BluetoothStack::connectHidDeviceBtClassic(const uint8_t* addr)
+{
+    return esp_hidh_dev_open((uint8_t*)addr, ESP_HID_TRANSPORT_BT, 0);
+}
+
+esp_hidh_dev_t* BluetoothStack::connectHidDeviceBLE(const esp_bd_addr_t addr, esp_ble_addr_type_t addrType)
+{
+    return esp_hidh_dev_open((uint8_t*)addr, ESP_HID_TRANSPORT_BLE, addrType);
+}
+
+void BluetoothStack::hidhCallback(void *args, esp_event_base_t base, int32_t id, void* data)
+{
+    auto event = (esp_hidh_event_t)id;
+    auto param = (esp_hidh_event_data_t*)data;
+    switch (event) {
+     case ESP_HIDH_OPEN_EVENT: {
+         const uint8_t *bda = esp_hidh_dev_bda_get(param->open.dev);
+         ESP_LOGI(TAG, ESP_BD_ADDR_STR " OPEN: %s", ESP_BD_ADDR_HEX(bda), esp_hidh_dev_name_get(param->open.dev));
+         esp_hidh_dev_dump(param->open.dev, stdout);
+
+         char hex_buffer_1[4 * 16 + 1];
+         sprintf(hex_buffer_1, ESP_BD_ADDR_STR, ESP_BD_ADDR_HEX(bda));
+         ESP_LOGI(TAG, "Device %s connected", hex_buffer_1);
+         break;
+     }
+     case ESP_HIDH_BATTERY_EVENT: {
+         const uint8_t *bda = esp_hidh_dev_bda_get(param->battery.dev);
+         ESP_LOGI(TAG, ESP_BD_ADDR_STR " BATTERY: %d%%", ESP_BD_ADDR_HEX(bda), param->battery.level);
+         break;
+     }
+     case ESP_HIDH_INPUT_EVENT: {
+         const uint8_t *bda = esp_hidh_dev_bda_get(param->input.dev);
+         char hex_buffer_2[4 * 16 + 1];
+         sprintf(hex_buffer_2, ESP_BD_ADDR_STR, ESP_BD_ADDR_HEX(bda));
+         DynBuffer buf(param->input.length * 2 + 1);
+         buf.setDataSize(buf.capacity());
+         binToHex(param->input.data, param->input.length, buf.buf());
+         buf.buf()[buf.dataSize()-1] = 0; // null terminate
+         ESP_LOGI(TAG, "HID event: %s", buf.buf());
+         break;
+     }
+     case ESP_HIDH_FEATURE_EVENT: {
+         const uint8_t *bda = esp_hidh_dev_bda_get(param->feature.dev);
+         ESP_LOGI(TAG, ESP_BD_ADDR_STR " FEATURE: %8s, MAP: %2u, ID: %3u, Len: %d", ESP_BD_ADDR_HEX(bda), esp_hid_usage_str(param->feature.usage), param->feature.map_index, param->feature.report_id, param->feature.length);
+         ESP_LOG_BUFFER_HEX(TAG, param->feature.data, param->feature.length);
+         break;
+     }
+     case ESP_HIDH_CLOSE_EVENT: {
+         const uint8_t *bda = esp_hidh_dev_bda_get(param->close.dev);
+         ESP_LOGI(TAG, ESP_BD_ADDR_STR " CLOSE: '%s' %s", ESP_BD_ADDR_HEX(bda), esp_hidh_dev_name_get(param->close.dev), esp_hid_disconnect_reason_str(esp_hidh_dev_transport_get(param->close.dev), param->close.reason));
+         //MUST call this function to free all allocated memory by this device
+         esp_hidh_dev_free(param->close.dev);
+         break;
+     }
+     default:
+         ESP_LOGI(TAG, "HID EVENT: %d", event);
+         break;
+     }
+}
+void BluetoothStack::startHidHost()
+{
+    esp_hidh_config_t config = {
+        .callback = hidhCallback,
+//      .event_stack_size = 4096
+    };
+    ESP_ERROR_CHECK(esp_hidh_init(&config));
+}
 bool BluetoothStack::start(esp_bt_mode_t mode, const char* discoName)
 {
     if (gInstance) {
-        ESP_LOGE(TAG, "Bluetooth alreay started");
+        ESP_LOGE(TAG, "Bluetooth already started");
         return false;
     }
-#if CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY == TRUE
-    hidh_set_dynamic_memory(malloc(sizeof(tHID_HOST_CTB), MALLOC_CAP_SPIRAM));
-#endif
 
 //    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
     esp_err_t err;
