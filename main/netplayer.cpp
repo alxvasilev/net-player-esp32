@@ -212,10 +212,6 @@ extern "C" void app_main(void)
     netLogger.waitForLogConnection();
     ESP_LOGI(TAG, "Log connection accepted, continuing");
 //===
-    auto before = xPortGetFreeHeapSize();
-    BluetoothStack::disableBLE();
-    ESP_LOGW(TAG, "Releasing Bluetooth BLE memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
-//===
     lcd.puts("Mounting SDCard...\n");
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };
     sdcard.init(HSPI_HOST, pins, "/sdcard");
@@ -228,10 +224,17 @@ extern "C" void app_main(void)
     };
     if (player->inputType() == AudioNode::kTypeHttpIn) {
         ESP_LOGI(TAG, "Player input set to HTTP stream");
+        auto before = xPortGetFreeHeapSize();
+        BluetoothStack::disableCompletely();
+        ESP_LOGW(TAG, "Releasing all Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
         player->playStation(nullptr);
     }
     else if (player->inputType() == AudioNode::kTypeA2dpIn) {
         ESP_LOGI(TAG, "Player input set to Bluetooth A2DP sink");
+        //===
+        auto before = xPortGetFreeHeapSize();
+        BluetoothStack::disableBLE();
+        ESP_LOGW(TAG, "Releasing Bluetooth BLE memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
         player->play();
         /*
                 BluetoothStack::start(ESP_BT_MODE_BLE, "test");
