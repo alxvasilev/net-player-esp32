@@ -209,8 +209,8 @@ extern "C" void app_main(void)
 //===
 
     lcd.puts("Waiting log conn...\n");
-    netLogger.waitForLogConnection();
-    ESP_LOGI(TAG, "Log connection accepted, continuing");
+    auto ret = netLogger.waitForLogConnection(10);
+    ESP_LOGI(TAG, "%s, continuing" ret ? "Log connection accepted" : "Timeout, continuing");
 //===
     lcd.puts("Mounting SDCard...\n");
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };
