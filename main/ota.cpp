@@ -9,7 +9,18 @@ enum { kOtaBufSize = 512 };
 static constexpr const char* TAG = "OTA";
 
 void defaultOtaNotifyCallback() {}
+bool otaInProgress = false;
+
 OtaNotifyCallback otaNotifyCallback = &defaultOtaNotifyCallback;
+struct OtaInProgressSetter
+{
+    OtaInProgressSetter() {
+        otaInProgress = true;
+    }
+    ~OtaInProgressSetter() {
+        otaInProgress = false;
+    }
+};
 
 bool rollbackIsPendingVerify()
 {
@@ -48,6 +59,7 @@ static esp_err_t OTA_update_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
+    OtaInProgressSetter inProgress;
     ESP_LOGI(TAG, "Writing to partition '%s' subtype %d at offset 0x%x",
         update_partition->label, update_partition->subtype, update_partition->address);
 

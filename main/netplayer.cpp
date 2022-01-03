@@ -209,8 +209,13 @@ extern "C" void app_main(void)
 //===
 
     lcd.puts("Waiting log conn...\n");
-    auto ret = netLogger.waitForLogConnection(10);
-    ESP_LOGI(TAG, "%s, continuing" ret ? "Log connection accepted" : "Timeout, continuing");
+    auto ret = netLogger.waitForLogConnection(4);
+    if (otaInProgress) {
+        ESP_LOGI(TAG, "OTA Update in progress...");
+        vTaskDelay(portMAX_DELAY);
+    }
+
+    ESP_LOGI(TAG, "%s, continuing", ret ? "Log connection accepted" : "Timeout, continuing");
 //===
     lcd.puts("Mounting SDCard...\n");
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };
