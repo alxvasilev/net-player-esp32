@@ -372,5 +372,3 @@ void startWebserver(bool isAp)
     httpd_register_uri_handler(gHttpServer, &changeInputUrl);
     httpFsRegisterHandlers(gHttpServer);
 }
-
-
