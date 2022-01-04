@@ -53,7 +53,9 @@ void I2sOutputNode::nodeThreadFunc()
                 setFormat(dpr.fmt);
             }
 
-            processVolume(dpr);
+            if (mUseVolumeInterface) {
+                processVolumeAndLevel(dpr);
+            }
 
             if (mUseInternalDac) {
                 adjustSamplesForInternalDac(dpr.buf, dpr.size);

@@ -112,6 +112,8 @@ protected:
     static esp_err_t equalizerSetUrlHandler(httpd_req_t *req);
     static esp_err_t equalizerDumpUrlHandler(httpd_req_t *req);
     static esp_err_t getStatusUrlHandler(httpd_req_t *req);
+    static esp_err_t nvsGetParamUrlHandler(httpd_req_t* req);
+    static esp_err_t nvsSetParamUrlHandler(httpd_req_t* req);
     void registerHttpGetHandler(httpd_handle_t server,
         const char* path, esp_err_t(*handler)(httpd_req_t*));
 public:

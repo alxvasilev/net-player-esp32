@@ -76,7 +76,7 @@ void AudioPlayer::init(AudioNode::Type inType, AudioNode::Type outType)
 }
 void AudioPlayer::initFromNvs()
 {
-    uint8_t useEq = mNvsHandle.readDefault("useEq", 1);
+    uint8_t useEq = mNvsHandle.readDefault<uint8_t>("useEq", 1);
     if (useEq) {
         mFlags = (Flags)(mFlags | kFlagUseEqualizer);
     }
@@ -137,6 +137,11 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         mEqualizer.reset(new EqualizerNode(sDefaultEqGains));
         mEqualizer->linkToPrev(pcmSource);
         pcmSource = mEqualizer.get();
+        auto vuAtInput = mNvsHandle.readDefault<uint8_t>("vuAtEqInput", 0);
+        if (vuAtInput) {
+            mEqualizer->monitorLevelAtInput(true);
+        }
+        ESP_LOGI(TAG, "VU source set %s volume and EQ processing", vuAtInput ? "before" : "after");
     }
     switch(outType) {
     case AudioNode::kTypeI2sOut:
@@ -147,6 +152,9 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         cfg.data_in_num = -1;
 
         mStreamOut.reset(new I2sOutputNode(0, &cfg, AudioNode::haveSpiRam()));
+        if ((mFlags & kFlagUseEqualizer) == 0) {
+            static_cast<I2sOutputNode*>(mStreamOut.get())->useVolumeInterface(true);
+        }
         break;
     /*
     case kOutputA2dp:
@@ -723,6 +731,86 @@ esp_err_t AudioPlayer::getStatusUrlHandler(httpd_req_t* req)
     httpd_resp_sendstr(req, buf.buf());
     return ESP_OK;
 }
+esp_err_t AudioPlayer::nvsSetParamUrlHandler(httpd_req_t* req)
+{
+    UrlParams params(req);
+    auto key = params.strVal("key");
+    if (!key.str || !key.str[0]) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No 'key' param specified");
+        return ESP_FAIL;
+    }
+    auto type = params.strVal("type");
+    if (!type.str) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No 'type' param specified");
+        return ESP_FAIL;
+    }
+    auto strVal = params.strVal("val");
+    auto self = static_cast<AudioPlayer*>(req->user_ctx);
+    MutexLocker locker(self->mutex);
+    if (!strVal.str) {
+        auto err = self->mNvsHandle.eraseKey(key.str);
+        if (err == ESP_OK) {
+            httpd_resp_sendstr(req, "Key deleted");
+            return ESP_OK;
+        } else {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, esp_err_to_name(err));
+            return ESP_FAIL;
+        }
+    }
+    auto err = self->mNvsHandle.writeValueFromString(key.str, type.str, strVal.str);
+    if (err == ESP_OK) {
+        httpd_resp_sendstr(req, "ok");
+        return ESP_OK;
+    } else {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, esp_err_to_name(err));
+        return ESP_FAIL;
+    }
+}
+esp_err_t AudioPlayer::nvsGetParamUrlHandler(httpd_req_t* req)
+{
+    auto self = static_cast<AudioPlayer*>(req->user_ctx);
+    UrlParams params(req);
+    auto key = params.strVal("key");
+    auto nsParam = params.strVal("ns");
+    const char* ns;
+    std::unique_ptr<NvsHandle> nvsHolder;
+    NvsHandle* nvs;
+    if (nsParam.str) {
+        ns = nsParam.str;
+        nvsHolder.reset(new NvsHandle(ns));
+        nvs = nvsHolder.get();
+    } else {
+        ns = "aplayer";
+        nvs = &self->mNvsHandle;
+    }
+    DynBuffer buf(128);
+    MutexLocker locker(self->mutex);
+    httpd_resp_send_chunk(req, "{", 1);
+    bool isFirst = true;
+    nvs_iterator_t it;
+    for(it = nvs_entry_find("nvs", ns, NVS_TYPE_ANY); it; it = nvs_entry_next(it)) {
+        nvs_entry_info_t info;
+        nvs_entry_info(it, &info);
+        if (key.str && strcmp(info.key, key.str) != 0) {
+            continue;
+        }
+        buf.clear();
+        if (!isFirst) {
+            buf.appendChar(',');
+        }
+        isFirst = false;
+        buf.appendChar('"').appendStr(info.key).appendChar('"').appendChar(':');
+        auto err = nvs->valToString(info.key, info.type, buf, true);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "NvsHandle::valToString error %s, key: '%s'", esp_err_to_name(err), info.key);
+        }
+        httpd_resp_send_chunk(req, buf.buf(), buf.dataSize());
+    }
+    nvs_release_iterator(it);
+    httpd_resp_send_chunk(req, "}", 1);
+    httpd_resp_send_chunk(req, nullptr, 0);
+    return ESP_OK;
+}
 
 void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
 {
@@ -732,6 +820,8 @@ void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
     registerHttpGetHandler(server, "/eqget", &equalizerDumpUrlHandler);
     registerHttpGetHandler(server, "/eqset", &equalizerSetUrlHandler);
     registerHttpGetHandler(server, "/status", &getStatusUrlHandler);
+    registerHttpGetHandler(server, "/nvget", &nvsGetParamUrlHandler);
+    registerHttpGetHandler(server, "/nvset", &nvsSetParamUrlHandler);
     if (stationList) {
         stationList->registerHttpHandlers(server);
     }

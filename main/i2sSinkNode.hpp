@@ -13,6 +13,7 @@ protected:
     bool mUseInternalDac;
     StreamFormat mFormat;
     int mReadTimeout;
+    bool mUseVolumeInterface = false;
     enum {
         kDmaBufLen = 1023,
         kDmaBufCntInternalRam = 2, kDmaBufCntSpiRam = 4, // in samples, multiply by 4 for bytes
@@ -27,6 +28,7 @@ protected:
 public:
     I2sOutputNode(int port, i2s_pin_config_t* pinCfg, bool haveSpiRam);
     ~I2sOutputNode();
+    void useVolumeInterface(bool enable) { mUseVolumeInterface = enable; }
     virtual Type type() const { return kTypeI2sOut; }
     virtual IAudioVolume* volumeInterface() override { return this; }
     virtual StreamError pullData(DataPullReq& dpr, int timeout) { return kTimeout; }

@@ -182,5 +182,140 @@ public:
         mTsLastChange = 0;
         nvs_commit(mHandle);
     }
+    static const char* valTypeToStr(nvs_type_t type)
+    {
+        switch(type) {
+            case NVS_TYPE_U8: return "u8";
+            case NVS_TYPE_I8: return "i8";
+            case NVS_TYPE_U16: return "u16";
+            case NVS_TYPE_I16: return "i16";
+            case NVS_TYPE_U32: return "u32";
+            case NVS_TYPE_I32: return "i32";
+            case NVS_TYPE_U64: return "u64";
+            case NVS_TYPE_I64: return "i64";
+            case NVS_TYPE_STR: return "str";
+            case NVS_TYPE_BLOB: return "blob";
+            case NVS_TYPE_ANY: return "any";
+            default: return "(invalid)";
+        }
+    }
+    static bool typeIsNumeric(nvs_type_t type) { return (type & 0xe0) == 0; } // 0x1x or 0x0x
+    static bool typeIsSignedInt(nvs_type_t type) { return (type & 0xf0) == 0x10; } // 0x1x
+    static bool typeIsUnsignedInt(nvs_type_t type) { return (type & 0xf0) == 0; } // 0x0x
+    template <class T>
+    esp_err_t numValToStr(const char* key, DynBuffer& buf)
+    {
+        T val;
+        auto err = read(key, val);
+        if (err != ESP_OK) {
+            return err;
+        }
+        auto str = std::to_string(val);
+        buf.appendStr(str.c_str());
+        return ESP_OK;
+    }
+    esp_err_t valToString(const char* key, nvs_type_t type, DynBuffer& buf, bool quoteStr=true)
+    {
+        if (type == NVS_TYPE_STR) {
+            size_t len = 0;
+            auto err = readString(key, nullptr, len);
+            if (err != ESP_OK) {
+                return err;
+            }
+            if (quoteStr) {
+                auto wptr = buf.getAppendPtr(len + 2);
+                *wptr = '"';
+                err = readString(key, wptr + 1, len);
+                if (err) {
+                    *wptr = 0;
+                    return err;
+                }
+                wptr[len] = '"';
+                wptr[len + 1] = 0;
+                buf.expandDataSize(len + 2);
+            } else {
+                auto wptr = buf.getAppendPtr(len);
+                err = readString(key, wptr, len);
+                if (err != ESP_OK) {
+                    *wptr = 0;
+                    return err;
+                }
+                wptr[len-1] = 0;
+                buf.expandDataSize(len);
+            }
+            return ESP_OK;
+        }
+        else if (type == NVS_TYPE_BLOB) {
+            buf.appendStr("\"(BLOB)\"");
+            return ESP_OK;
+        }
+        switch(type) {
+            case NVS_TYPE_U8: return numValToStr<uint8_t>(key, buf);
+            case NVS_TYPE_I8: return numValToStr<int8_t>(key, buf);
+            case NVS_TYPE_U16: return numValToStr<uint16_t>(key, buf);
+            case NVS_TYPE_I16: return numValToStr<int16_t>(key, buf);
+            case NVS_TYPE_U32: return numValToStr<uint32_t>(key, buf);
+            case NVS_TYPE_I32: return numValToStr<int32_t>(key, buf);
+            case NVS_TYPE_U64: return numValToStr<uint64_t>(key, buf);
+            case NVS_TYPE_I64: return numValToStr<int64_t>(key, buf);
+            default: return ESP_ERR_INVALID_ARG;
+        }
+    }
+    esp_err_t writeValueFromString(const char* key, const char* type, const char* strVal)
+    {
+        switch (type[0]) {
+            case 'i': {
+                auto sz = type + 1;
+                if (strcmp(sz, "64") == 0) {
+                    auto val = strtoll(strVal, nullptr, 10);
+                    if (!val && errno != 0) {
+                        return ESP_ERR_INVALID_ARG;
+                    }
+                    return write(key, val);
+                }
+                long val = strtol(strVal, nullptr, 10);
+                if (!val && errno != 0) {
+                    return ESP_ERR_INVALID_ARG;
+                }
+                if (strcmp(sz, "8") == 0) {
+                    return write(key, (int8_t)val);
+                } else if (strcmp(sz, "16") == 0) {
+                    return write(key, (int16_t)val);
+                } else if (strcmp(sz, "32") == 0) {
+                    return write(key, (int32_t)val);
+                } else {
+                    return ESP_ERR_INVALID_ARG;
+                }
+            }
+            case 'u': {
+                auto sz = type + 1;
+                if (strcmp(sz, "64") == 0) {
+                    uint64_t val = strtoull(strVal, nullptr, 10);
+                    if (!val && errno != 0) {
+                        return ESP_ERR_INVALID_ARG;
+                    }
+                    return write(key, val);
+                }
+                unsigned long val = strtoul(strVal, nullptr, 10);
+                if (!val && errno != 0) {
+                    return ESP_ERR_INVALID_ARG;
+                }
+                if (strcmp(sz, "8") == 0) {
+                    return write(key, (uint8_t)val);
+                } else if (strcmp(sz, "16") == 0) {
+                    return write(key, (uint16_t)val);
+                } else if (strcmp(sz, "32") == 0) {
+                    return write(key, (uint32_t)val);
+                } else {
+                    return ESP_ERR_INVALID_ARG;
+                }
+            }
+            case 's': {
+                return writeString(key, strVal);
+            }
+            default:
+                return ESP_ERR_NOT_SUPPORTED;
+        }
+    }
 };
 #endif
