@@ -129,6 +129,7 @@ I2sOutputNode::I2sOutputNode(int port, i2s_pin_config_t* pinCfg, bool haveSpiRam
     cfg.dma_buf_len = kDmaBufLen;
     cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL3|ESP_INTR_FLAG_IRAM;
     cfg.tx_desc_auto_clear = true;
+    cfg.use_apll = true;
 
     if (mUseInternalDac) {
         cfg.mode = (i2s_mode_t)(cfg.mode | I2S_MODE_DAC_BUILT_IN);
