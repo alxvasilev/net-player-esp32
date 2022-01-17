@@ -134,7 +134,7 @@ void mountSpiffs()
      if (ret != ESP_OK) {
          ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
      } else {
-         ESP_LOGW(TAG, "Partition size: total: %d, used: %d", total, used);
+         ESP_LOGW(TAG, "SPIFFS partition size: total: %d, used: %d", total, used);
      }
 }
 bool rollbackCheckUserForced()

@@ -18,9 +18,16 @@ extern Font font_Icons22;
 
 #define LOCK_PLAYER() MutexLocker locker(mutex)
 
+static constexpr const char* const TAG = "AudioPlayer";
+
 const float AudioPlayer::sDefaultEqGains[EqualizerNode::kBandCount] = {
     8, 8, 4, 0, -2, -4, -4, -2, 4, 6
 };
+
+void AudioPlayer::setLogLevel(esp_log_level_t level)
+{
+    esp_log_level_set(TAG, level);
+}
 
 void AudioPlayer::createOutputA2dp()
 {
@@ -46,13 +53,13 @@ void AudioPlayer::createOutputA2dp()
 
 AudioPlayer::AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, ST7735Display& lcd, bool useEq)
 :mFlags(useEq ? kFlagUseEqualizer : (Flags)0),
- mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd), mEvents(kEventTerminating)
+ mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd), mEvents(kEventTerminating), mVuDisplay(mLcd)
 {
     init(inType, outType);
 }
 
 AudioPlayer::AudioPlayer(ST7735Display& lcd)
-:mFlags((Flags)0), mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd)
+:mFlags((Flags)0), mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd), mVuDisplay(mLcd)
 {
     init(AudioNode::kTypeUnknown, AudioNode::kTypeUnknown);
 }
@@ -90,12 +97,29 @@ void AudioPlayer::initFromNvs()
 
 void AudioPlayer::lcdInit()
 {
-    auto numLeds = mLcd.width() / kVuLedWidth;
-    mLevelPerVuLed = (std::numeric_limits<int16_t>::max() + numLeds - 1) / numLeds;
-    mVuRedStartX = mLcd.width() - kVuLedWidth - 1;
-    mVuYellowStartX = mVuRedStartX - kVuLedWidth * 2;
-    mVuLeftCtx.barY = mLcd.height() - 2 * kVuLedHeight - kVuLedSpacing;
-    mVuRightCtx.barY = mVuLeftCtx.barY + kVuLedHeight + kVuLedSpacing;
+    mVuDisplay.init(mNvsHandle);
+}
+
+void VuDisplay::init(NvsHandle& nvs)
+{
+    mLedWidth = nvs.readDefault<uint8_t>("vuLedWidth", kDefLedWidth);
+    mStepWidth = mLedWidth + nvs.readDefault<uint8_t>("vuLedSpacing", kDefLedSpacing);
+    if (mLcd.width() % mStepWidth) {
+        ESP_LOGE(TAG, "Specified VU led width is not a divisor of display width. VU meter will not behave correctly");
+    }
+    int16_t numLeds = mLcd.width() / mStepWidth;
+    mLevelPerLed = (100 * int32_t(kLevelMax + 1) + numLeds / 2) / numLeds; // 100x the rounded division, i.e. fixed point two-decimal precision
+    mLedHeight = nvs.readDefault<uint8_t>("vuLedHeight", kDefLedHeight);
+    mChanSpacing = nvs.readDefault<uint8_t>("vuChanSpacing", kDefChanSpacing);
+    mYellowStartX = mStepWidth * (100 * (int32_t)nvs.readDefault<uint16_t>("vuYellowThresh", kLevelMax - 255)) / mLevelPerLed;
+    enum { kTicksPerSec = 43 }; // ~1024 samples at 44100 Hz
+    auto pkDropSpeed = nvs.readDefault<uint8_t>("vuPeakDropSpeed", kDefPeakDropSpeed);
+    mPeakDropTicks = (kTicksPerSec * mStepWidth + pkDropSpeed / 2) / pkDropSpeed;
+    auto pkHoldMs = nvs.readDefault<uint16_t>("vuPeakHoldMs", 500);
+    mPeakHoldTicks = (pkHoldMs + (1000 / kTicksPerSec) / 2) / (1000 / kTicksPerSec);
+    ESP_LOGI(TAG, "stepWidth: %d, ledWidth: %d, levelPerLed: %f, yellowStartX: %d", mStepWidth, mLedWidth, mYellowStartX / (float)100, mYellowStartX);
+    mLeftCtx.barY = mLcd.height() - 2 * mLedHeight - mChanSpacing;
+    mRightCtx.barY = mLeftCtx.barY + mLedHeight + mChanSpacing;
 }
 
 void AudioPlayer::initTimedDrawTask()
@@ -855,7 +879,7 @@ bool AudioPlayer::onEvent(AudioNode *self, uint32_t event, uintptr_t buf, size_t
 void AudioPlayer::lcdTimedDrawTask(void* ctx)
 {
     auto& self = *static_cast<AudioPlayer*>(ctx);
-    enum { kTitleScrollTickPeriodUs = kTitleScrollTickPeriodMs * 1000 };
+    enum { kTitleScrollTickPeriodUs = (1000000 + kTitleScrollFps / 2) / kTitleScrollFps };
     int64_t tsLastTitleScroll = esp_timer_get_time() - kTitleScrollTickPeriodUs - 1;
     for (;;) {
         EventBits_t events;
@@ -873,7 +897,7 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
         {
             MutexLocker locker(self.mutex);
             if (events & kEventVolLevel) {
-                self.lcdUpdateVolLevel();
+                self.mVuDisplay.update(self.mVolumeInterface->audioLevels());
             } else if (events == 0) {
                 tsLastTitleScroll = esp_timer_get_time();
                 self.lcdScrollTrackTitle();
@@ -949,78 +973,87 @@ void AudioPlayer::audioLevelCb(void* ctx)
     auto& self = *static_cast<AudioPlayer*>(ctx);
     self.mEvents.setBits(kEventVolLevel);
 }
-inline uint16_t AudioPlayer::vuLedColor(int16_t ledX, int16_t level)
+
+void VuDisplay::update(const IAudioVolume::StereoLevels& levels)
 {
-    if (ledX >= mVuRedStartX) {
-        return (level >= std::numeric_limits<decltype(level)>::max()-1)
-            ? ST77XX_RED
-            : ST77XX_YELLOW;
-    } else if (ledX >= mVuYellowStartX) {
-        return ST77XX_YELLOW;
-    } else {
+    drawChannel(mLeftCtx, levels.left);
+    drawChannel(mRightCtx, levels.right);
+}
+
+inline uint16_t VuDisplay::ledColor(int16_t ledX, int16_t level)
+{
+    if (ledX < mYellowStartX) {
         return ST77XX_GREEN;
+    } else {
+        return (ledX >= kLevelMax) ? ST77XX_RED : ST77XX_YELLOW;
     }
 }
 
-void AudioPlayer::vuCalculateLevels(VuLevelCtx& ctx, int16_t level)
+void VuDisplay::calculateLevels(ChanCtx& ctx, int16_t level)
 {
     if (level > ctx.avgLevel) {
         ctx.avgLevel = level;
     } else {
-        ctx.avgLevel = ((int)ctx.avgLevel * (kVuLevelSmoothFactor-1) + level) / kVuLevelSmoothFactor;
+        ctx.avgLevel = ((int32_t)ctx.avgLevel * (kLevelSmoothFactor-1) + level + kLevelSmoothFactor / 2) / kLevelSmoothFactor;
     }
-    if (level > ctx.peakLevel) {
+    if (level >= ctx.peakLevel) {
         ctx.peakLevel = level;
-        ctx.peakTimer = kVuPeakHoldTime;
-    } else {
+        ctx.peakTimer = mPeakHoldTicks;
+    }
+    else { // peak is above curent level
         if (--ctx.peakTimer <= 0) {
-            ctx.peakTimer = kVuPeakDropTime;
+            ctx.peakTimer = mPeakDropTicks;
             if (ctx.peakLevel > 0) {
-                ctx.peakLevel -= mLevelPerVuLed;
+                ctx.peakLevel -= mLevelPerLed / 100;
+                if (ctx.peakLevel < 0) {
+                    ctx.peakLevel = 0;
+                }
             }
         }
     }
 }
-void AudioPlayer::lcdUpdateVolLevel()
+
+inline int16_t VuDisplay::numLedsForLevel(int16_t level)
 {
-    // Called from the display refresh worker
-    const auto& levels = mVolumeInterface->audioLevels();
-    vuDrawChannel(mVuLeftCtx, levels.left);
-    vuDrawChannel(mVuRightCtx, levels.right);
+    // Rounded-up division of (level * 100) / mLevelPerLed
+    return (100 * (int32_t)level + mLevelPerLed - 1) / mLevelPerLed;
 }
-
-void AudioPlayer::vuDrawChannel(VuLevelCtx& ctx, int16_t level)
+void VuDisplay::drawChannel(ChanCtx& ctx, int16_t level)
 {
-    vuCalculateLevels(ctx, level);
-    //width in pixels of level bars
-    int16_t levelBarWidth = kVuLedWidth * (((int)ctx.avgLevel + mLevelPerVuLed - 1) / mLevelPerVuLed);
-    // draw bar
-    for (int16_t x = 0; x < levelBarWidth; x += kVuLedWidth) {
-        mLcd.setFgColor(vuLedColor(x, ctx.peakLevel));
-        mLcd.fillRect(x, ctx.barY, kVuLedWidth-kVuLedSpacing, kVuLedHeight);
+    calculateLevels(ctx, level);
+    // Width in pixels of level bar.
+    auto nCurrLeds = numLedsForLevel(ctx.avgLevel);
+    int16_t levelBarLen = mStepWidth * nCurrLeds;
+    // Draw bar
+    for (int16_t x = ctx.prevBarLen; x < levelBarLen; x += mStepWidth) {
+        mLcd.setFgColor(ledColor(x, ctx.peakLevel)); // keep red color for "yellow" part, as long as peak-hold is at kMaxLevel
+        mLcd.fillRect(x, ctx.barY, mLedWidth, mLedHeight);
     }
+    ctx.prevBarLen = levelBarLen;
 
-    // draw peak indicators and background bafore and after them
-    int16_t x = kVuLedWidth * ((ctx.peakLevel + mLevelPerVuLed - 1) / mLevelPerVuLed - 1);
-    if (x < levelBarWidth) { // no peak led after level bar
-        int16_t afterWidth = mLcd.width() - levelBarWidth;
-        if (afterWidth > 0) {
+    auto nPeakLeds = numLedsForLevel(ctx.peakLevel);
+    // draw peak indicator and background before and after it
+    if (nPeakLeds <= nCurrLeds) { // no peak led after level bar
+        int16_t afterLen = mLcd.width() - levelBarLen;
+        if (afterLen > 0) {
             // draw background after level bar and return
-            mLcd.clear(levelBarWidth, ctx.barY, afterWidth, kVuLedHeight);
+            mLcd.clear(levelBarLen, ctx.barY, afterLen, mLedHeight);
         }
         return;
     }
-    if (x > levelBarWidth) {
+
+    int16_t peakLedX = mStepWidth * (nPeakLeds - 1);
+    if (peakLedX > levelBarLen) {
         // draw background between end of level bar and peak led
-        mLcd.clear(levelBarWidth, ctx.barY, x - levelBarWidth, kVuLedHeight);
+        mLcd.clear(levelBarLen, ctx.barY, peakLedX - levelBarLen, mLedHeight);
     }
-    mLcd.setFgColor(vuLedColor(x, ctx.peakLevel));
+    mLcd.setFgColor(ledColor(peakLedX, ctx.peakLevel));
     // draw peak led
-    mLcd.fillRect(x, ctx.barY, kVuLedWidth - kVuLedSpacing, kVuLedHeight);
+    mLcd.fillRect(peakLedX, ctx.barY, mLedWidth, mLedHeight);
     // draw background after peak led
-    int16_t xEnd = x + kVuLedWidth - kVuLedSpacing;
-    int16_t afterBg = mLcd.width() - xEnd;
-    if (afterBg > 0) {
-        mLcd.clear(x + kVuLedWidth, ctx.barY, afterBg, kVuLedHeight);
+    auto peakLedEndX = peakLedX + mStepWidth;
+    int16_t afterLen = mLcd.width() - peakLedEndX;
+    if (afterLen > 0) {
+        mLcd.clear(peakLedEndX, ctx.barY, afterLen, mLedHeight);
     }
 }

@@ -8,6 +8,8 @@
 #include <st7735.hpp>
 #include "stationList.hpp"
 #include "recorder.hpp"
+#include <limits>
+#include "volume.hpp"
 
 class DecoderNode;
 class EqualizerNode;
@@ -16,22 +18,53 @@ class ST7735Display;
 namespace nvs {
     class NVSHandle;
 }
+class VuDisplay {
+    enum {
+        kLevelSmoothFactor = 4, kDefPeakHoldMs = 30, kDefPeakDropSpeed = 20,
+        kDefLedWidth = 1, kDefLedHeight = 10, kDefLedSpacing = 1, kDefChanSpacing = 2
+    };
+    enum: uint16_t { kLevelMax = std::numeric_limits<int16_t>::max() };
+    struct ChanCtx
+    {
+        int16_t barY;
+        int16_t avgLevel = 0;
+        int16_t peakLevel = 0;
+        int16_t prevBarLen = 0;
+        uint8_t peakTimer = 0;
+    };
+    ST7735Display& mLcd;
+    ChanCtx mLeftCtx;
+    ChanCtx mRightCtx;
+    int8_t mStepWidth; // mLedWidth + led spacing
+    int8_t mLedWidth;
+    int8_t mLedHeight;
+    int8_t mChanSpacing;
+    int16_t mYellowStartX;
+    int32_t mLevelPerLed;
+    uint8_t mPeakDropTicks;
+    uint8_t mPeakHoldTicks;
+    inline uint16_t ledColor(int16_t ledX, int16_t level);
+    void calculateLevels(ChanCtx& ctx, int16_t level);
+    void drawChannel(ChanCtx& ctx, int16_t level);
+    inline int16_t numLedsForLevel(int16_t level);
+public:
+    VuDisplay(ST7735Display& lcd): mLcd(lcd) {}
+    void init(NvsHandle& nvs);
+    void update(const IAudioVolume::StereoLevels& levels);
+};
 
 class AudioPlayer: public AudioNode::EventHandler
 {
 public:
     static constexpr int kHttpBufSizeInternal = 35 * 1024;
     static constexpr int kHttpBufSizeSpiRam = 350 * 1024;
-    static constexpr int kTitleScrollTickPeriodMs = 40;
+    static constexpr int kTitleScrollFps = 30;
 protected:
     enum Flags: uint8_t
     { kFlagUseEqualizer = 1, kFlagListenerHooked = 2, kFlagNoWaitPrefill = 4 };
     enum: uint8_t
     { kEventTerminating = 1, kEventScroll = 2, kEventVolLevel = 4, kEventTerminated = 8 };
-    enum { kLcdTaskStackSize = 1200, kLcdTaskPrio = 10,
-           kVuLevelSmoothFactor = 4, kVuPeakHoldTime = 30, kVuPeakDropTime = 2,
-           kVuLedWidth = 20, kVuLedHeight = 8, kVuLedSpacing = 3
-    };
+    enum { kLcdTaskStackSize = 1200, kLcdTaskPrio = 10 };
     typedef enum: char {
         kSymBlank = ' ',
         kSymStopped = 38,
@@ -56,31 +89,14 @@ protected:
     EventGroup mEvents;
 // general display stuff
     ST7735Display::Color mFontColor = ST7735Display::rgb(255, 255, 128);
+    VuDisplay mVuDisplay;
 // track name scroll stuff
     bool mTitleScrollEnabled = false;
     DynBuffer mTrackTitle;
     int16_t mTitleScrollCharOffset = 0;
     int8_t mTitleScrollPixOffset = 0;
-// Volume level indicator stuff
-    int16_t mLevelPerVuLed;
-    int16_t mVuYellowStartX;
-    int16_t mVuRedStartX;
-    struct VuLevelCtx
-    {
-        int16_t barY;
-        int16_t avgLevel = 0;
-        int16_t peakLevel = 0;
-        uint8_t peakTimer = 0;
-    };
-    VuLevelCtx mVuLeftCtx;
-    VuLevelCtx mVuRightCtx;
 
     static void audioLevelCb(void* ctx);
-    inline uint16_t vuLedColor(int16_t ledX, int16_t level);
-    void lcdUpdateVolLevel();
-    void vuCalculateLevels(VuLevelCtx& ctx, int16_t level);
-    void vuDrawChannel(VuLevelCtx& ctx, int16_t level);
-
 //====
     static void lcdTimedDrawTask(void* ctx);
 
@@ -117,10 +133,9 @@ protected:
     void registerHttpGetHandler(httpd_handle_t server,
         const char* path, esp_err_t(*handler)(httpd_req_t*));
 public:
-    static constexpr const char* const TAG = "AudioPlayer";
     Mutex mutex;
     std::unique_ptr<StationList> stationList;
-    void setLogLevel(esp_log_level_t level) { esp_log_level_set(TAG, level); }
+    void setLogLevel(esp_log_level_t level);
     AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, ST7735Display& lcd, bool useEq=true);
     AudioPlayer(ST7735Display& lcd);
     ~AudioPlayer();
