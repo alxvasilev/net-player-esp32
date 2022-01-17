@@ -46,6 +46,7 @@ public:
             mAudioLevelCb(mAudioLevelCbArg);
         }
     }
+    void clearAudioLevelsNoEvent() { mAudioLevels.left = mAudioLevels.right = 0; }
 protected:
     StereoLevels mAudioLevels;
     AudioLevelCallbck mAudioLevelCb = nullptr;

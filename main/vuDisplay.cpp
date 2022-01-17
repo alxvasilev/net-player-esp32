@@ -10,19 +10,21 @@ void VuDisplay::init(NvsHandle& nvs)
     mLedWidth = nvs.readDefault<uint8_t>("vuLedWidth", kDefLedWidth);
     mStepWidth = mLedWidth + nvs.readDefault<uint8_t>("vuLedSpacing", kDefLedSpacing);
     if (mLcd.width() % mStepWidth) {
-        ESP_LOGE(TAG, "Specified VU led width is not a divisor of display width. VU meter will not behave correctly");
+        ESP_LOGE(TAG, "Specified VU led width %d is not a divisor of display width. VU meter will not behave correctly", mStepWidth);
     }
     int16_t numLeds = mLcd.width() / mStepWidth;
     mLevelPerLed = (100 * int32_t(kLevelMax + 1) + numLeds / 2) / numLeds; // 100x the rounded division, i.e. fixed point two-decimal precision
     mLedHeight = nvs.readDefault<uint8_t>("vuLedHeight", kDefLedHeight);
     mChanSpacing = nvs.readDefault<uint8_t>("vuChanSpacing", kDefChanSpacing);
-    mYellowStartX = mStepWidth * (100 * (int32_t)nvs.readDefault<uint16_t>("vuYellowThresh", kLevelMax - 255)) / mLevelPerLed;
+    mYellowStartX = mStepWidth * (100 * (int32_t)nvs.readDefault<int16_t>("vuYellowThresh", kLevelMax - 255)) / mLevelPerLed;
     enum { kTicksPerSec = 43 }; // ~1024 samples at 44100 Hz
     auto pkDropSpeed = nvs.readDefault<uint8_t>("vuPeakDropSpeed", kDefPeakDropSpeed);
     mPeakDropTicks = (kTicksPerSec * mStepWidth + pkDropSpeed / 2) / pkDropSpeed;
     auto pkHoldMs = nvs.readDefault<uint16_t>("vuPeakHoldMs", 500);
     mPeakHoldTicks = (pkHoldMs + (1000 / kTicksPerSec) / 2) / (1000 / kTicksPerSec);
-    ESP_LOGI(TAG, "stepWidth: %d, ledWidth: %d, levelPerLed: %f, yellowStartX: %d", mStepWidth, mLedWidth, mYellowStartX / (float)100, mYellowStartX);
+    mGreenColor = nvs.readDefault<uint16_t>("vuClrGreen", ST77XX_GREEN);
+    mYellowColor = nvs.readDefault<uint16_t>("vuClrYellow", ST77XX_YELLOW);
+    ESP_LOGD(TAG, "init: stepWidth: %d, ledWidth: %d, levelPerLed: %f, yellowStartX: %d", mStepWidth, mLedWidth, mYellowStartX / (float)100, mYellowStartX);
     mLeftCtx.barY = mLcd.height() - 2 * mLedHeight - mChanSpacing;
     mRightCtx.barY = mLeftCtx.barY + mLedHeight + mChanSpacing;
 }
@@ -36,9 +38,9 @@ void VuDisplay::update(const IAudioVolume::StereoLevels& levels)
 inline uint16_t VuDisplay::ledColor(int16_t ledX, int16_t level)
 {
     if (ledX < mYellowStartX) {
-        return ST77XX_GREEN;
+        return mGreenColor;
     } else {
-        return (ledX >= kLevelMax) ? ST77XX_RED : ST77XX_YELLOW;
+        return (level >= kLevelMax) ? ST77XX_RED : mYellowColor;
     }
 }
 
@@ -109,4 +111,13 @@ void VuDisplay::drawChannel(ChanCtx& ctx, int16_t level)
     if (afterLen > 0) {
         mLcd.clear(peakLedEndX, ctx.barY, afterLen, mLedHeight);
     }
+}
+void VuDisplay::reset(NvsHandle &nvs)
+{
+    mLeftCtx.reset();
+    mRightCtx.reset();
+    init(nvs);
+    IAudioVolume::StereoLevels levels;
+    levels.left = levels.right = 0;
+    update(levels);
 }

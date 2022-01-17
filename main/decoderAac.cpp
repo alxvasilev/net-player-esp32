@@ -66,7 +66,8 @@ int DecoderAac::decode(const char* buf, int size)
         if (err == ERR_AAC_INDATA_UNDERFLOW) {
          // ESP_LOGI(TAG, "decoder underflow");
             return AudioNode::kNeedMoreData;
-        } else if (err == 0) { // decode success
+        }
+        else if (err == 0) { // decode success
             if (remain) {
                 memmove(mInputBuf, inPtr, remain); // move remaining data to start of buffer
             }
@@ -75,9 +76,13 @@ int DecoderAac::decode(const char* buf, int size)
                 getStreamFormat();
             }
             return mOutputSize;
-        } else { //err < 0 - error, try to re-sync
+        }
+        else { //err < 0 - error, try to re-sync
             // inPtr and remain are guaranteed to not be updated if AACDecode() failed
-            assert(mInputLen > 1);
+            if (mInputLen <= 1) {
+                ESP_LOGE(TAG, "Assertion failed, mInputLen is %d, but must be > 1", mInputLen);
+                abort();
+            }
             ESP_LOGI(TAG, "Decode error %d, looking for next sync word", err);
             auto pos = AACFindSyncWord(mInputBuf+1, mInputLen-1);
             if (pos >= 0) {

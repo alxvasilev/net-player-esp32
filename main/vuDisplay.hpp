@@ -16,10 +16,12 @@ class VuDisplay {
     struct ChanCtx
     {
         int16_t barY;
-        int16_t avgLevel = 0;
-        int16_t peakLevel = 0;
-        int16_t prevBarLen = 0;
-        uint8_t peakTimer = 0;
+        int16_t avgLevel;
+        int16_t peakLevel;
+        int16_t prevBarLen;
+        uint8_t peakTimer;
+        void reset() { avgLevel = peakLevel = prevBarLen = peakTimer = 0; }
+        ChanCtx() { reset(); }
     };
     ST7735Display& mLcd;
     ChanCtx mLeftCtx;
@@ -29,6 +31,8 @@ class VuDisplay {
     int8_t mLedHeight;
     int8_t mChanSpacing;
     int16_t mYellowStartX;
+    uint16_t mGreenColor;
+    uint16_t mYellowColor;
     int32_t mLevelPerLed;
     uint8_t mPeakDropTicks;
     uint8_t mPeakHoldTicks;
@@ -40,6 +44,7 @@ public:
     VuDisplay(ST7735Display& lcd): mLcd(lcd) {}
     void init(NvsHandle& nvs);
     void update(const IAudioVolume::StereoLevels& levels);
+    void reset(NvsHandle& nvs);
 };
 
 #endif

@@ -348,6 +348,7 @@ bool AudioPlayer::playUrl(const char* url, const char* record)
     if (!mStreamIn || mStreamIn->type() != AudioNode::kTypeHttpIn) {
         return false;
     }
+    lcdUpdateTrackTitle(nullptr);
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
     http.setUrl(url, record);
     if (isStopped()) {
@@ -813,6 +814,26 @@ esp_err_t AudioPlayer::nvsGetParamUrlHandler(httpd_req_t* req)
     httpd_resp_send_chunk(req, nullptr, 0);
     return ESP_OK;
 }
+esp_err_t AudioPlayer::resetSubsystemUrlHandler(httpd_req_t* req)
+{
+    auto self = static_cast<AudioPlayer*>(req->user_ctx);
+    UrlParams params(req);
+    auto key = params.strVal("what");
+    if (!key.str) {
+        ESP_LOGW(TAG, "Restarting on user request...");
+        esp_restart();
+        return ESP_OK;
+    }
+    MutexLocker locker(self->mutex);
+    if (strcmp(key.str, "vu") == 0) {
+        self->mVuDisplay.reset(self->mNvsHandle);
+    } else {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Unknown subsystem");
+        return ESP_FAIL;
+    }
+    httpd_resp_sendstr(req, "ok");
+    return ESP_OK;
+}
 
 void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
 {
@@ -824,6 +845,7 @@ void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
     registerHttpGetHandler(server, "/status", &getStatusUrlHandler);
     registerHttpGetHandler(server, "/nvget", &nvsGetParamUrlHandler);
     registerHttpGetHandler(server, "/nvset", &nvsSetParamUrlHandler);
+    registerHttpGetHandler(server, "/reset", &resetSubsystemUrlHandler);
     if (stationList) {
         stationList->registerHttpHandlers(server);
     }
@@ -857,28 +879,42 @@ bool AudioPlayer::onEvent(AudioNode *self, uint32_t event, uintptr_t buf, size_t
 void AudioPlayer::lcdTimedDrawTask(void* ctx)
 {
     auto& self = *static_cast<AudioPlayer*>(ctx);
-    enum { kTitleScrollTickPeriodUs = (1000000 + kTitleScrollFps / 2) / kTitleScrollFps };
-    int64_t tsLastTitleScroll = esp_timer_get_time() - kTitleScrollTickPeriodUs - 1;
+    int16_t fps;
+    {
+        MutexLocker locker(self.mutex);
+        fps = self.mNvsHandle.readDefault<uint8_t>("tscrollFps", kDefTitleScrollFps);
+    }
+    int64_t scrollTickPeriodUs = (1000000 + fps / 2) / fps;
+    int64_t now = esp_timer_get_time();
+    int64_t tsLastTitleScroll = now - scrollTickPeriodUs - 1;
+    int64_t tsLastVolEvent = now;
     for (;;) {
         EventBits_t events;
-        if (self.mTitleScrollEnabled) {
-            int timeout = kTitleScrollTickPeriodUs - (esp_timer_get_time() - tsLastTitleScroll);
-            events = (timeout > 0)
-                ? self.mEvents.waitForOneAndReset(kEventTerminating|kEventVolLevel, timeout)
-                : (EventBits_t)0;
-        } else {
-            events = self.mEvents.waitForOneAndReset(kEventTerminating|kEventVolLevel, -1);
-        }
+        now = esp_timer_get_time();
+        int64_t timeout = scrollTickPeriodUs - (now - tsLastTitleScroll);
+        //ESP_LOGW(TAG, "timeout: %lld\n", timeout);
+        events = (timeout > 0)
+            ? self.mEvents.waitForOneAndReset(kEventTerminating|kEventVolLevel, (timeout + 500) / 1000)
+            : (EventBits_t)0; // events = 0 -> scroll title
         if (events & kEventTerminating) {
             break;
         }
         {
             MutexLocker locker(self.mutex);
             if (events & kEventVolLevel) {
+                tsLastVolEvent = now;
                 self.mVuDisplay.update(self.mVolumeInterface->audioLevels());
-            } else if (events == 0) {
-                tsLastTitleScroll = esp_timer_get_time();
-                self.lcdScrollTrackTitle();
+            }
+            else if (events == 0) { // timeout or due time to scroll title
+                tsLastTitleScroll = now;
+                if (self.mTitleScrollEnabled) {
+                    self.lcdScrollTrackTitle();
+                }
+                if (now - tsLastVolEvent > 50000) { // 50ms no volume event, force update the VU display
+                    ESP_LOGD(TAG, "No sound output, clearing VU levels");
+                    self.mVolumeInterface->clearAudioLevelsNoEvent();
+                    self.mVuDisplay.update(self.mVolumeInterface->audioLevels());
+                }
             }
         }
     }
@@ -889,8 +925,8 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
 void AudioPlayer::lcdUpdateTrackTitle(const char* buf)
 {
     LOCK_PLAYER();
-    auto len = strlen(buf);
-    if (!len) {
+    size_t len;
+    if (!buf || !(len = strlen(buf))) {
         mTitleScrollEnabled = false;
         lcdSetupForTrackTitle();
         mLcd.clear(mLcd.cursorX, mLcd.cursorY, mLcd.width(), mLcd.fontHeight());

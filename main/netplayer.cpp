@@ -211,8 +211,10 @@ extern "C" void app_main(void)
     lcd.puts("Waiting log conn...\n");
     auto ret = netLogger.waitForLogConnection(4);
     if (otaInProgress) {
-        ESP_LOGI(TAG, "OTA Update in progress...");
+        lcd.puts("OTA Update in progress...\n");
         vTaskDelay(portMAX_DELAY);
+    } else {
+        lcd.puts("OTA NOT in progress\n");
     }
 
     ESP_LOGI(TAG, "%s, continuing", ret ? "Log connection accepted" : "Timeout, continuing");

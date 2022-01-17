@@ -23,7 +23,7 @@ class AudioPlayer: public AudioNode::EventHandler
 public:
     static constexpr int kHttpBufSizeInternal = 35 * 1024;
     static constexpr int kHttpBufSizeSpiRam = 350 * 1024;
-    static constexpr int kTitleScrollFps = 30;
+    static constexpr int kDefTitleScrollFps = 15;
 protected:
     enum Flags: uint8_t
     { kFlagUseEqualizer = 1, kFlagListenerHooked = 2, kFlagNoWaitPrefill = 4 };
@@ -93,6 +93,7 @@ protected:
     static esp_err_t equalizerSetUrlHandler(httpd_req_t *req);
     static esp_err_t equalizerDumpUrlHandler(httpd_req_t *req);
     static esp_err_t getStatusUrlHandler(httpd_req_t *req);
+    static esp_err_t resetSubsystemUrlHandler(httpd_req_t *req);
     static esp_err_t nvsGetParamUrlHandler(httpd_req_t* req);
     static esp_err_t nvsSetParamUrlHandler(httpd_req_t* req);
     void registerHttpGetHandler(httpd_handle_t server,
