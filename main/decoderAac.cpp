@@ -89,7 +89,7 @@ int DecoderAac::decode(const char* buf, int size)
                 pos += 1;
                 ESP_LOGI(TAG, "Sync word found at %d, discarding data before it and repeating", pos);
                 memmove(mInputBuf, mInputBuf+pos, mInputLen-pos);
-                assert(buf[0] == 0xff && buf[1] == 0xf0);
+                // assert(buf[0] == 0xff && buf[1] == 0xf0);
                 continue;
             }
             // can't find frame start, discard everything in buffer and request more data

@@ -146,18 +146,20 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         ESP_LOGI(TAG, "VU source set %s volume and EQ processing", vuAtInput ? "before" : "after");
     }
     switch(outType) {
-    case AudioNode::kTypeI2sOut:
-        i2s_pin_config_t cfg;
-        cfg.ws_io_num = 25;
-        cfg.bck_io_num = 26;
-        cfg.data_out_num = 27;
-        cfg.data_in_num = -1;
-
+    case AudioNode::kTypeI2sOut: {
+        i2s_pin_config_t cfg = {
+            .mck_io_num = I2S_PIN_NO_CHANGE,
+            .bck_io_num = 26,
+            .ws_io_num = 25,
+            .data_out_num = 27,
+            .data_in_num = -1,
+        };
         mStreamOut.reset(new I2sOutputNode(0, &cfg, AudioNode::haveSpiRam()));
         if ((mFlags & kFlagUseEqualizer) == 0) {
             static_cast<I2sOutputNode*>(mStreamOut.get())->useVolumeInterface(true);
         }
         break;
+    }
     /*
     case kOutputA2dp:
         createOutputA2dp();

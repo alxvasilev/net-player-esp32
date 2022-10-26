@@ -147,7 +147,6 @@ I2sOutputNode::I2sOutputNode(int port, i2s_pin_config_t* pinCfg, bool haveSpiRam
         myassert(pinCfg);
         i2s_set_pin(mPort, pinCfg);
     }
-//  i2s_mclk_gpio_select(i2s->config.i2s_port, GPIO_NUM_0);
     i2s_zero_dma_buffer(mPort);
 }
 
