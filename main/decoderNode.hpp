@@ -1,7 +1,6 @@
 #ifndef DECODER_NODE_HPP
 #define DECODER_NODE_HPP
 #include "audioNode.hpp"
-#include <mad.h>
 
 class Decoder
 {
@@ -29,7 +28,6 @@ public:
 class DecoderNode: public AudioNode
 {
 protected:
-    enum { kInputBufSize = 3000 };
     Decoder* mDecoder = nullptr;
     bool mFormatChangeCtr;
     bool createDecoder(CodecType type);

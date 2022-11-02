@@ -1,21 +1,23 @@
 #include "decoderFlac.hpp"
-#include <mad.h>
+#include <flac.h>
 
 static const char* TAG = "flac";
 
 DecoderFlac::DecoderFlac()
 {
-    auto decSize = fx_flac_size(8192, 2);
+    auto decSize = fx_flac_size(kMaxSamplesPerBlock, 2);
     auto memSize = decSize + kInputBufSize + kOutputBufSize;
-    auto mem = (char*)heap_caps_malloc(memSize, MALLOC_CAP_SPIRAM);
+    auto mem = (uint8_t*)heap_caps_malloc(memSize, MALLOC_CAP_SPIRAM);
     if (!mem) {
         ESP_LOGE(TAG, "Out of memory allocating %zu bytes for buffers", memSize);
-        mFlacDecoder = mInputBuf = mOutputBuf = nullptr;
+        mFlacDecoder = nullptr;
+        mInputBuf = nullptr;
+        mOutputBuf = nullptr;
         return;
     }
     mFlacDecoder = (fx_flac_t*)mem;
     mInputBuf = mem + decSize;
-    mOutputBuf = mInputBuf + kInputBufSize;
+    mOutputBuf = (int32_t*)(mInputBuf + kInputBufSize);
     ESP_LOGI(TAG, "Flac decoder uses approx %zu bytes of RAM", memSize + sizeof(DecoderFlac));
     init();
 }
@@ -23,13 +25,15 @@ DecoderFlac::~DecoderFlac()
 {
     if (mFlacDecoder) {
         free(mFlacDecoder);
-        mFlacDecoder = mInputBuf = mOutputBuf = nullptr;
+        mFlacDecoder = nullptr;
+        mInputBuf = nullptr;
+        mOutputBuf = nullptr;
     }
 }
 void DecoderFlac::init()
 {
     mInputLen = 0;
-    fx_flac_init(mFlacDecoder, kMaxBlockSize, 2);
+    fx_flac_init(mFlacDecoder, kMaxSamplesPerBlock, 2);
 }
 
 void DecoderFlac::reset()
@@ -54,9 +58,9 @@ int DecoderFlac::decode(const char* buf, int size)
     auto remain = mInputLen;
     int result = 0;
     for(;;) {
-        auto nread = remain;
+        uint32_t nread = remain;
         auto written = kOutputBufSize / sizeof(int32_t);
-        auto ret = fx_flac_process(mFlacDecoder, mInputBuf, &nread, mOutputBuf, &written));
+        auto ret = fx_flac_process(mFlacDecoder, mInputBuf, &nread, mOutputBuf, &written);
         if (!nread) {
             result = AudioNode::kNeedMoreData;
             break;
@@ -74,7 +78,7 @@ int DecoderFlac::decode(const char* buf, int size)
             auto frmSizeMin = fx_flac_get_streaminfo(mFlacDecoder, FLAC_KEY_MIN_FRAME_SIZE);
             auto frmSizeMax = fx_flac_get_streaminfo(mFlacDecoder, FLAC_KEY_MAX_FRAME_SIZE);
             ESP_LOGW(TAG, "FLAC format: %d-bit, %d Hz, %d channels (block size: %lld - %lld, frame size: %lld - %lld)",
-                mOutputFormat.bits, mOutputFormat.samplerate, mOutputFormat.channels,
+                mOutputFormat.bits(), mOutputFormat.samplerate, mOutputFormat.channels(),
                 blkSizeMin, blkSizeMax, frmSizeMin, frmSizeMax);
         }
         else if (ret == FLAC_ERR) {

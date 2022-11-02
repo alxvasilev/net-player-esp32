@@ -1,7 +1,9 @@
-#ifndef DECODER_MP3_HPP
-#define DECODER_MP3_HPP
+#ifndef DECODER_FLAC_HPP
+#define DECODER_FLAC_HPP
 #include "decoderNode.hpp"
-#include <flac.h>
+
+struct fx_flac;
+typedef struct fx_flac fx_flac_t;
 
 class DecoderFlac: public Decoder
 {
@@ -12,10 +14,11 @@ protected:
         kOutputBufSize = 38000 // actually 37328
     };
 
-    char* mInputBuf;
+    uint8_t* mInputBuf;
     int32_t* mOutputBuf;
     int mInputLen = 0;
     fx_flac_t* mFlacDecoder;
+    void init();
     void convertOutput(size_t nSamples);
 public:
     virtual CodecType type() const { return kCodecFlac; }
@@ -23,7 +26,7 @@ public:
     ~DecoderFlac();
     virtual int inputBytesNeeded();
     virtual int decode(const char* buf, int size);
-    virtual char* outputBuf() { return mOutputBuf; }
+    virtual char* outputBuf() { return (char*)mOutputBuf; }
     virtual void reset();
 };
 

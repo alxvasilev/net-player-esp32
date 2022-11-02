@@ -28,28 +28,31 @@ CodecType HttpNode::codecFromContentType(const char* content_type)
         strcasecmp(content_type, "application/octet-stream") == 0) {
         return kCodecMp3;
     }
-    if (strcasecmp(content_type, "audio/aac") == 0 ||
+    else if (strcasecmp(content_type, "audio/aac") == 0 ||
         strcasecmp(content_type, "audio/x-aac") == 0 ||
         strcasecmp(content_type, "audio/mp4") == 0 ||
         strcasecmp(content_type, "audio/aacp") == 0 ||
         strcasecmp(content_type, "video/MP2T") == 0) {
         return kCodecAac;
     }
-    if (strcasecmp(content_type, "application/ogg") == 0) {
+    else if (strcasecmp(content_type, "audio/flac") == 0) {
+        return kCodecFlac;
+    }
+    else if (strcasecmp(content_type, "application/ogg") == 0) {
         return kCodecOgg;
     }
-    if (strcasecmp(content_type, "audio/wav") == 0) {
+    else if (strcasecmp(content_type, "audio/wav") == 0) {
         return kCodecWav;
     }
-    if (strcasecmp(content_type, "audio/opus") == 0) {
+    else if (strcasecmp(content_type, "audio/opus") == 0) {
         return kCodecOpus;
     }
-    if (strcasecmp(content_type, "audio/x-mpegurl") == 0 ||
+    else if (strcasecmp(content_type, "audio/x-mpegurl") == 0 ||
         strcasecmp(content_type, "application/vnd.apple.mpegurl") == 0 ||
         strcasecmp(content_type, "vnd.apple.mpegURL") == 0) {
         return kPlaylistM3u8;
     }
-    if (strncasecmp(content_type, "audio/x-scpls", strlen("audio/x-scpls")) == 0) {
+    else if (strncasecmp(content_type, "audio/x-scpls", strlen("audio/x-scpls")) == 0) {
         return kPlaylistPls;
     }
     return kCodecUnknown;

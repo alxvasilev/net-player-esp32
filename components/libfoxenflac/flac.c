@@ -1427,7 +1427,7 @@ static bool _fx_flac_process_search_frame(fx_flac_t *inst) {
 }
 
 static bool _fx_flac_process_in_frame(fx_flac_t *inst) {
-	int64_t tmp_; /* Used by the READ_BITS macro */
+    int64_t tmp_ = 0; /* Used by the READ_BITS macro */
 	fx_flac_frame_header_t *fh = inst->frame_header;
 	fx_flac_subframe_header_t *sfh = inst->subframe_header;
 	int32_t *blk = inst->blkbuf[inst->chan_cur % FLAC_MAX_CHANNEL_COUNT];
