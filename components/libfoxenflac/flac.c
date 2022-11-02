@@ -898,8 +898,9 @@ static inline void _fx_flac_post_process_left_side(int32_t *blk1, int32_t *blk2,
                                                    uint32_t blk_size) {
 	blk1 = (int32_t *)FX_ASSUME_ALIGNED(blk1);
 	blk2 = (int32_t *)FX_ASSUME_ALIGNED(blk2);
-	for (uint32_t i = 0U; i < blk_size; i++) {
-		blk2[i] = blk1[i] - blk2[i];
+    int32_t* end1 = blk1 + blk_size;
+    for (; blk1 < end1; blk1++, blk2++) {
+        *blk2 = *blk1 - *blk2;
 	}
 }
 
@@ -908,8 +909,9 @@ static inline void _fx_flac_post_process_right_side(int32_t *blk1,
                                                     uint32_t blk_size) {
 	blk1 = (int32_t *)FX_ASSUME_ALIGNED(blk1);
 	blk2 = (int32_t *)FX_ASSUME_ALIGNED(blk2);
-	for (uint32_t i = 0U; i < blk_size; i++) {
-		blk1[i] = blk1[i] + blk2[i];
+    int32_t* end1 = blk1 + blk_size;
+    for (; blk1 < end1; blk1++, blk2++) {
+        *blk1 += *blk2;
 	}
 }
 
@@ -917,14 +919,15 @@ static inline void _fx_flac_post_process_mid_side(int32_t *blk1, int32_t *blk2,
                                                   uint32_t blk_size) {
 	blk1 = (int32_t *)FX_ASSUME_ALIGNED(blk1);
 	blk2 = (int32_t *)FX_ASSUME_ALIGNED(blk2);
-	for (uint32_t i = 0U; i < blk_size; i++) {
-		/* Code libflac from stream_decoder.c */
-		int32_t mid = blk1[i];
-		int32_t side = blk2[i];
+    int32_t* end1 = blk1 + blk_size;
+    for (; blk1 < end1; blk1++, blk2++) {
+        /* Code libflac from stream_decoder.c */
+        int32_t mid = *blk1;
+        int32_t side = *blk2;
 		mid = ((uint32_t)mid) << 1;
 		mid |= (side & 1); /* Round correctly */
-		blk1[i] = (mid + side) >> 1;
-		blk2[i] = (mid - side) >> 1;
+        *blk1 = (mid + side) >> 1;
+        *blk2 = (mid - side) >> 1;
 	}
 }
 
@@ -1681,9 +1684,10 @@ static bool _fx_flac_process_in_frame(fx_flac_t *inst) {
 		case FLAC_SUBFRAME_FINALIZE: {
 			/* Apply the wasted bits transformation */
 			if (sfh->wasted_bits) {
-				uint8_t shift = sfh->wasted_bits;
-				for (uint16_t i = 0U; i < blk_n; i++) {
-					blk[i] = blk[i] * (1 << shift);
+                uint32_t shift = 1 << sfh->wasted_bits;
+                int32_t* end = blk + blk_n;
+                for (int32_t* sample = blk; sample < end; sample++) {
+                    *sample *= shift; // TODO: Maybe optimize this arithmetic shift?
 				}
 			}
 
