@@ -106,7 +106,7 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp, int timeout)
             ret = mDecoder->decode(nullptr, 0);
         }
         if (ret == kNeedMoreData) {
-            ESP_LOGI(mTag, "Need more data, repeating");
+            ESP_LOGD(mTag, "Need more data, repeating");
             continue;
         } else if (ret < 0) {
             return (StreamError)ret;
