@@ -236,8 +236,9 @@ protected:
     enum { kDefaultPrio = 4 };
     TaskHandle_t mTaskId = NULL;
     uint32_t mStackSize;
-    UBaseType_t mTaskPrio;
     Queue<Command, 4> mCmdQueue;
+    uint8_t mTaskPrio;
+    int8_t mCpuCore;
     static void sTaskFunc(void* ctx);
     bool createAndStartTask();
     // This is the node's task function.
@@ -250,10 +251,10 @@ protected:
     virtual void doPause() override { mCmdQueue.post(kCommandPause); }
     virtual bool doRun() override;
 public:
-    AudioNodeWithTask(const char* tag, uint32_t stackSize, UBaseType_t prio=kDefaultPrio)
-    :AudioNodeWithState(tag), mStackSize(stackSize), mTaskPrio(prio)
+    AudioNodeWithTask(const char* tag, uint32_t stackSize, uint8_t prio=kDefaultPrio, int8_t core=-1)
+    :AudioNodeWithState(tag), mStackSize(stackSize), mTaskPrio(prio), mCpuCore(core)
     {}
-    void setPriority(UBaseType_t prio) { mTaskPrio = prio; }
+    void setPriority(uint8_t prio) { mTaskPrio = prio; }
 };
 
 inline void AudioNode::sendEvent(uint32_t type, uintptr_t arg, int bufSize)

@@ -29,7 +29,10 @@ protected:
     { kFlagUseEqualizer = 1, kFlagListenerHooked = 2, kFlagNoWaitPrefill = 4 };
     enum: uint8_t
     { kEventTerminating = 1, kEventScroll = 2, kEventVolLevel = 4, kEventTerminated = 8 };
-    enum { kLcdTaskStackSize = 1200, kLcdTaskPrio = 10 };
+    enum {
+        kI2sStackSize = 9000, kI2sCpuCore = 1,
+        kLcdTaskStackSize = 1200, kLcdTaskPrio = 10, kLcdTaskCore = 0
+    };
     typedef enum: char {
         kSymBlank = ' ',
         kSymStopped = 38,

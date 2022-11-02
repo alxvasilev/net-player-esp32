@@ -50,7 +50,8 @@ void AudioNodeWithState::setState(State newState)
 bool AudioNodeWithTask::createAndStartTask()
 {
     mEvents.clearBits(kEvtStopRequest);
-    auto ret = xTaskCreate(sTaskFunc, mTag, mStackSize, this, mTaskPrio, &mTaskId);
+    auto ret = xTaskCreatePinnedToCore(sTaskFunc, mTag, mStackSize, this, mTaskPrio, &mTaskId,
+        mCpuCore < 0 ? tskNO_AFFINITY : mCpuCore);
     if (ret == pdPASS) {
         assert(mTaskId);
         return true;

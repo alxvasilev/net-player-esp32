@@ -102,7 +102,7 @@ void AudioPlayer::lcdInit()
 
 void AudioPlayer::initTimedDrawTask()
 {
-    xTaskCreate(&lcdTimedDrawTask, "lcdTask", kLcdTaskStackSize, this, kLcdTaskPrio, nullptr);
+    xTaskCreatePinnedToCore(&lcdTimedDrawTask, "lcdTask", kLcdTaskStackSize, this, kLcdTaskPrio, nullptr, kLcdTaskCore);
     mVolumeInterface->setLevelCallback(audioLevelCb, this);
 }
 
@@ -154,7 +154,7 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
             .data_out_num = 27,
             .data_in_num = -1,
         };
-        mStreamOut.reset(new I2sOutputNode(0, &cfg, AudioNode::haveSpiRam()));
+        mStreamOut.reset(new I2sOutputNode(0, &cfg, kI2sStackSize, kI2sCpuCore));
         if ((mFlags & kFlagUseEqualizer) == 0) {
             static_cast<I2sOutputNode*>(mStreamOut.get())->useVolumeInterface(true);
         }
