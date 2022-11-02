@@ -173,9 +173,10 @@ public:
             if (!mOpInProgress) {
                 doClear();
                 return;
-            } else {
-                waitFor(kFlagReadOp | kFlagWriteOp, -1);
             }
+            mMutex.unlock();
+            waitFor(kFlagReadOp | kFlagWriteOp, -1);
+            mMutex.lock();
         }
     }
     int dataSize()
