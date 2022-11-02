@@ -6,26 +6,35 @@ static const char* TAG = "flac";
 DecoderFlac::DecoderFlac()
 {
     auto decSize = fx_flac_size(kMaxSamplesPerBlock, 2);
-    auto memSize = decSize + kInputBufSize + kOutputBufSize;
+    mFlacDecoder = (fx_flac_t*)malloc(decSize);
+    if (!mFlacDecoder) {
+        ESP_LOGE(TAG, "Out of memory allocating %zu bytes for decoder", decSize);
+        return;
+    }
+    auto memSize = kInputBufSize + kOutputBufSize;
     auto mem = (uint8_t*)heap_caps_malloc(memSize, MALLOC_CAP_SPIRAM);
     if (!mem) {
         ESP_LOGE(TAG, "Out of memory allocating %zu bytes for buffers", memSize);
-        mFlacDecoder = nullptr;
-        mInputBuf = nullptr;
-        mOutputBuf = nullptr;
+        freeBuffers();
         return;
     }
-    mFlacDecoder = (fx_flac_t*)mem;
-    mInputBuf = mem + decSize;
+    mInputBuf = mem;
     mOutputBuf = (int16_t*)(mInputBuf + kInputBufSize);
-    ESP_LOGI(TAG, "Flac decoder uses approx %zu bytes of RAM", memSize + sizeof(DecoderFlac));
+    ESP_LOGI(TAG, "Flac decoder uses approx %zu bytes of RAM", decSize + memSize + sizeof(DecoderFlac));
     init();
 }
 DecoderFlac::~DecoderFlac()
 {
+    freeBuffers();
+}
+void DecoderFlac::freeBuffers()
+{
     if (mFlacDecoder) {
         free(mFlacDecoder);
         mFlacDecoder = nullptr;
+    }
+    if (mInputBuf) {
+        free(mInputBuf);
         mInputBuf = nullptr;
         mOutputBuf = nullptr;
     }

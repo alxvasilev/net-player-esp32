@@ -19,6 +19,7 @@ protected:
     int mInputLen = 0;
     fx_flac_t* mFlacDecoder;
     void init();
+    void freeBuffers();
     int getOutput();
 public:
     virtual CodecType type() const { return kCodecFlac; }

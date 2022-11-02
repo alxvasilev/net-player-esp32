@@ -168,8 +168,8 @@ public:
      */
     void clear()
     {
+        MutexLocker locker(mMutex);
         for (;;) {
-            MutexLocker locker(mMutex);
             if (!mOpInProgress) {
                 doClear();
                 return;
