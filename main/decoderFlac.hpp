@@ -10,16 +10,16 @@ class DecoderFlac: public Decoder
 protected:
     enum {
         kMaxSamplesPerBlock = 4608,
-        kInputBufSize = 30000,
-        kOutputBufSize = 38000 // actually 37328
+        kInputBufSize = kMaxSamplesPerBlock * 4,
+        kOutputBufSize = kMaxSamplesPerBlock * 4
     };
 
     uint8_t* mInputBuf;
-    int32_t* mOutputBuf;
+    int16_t* mOutputBuf;
     int mInputLen = 0;
     fx_flac_t* mFlacDecoder;
     void init();
-    void convertOutput(size_t nSamples);
+    int getOutput();
 public:
     virtual CodecType type() const { return kCodecFlac; }
     DecoderFlac();

@@ -22,6 +22,7 @@
 #include <stdint.h>
 
 #include "flac.h"
+// #include <stdio.h>
 
 #if 0
 /* Set FX_FLAC_NO_CRC if you control the input data and already performed other
@@ -1722,18 +1723,6 @@ static bool _fx_flac_process_in_frame(fx_flac_t *inst) {
 					break;
 			}
 
-			/* Shift the output such that the resulting int32 stream can be
-			   played back. */
-			uint8_t shift = 32U - fh->sample_size;
-			if (shift) {
-				for (uint8_t c = 0U; c < fh->channel_count; c++) {
-					int32_t *blk = inst->blkbuf[c];
-					for (uint16_t i = 0U; i < blk_n; i++) {
-						blk[i] = blk[i] * (1 << shift);
-					}
-				}
-			}
-
 			/* We're done decoding this frame! Notify the outer loop! */
 			inst->blk_cur = 0U; /* Reset the read cursor */
 			inst->chan_cur = 0U;
@@ -1745,49 +1734,6 @@ static bool _fx_flac_process_in_frame(fx_flac_t *inst) {
 			break;
 	}
 	return true;
-}
-
-static bool _fx_flac_process_decoded_frame(fx_flac_t *inst, int32_t *out,
-                                           uint32_t *out_len) {
-	/* Fetch the current stream and frame info. */
-	const fx_flac_frame_header_t *fh = inst->frame_header;
-
-	/* Fetch channel count and number of samples left to write */
-	const uint8_t cc = fh->channel_count;
-	uint32_t n_smpls_rem =
-	    (fh->block_size - inst->blk_cur - 1U) * cc + (cc - inst->chan_cur);
-
-	/* Truncate to the actually available space. */
-	if (n_smpls_rem > *out_len) {
-		n_smpls_rem = *out_len;
-	}
-
-	/* Interlace the decoded samples in the output array */
-	uint32_t tar = 0U; /* Number of samples written. */
-	while (tar < n_smpls_rem) {
-		/* Write to the output buffer */
-		out[tar] = inst->blkbuf[inst->chan_cur][inst->blk_cur];
-
-		/* Advance the read and write cursors */
-		inst->chan_cur++;
-		if (inst->chan_cur == cc) {
-			inst->chan_cur = 0U;
-			inst->blk_cur++;
-		}
-		tar++;
-	}
-
-	/* Inform the caller about the number of samples written */
-	*out_len = tar;
-
-	/* We're done with this frame! */
-	if (inst->blk_cur == fh->block_size) {
-		inst->state = FLAC_END_OF_FRAME;
-		return true;
-	}
-
-	/* Since we're here, we need more space in the output array. */
-	return false;
 }
 
 /******************************************************************************
@@ -1939,8 +1885,7 @@ int64_t fx_flac_get_streaminfo(fx_flac_t const *inst,
 }
 
 fx_flac_state_t fx_flac_process(fx_flac_t *inst, const uint8_t *in,
-                                uint32_t *in_len, int32_t *out,
-                                uint32_t *out_len) {
+                                uint32_t *in_len) {
 	inst = (fx_flac_t *)FX_ALIGN_ADDR(inst);
 
 	/* Set the current bytestream source to the provided input buffer */
@@ -1949,7 +1894,6 @@ fx_flac_state_t fx_flac_process(fx_flac_t *inst, const uint8_t *in,
 
 	/* Advance the statemachine */
 	bool done = false;
-	uint32_t out_len_ = 0U;
 	fx_flac_state_t old_state = inst->state;
 	while (!done) {
 		/* Abort once we've reached an error state. */
@@ -1994,14 +1938,9 @@ fx_flac_state_t fx_flac_process(fx_flac_t *inst, const uint8_t *in,
 				done = !_fx_flac_process_in_frame(inst);
 				break;
 			case FLAC_DECODED_FRAME:
-				/* If no output buffers are given, just discard the data. */
-				if (!out || !out_len) {
-					inst->state = FLAC_END_OF_FRAME;
-					break;
-				}
-				out_len_ = *out_len;
-				done = !_fx_flac_process_decoded_frame(inst, out, &out_len_);
-				break;
+                inst->state = FLAC_END_OF_FRAME;
+                done = true;
+                break;
 			default:
 				inst->state = FLAC_ERR; /* Internal error */
 				break;
@@ -2009,14 +1948,26 @@ fx_flac_state_t fx_flac_process(fx_flac_t *inst, const uint8_t *in,
 	}
 
 	/* Write the number of bytes we read from the input stream to in_len, the
-	   caller must not provide these bytes again. Also write the number of
-	   samples we wrote to the output buffer. */
-	if (out_len) {
-		*out_len = out_len_;
-	}
+       caller must not provide these bytes again */
 	*in_len = bs->src - in;
 
 	/* Return the current state */
 	return inst->state;
 }
 
+int32_t** fx_flac_get_output(fx_flac_t *inst)
+{
+    inst = (fx_flac_t *)FX_ALIGN_ADDR(inst);
+    return inst->blkbuf;
+}
+
+uint32_t fx_flac_get_frame_nsamples(fx_flac_t* inst)
+{
+    inst = (fx_flac_t *)FX_ALIGN_ADDR(inst);
+    return inst->frame_header->block_size;
+}
+uint8_t fx_flac_get_channel_count(fx_flac_t* inst)
+{
+    inst = (fx_flac_t *)FX_ALIGN_ADDR(inst);
+    return inst->frame_header->channel_count;
+}

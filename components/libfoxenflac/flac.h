@@ -288,8 +288,10 @@ FX_EXPORT int64_t fx_flac_get_streaminfo(const fx_flac_t *inst,
  * has been read.
  */
 FX_EXPORT fx_flac_state_t fx_flac_process(fx_flac_t *inst, const uint8_t *in,
-                                          uint32_t *in_len, int32_t *out,
-                                          uint32_t *out_len);
+                                          uint32_t *in_len);
+FX_EXPORT int32_t** fx_flac_get_output(fx_flac_t *inst);
+FX_EXPORT uint32_t fx_flac_get_frame_nsamples(fx_flac_t* inst);
+FX_EXPORT uint8_t fx_flac_get_channel_count(fx_flac_t* inst);
 
 #ifdef __cplusplus
 }

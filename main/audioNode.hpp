@@ -156,7 +156,8 @@ public:
         kStreamFlush = - 5,
         kErrNoCodec = -6,
         kErrDecode = -7,
-        kErrStreamFmt = -8
+        kErrStreamFmt = -8,
+        kErrBuffer = -9
     };
     struct DataPullReq
     {

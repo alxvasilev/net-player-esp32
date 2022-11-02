@@ -17,7 +17,7 @@ DecoderFlac::DecoderFlac()
     }
     mFlacDecoder = (fx_flac_t*)mem;
     mInputBuf = mem + decSize;
-    mOutputBuf = (int32_t*)(mInputBuf + kInputBufSize);
+    mOutputBuf = (int16_t*)(mInputBuf + kInputBufSize);
     ESP_LOGI(TAG, "Flac decoder uses approx %zu bytes of RAM", memSize + sizeof(DecoderFlac));
     init();
 }
@@ -59,8 +59,7 @@ int DecoderFlac::decode(const char* buf, int size)
     int result = 0;
     for(;;) {
         uint32_t nread = remain;
-        auto written = kOutputBufSize / sizeof(int32_t);
-        auto ret = fx_flac_process(mFlacDecoder, mInputBuf, &nread, mOutputBuf, &written);
+        auto ret = fx_flac_process(mFlacDecoder, readPtr, &nread);
         if (!nread) {
             result = AudioNode::kNeedMoreData;
             break;
@@ -77,7 +76,7 @@ int DecoderFlac::decode(const char* buf, int size)
             auto blkSizeMax = fx_flac_get_streaminfo(mFlacDecoder, FLAC_KEY_MAX_BLOCK_SIZE);
             auto frmSizeMin = fx_flac_get_streaminfo(mFlacDecoder, FLAC_KEY_MIN_FRAME_SIZE);
             auto frmSizeMax = fx_flac_get_streaminfo(mFlacDecoder, FLAC_KEY_MAX_FRAME_SIZE);
-            ESP_LOGW(TAG, "FLAC format: %d-bit, %d Hz, %d channels (block size: %lld - %lld, frame size: %lld - %lld)",
+            ESP_LOGI(TAG, "FLAC format: %d-bit, %d Hz, %d channels (block size: %lld - %lld, frame size: %lld - %lld)",
                 mOutputFormat.bits(), mOutputFormat.samplerate, mOutputFormat.channels(),
                 blkSizeMin, blkSizeMax, frmSizeMin, frmSizeMax);
         }
@@ -87,13 +86,12 @@ int DecoderFlac::decode(const char* buf, int size)
             return AudioNode::kErrDecode;
         }
         else if (ret == FLAC_END_OF_FRAME) {
-            myassert(written);
             ESP_LOGD(TAG, "Successfully decoded frame of size %d\n", nread);
-            convertOutput(written);
-            result = written * sizeof(uint16_t);
+            result = getOutput();
             break;
         }
         else {
+            ESP_LOGD(TAG, "Unrecognized decoder status: %d", ret);
             result = AudioNode::kNeedMoreData;
             break;
         }
@@ -105,12 +103,36 @@ int DecoderFlac::decode(const char* buf, int size)
     return result;
 }
 
-void DecoderFlac::convertOutput(size_t nSamples)
+int DecoderFlac::getOutput()
 {
-    int16_t* end = (int16_t*)(mOutputBuf + nSamples);
-    int16_t* rptr = (int16_t*)mOutputBuf + 1;
-    uint16_t* wptr = (uint16_t*)mOutputBuf;
-    for (; rptr < end; rptr += 2, wptr++) {
-        *wptr = *rptr;
+    auto nSamples = fx_flac_get_frame_nsamples(mFlacDecoder);
+    assert(nSamples);
+    int32_t** decSamples = fx_flac_get_output(mFlacDecoder);
+    uint8_t nChan = mOutputFormat.channels();
+    auto wptr = mOutputBuf;
+    if (nChan == 2) {
+        int outBytes = nSamples * 4;
+        if (kOutputBufSize < outBytes) {
+            return AudioNode::kErrBuffer;
+        }
+        int32_t* ch0 = decSamples[0];
+        int32_t* ch1 = decSamples[1];
+        for (int i = 0; i < nSamples; i++) {
+            *(wptr++) = ch0[i];
+            *(wptr++) = ch1[i];
+        }
+        return outBytes;
+    } else if (nChan == 1) {
+        int outBytes = nSamples * 2;
+        if (kOutputBufSize < outBytes) {
+            return AudioNode::kErrBuffer;
+        }
+        for (int i = 0; i < nSamples; i++) {
+            *(wptr++) = (*decSamples)[i];
+        }
+        return outBytes;
+    } else {
+        ESP_LOGE(TAG, "Unsupported number of channels: %d", nChan);
+        return AudioNode::kErrStreamFmt;
     }
 }
