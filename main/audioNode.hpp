@@ -188,6 +188,12 @@ public:
             return kStreamStopped;
         }
     }
+    virtual void notifyUpstreamError(int error) {
+        pause();
+        if (mPrev) {
+            mPrev->notifyUpstreamError(error);
+        }
+    }
     void subscribeToEvents(uint32_t events) {
         mSubscribedEvents |= events;
     }
