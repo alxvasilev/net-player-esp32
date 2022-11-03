@@ -38,7 +38,8 @@ CodecType HttpNode::codecFromContentType(const char* content_type)
     else if (strcasecmp(content_type, "audio/flac") == 0) {
         return kCodecFlac;
     }
-    else if (strcasecmp(content_type, "application/ogg") == 0) {
+    else if (strcasecmp(content_type, "audio/ogg") == 0 ||
+             strcasecmp(content_type, "application/ogg") == 0) {
         return kCodecOgg;
     }
     else if (strcasecmp(content_type, "audio/wav") == 0) {

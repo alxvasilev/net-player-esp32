@@ -85,7 +85,7 @@ int DecoderFlac::decode(const char* buf, int size)
             auto blkSizeMax = fx_flac_get_streaminfo(mFlacDecoder, FLAC_KEY_MAX_BLOCK_SIZE);
             auto frmSizeMin = fx_flac_get_streaminfo(mFlacDecoder, FLAC_KEY_MIN_FRAME_SIZE);
             auto frmSizeMax = fx_flac_get_streaminfo(mFlacDecoder, FLAC_KEY_MAX_FRAME_SIZE);
-            ESP_LOGI(TAG, "FLAC format: %d-bit, %d Hz, %d channels (block size: %lld - %lld, frame size: %lld - %lld)",
+            ESP_LOGI(TAG, "FLAC format: %d-bit, %d Hz, %d channels (samples per frame: %lld - %lld, frame size: %lld - %lld bytes)",
                 mOutputFormat.bits(), mOutputFormat.samplerate, mOutputFormat.channels(),
                 blkSizeMin, blkSizeMax, frmSizeMin, frmSizeMax);
         }
