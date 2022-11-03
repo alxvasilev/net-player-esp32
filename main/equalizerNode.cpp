@@ -5,8 +5,8 @@ const uint16_t EqualizerNode::bandFreqs[kBandCount] = {
     31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000
 };
 
-EqualizerNode::EqualizerNode(const float *gains)
-: AudioNode("equalizer")
+EqualizerNode::EqualizerNode(IAudioPipeline& parent, const float *gains)
+: AudioNode(parent, "equalizer")
 {
     if (gains) {
         memcpy(mGains, gains, sizeof(mGains));

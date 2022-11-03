@@ -32,7 +32,7 @@ protected:
     void doStop();
 public:
     virtual Type type() const override { return AudioNode::kTypeA2dpIn; }
-    A2dpInputNode(const char* btName);
+    A2dpInputNode(IAudioPipeline& parent, const char* btName);
     ~A2dpInputNode();
     virtual StreamError pullData(DataPullReq& dpr, int timeout);
     virtual void confirmRead(int amount);

@@ -33,7 +33,7 @@ protected:
     bool createDecoder(CodecType type);
     bool changeDecoder(CodecType type);
 public:
-    DecoderNode(): AudioNode("decoder"){}
+    DecoderNode(IAudioPipeline& parent): AudioNode(parent, "decoder"){}
     virtual Type type() const { return kTypeDecoder; }
     virtual StreamError pullData(DataPullReq& dpr, int timeout);
     virtual void confirmRead(int size) {}

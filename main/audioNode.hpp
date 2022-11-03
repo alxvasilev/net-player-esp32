@@ -87,6 +87,14 @@ public:
     const char* codecTypeStr() const { return codecTypeToStr(codec); }
 };
 
+class AudioNode;
+
+class IAudioPipeline {
+public:
+    virtual void onNodeEvent(AudioNode& node, uint32_t type, uintptr_t arg, size_t bufSize) = 0;
+    virtual void onNodeError(AudioNode& node, int error) = 0;
+};
+
 class IAudioVolume;
 
 class AudioNode
@@ -118,22 +126,19 @@ public:
         kTypeHttpOut,
         kTypeA2dpOut
     };
-    struct EventHandler
-    {
-        virtual bool onEvent(AudioNode* self, uint32_t type, uintptr_t arg, size_t bufSize) = 0;
-    };
     const char* tag() { return mTag; }
 protected:
     static bool sHaveSpiRam;
+    IAudioPipeline& mPipeline;
     const char* mTag;
     Mutex mMutex;
     AudioNode* mPrev = nullptr;
     int64_t mBytePos = 0;
     void* mUserp = nullptr;
     uint32_t mSubscribedEvents = 0;
-    EventHandler* mEventHandler = nullptr;
-    inline void sendEvent(uint32_t type, uintptr_t arg=0, int bufSize=0);
-    AudioNode(const char* tag): mTag(tag) {}
+    inline void plSendEvent(uint32_t type, uintptr_t arg=0, int bufSize=0);
+    inline void plNotifyError(int error);
+    AudioNode(IAudioPipeline& parent, const char* tag): mPipeline(parent), mTag(tag) {}
 public:
     static void detectSpiRam();
     static bool haveSpiRam() { return sHaveSpiRam; }
@@ -188,19 +193,6 @@ public:
             return kStreamStopped;
         }
     }
-    virtual void notifyUpstreamError(int error) {
-        pause();
-        if (mPrev) {
-            mPrev->notifyUpstreamError(error);
-        }
-    }
-    void subscribeToEvents(uint32_t events) {
-        mSubscribedEvents |= events;
-    }
-    void unsubscribeFromEvents(uint32_t events) {
-        mSubscribedEvents &= ~events;
-    }
-    void setEventHandler(EventHandler* handler) { mEventHandler = handler; }
 };
 
 class AudioNodeWithState: public AudioNode
@@ -215,7 +207,7 @@ protected:
     virtual void doPause() { setState(kStatePaused); }
     virtual bool doRun() { setState(kStateRunning); return true; }
 public:
-    AudioNodeWithState(const char* tag): AudioNode(tag), mEvents(kEvtStopRequest)
+    AudioNodeWithState(IAudioPipeline& parent, const char* tag): AudioNode(parent, tag), mEvents(kEvtStopRequest)
     {
         mEvents.setBits(kStateStopped);
     }
@@ -257,20 +249,20 @@ protected:
     virtual void doPause() override { mCmdQueue.post(kCommandPause); }
     virtual bool doRun() override;
 public:
-    AudioNodeWithTask(const char* tag, uint32_t stackSize, uint8_t prio=kDefaultPrio, int8_t core=-1)
-    :AudioNodeWithState(tag), mStackSize(stackSize), mTaskPrio(prio), mCpuCore(core)
+    AudioNodeWithTask(IAudioPipeline& parent, const char* tag, uint32_t stackSize, uint8_t prio=kDefaultPrio, int8_t core=-1)
+    :AudioNodeWithState(parent, tag), mStackSize(stackSize), mTaskPrio(prio), mCpuCore(core)
     {}
     void setPriority(uint8_t prio) { mTaskPrio = prio; }
 };
 
-inline void AudioNode::sendEvent(uint32_t type, uintptr_t arg, int bufSize)
+inline void AudioNode::plSendEvent(uint32_t type, uintptr_t arg, int bufSize)
 {
-    if (!mEventHandler) {
-        return;
-    }
-    if (mSubscribedEvents & type) {
-        mEventHandler->onEvent(this, type, arg, bufSize);
-    }
+    mPipeline.onNodeEvent(*this, type, arg, bufSize);
+}
+
+inline void AudioNode::plNotifyError(int error)
+{
+    mPipeline.onNodeError(*this, error);
 }
 
 #endif

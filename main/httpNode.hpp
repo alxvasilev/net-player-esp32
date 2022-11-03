@@ -48,6 +48,7 @@ protected:
     int mIcyEventAfterBytes = -1;
     bool mIcyHadNewTrack = false;
     std::unique_ptr<TrackRecorder> mRecorder;
+    int mIoTimeoutMs = -1;
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     static CodecType codecFromContentType(const char* content_type);
     bool isPlaylist();
@@ -62,6 +63,7 @@ protected:
     bool recv();
     void setWaitingPrefill(bool prefill);
     int8_t waitPrefillChange(int msTimeout);
+    int delayFromRetryCnt(int tries);
     void nodeThreadFunc();
     virtual bool dispatchCommand(Command &cmd);
     virtual void doStop();
@@ -69,7 +71,6 @@ protected:
     bool recordingMaybeEnable();
     void recordingStop();
     void recordingCancelCurrent();
-
 public:
     enum: uint32_t {
         kEventConnecting = kEventLastGeneric << 1,
@@ -81,15 +82,16 @@ public:
     };
     mutable Mutex mMutex;
     IcyInfo& icyInfo() { return mIcyParser; }
-    HttpNode(size_t bufSize, size_t prefillAmount);
+    HttpNode(IAudioPipeline& parent, size_t bufSize, size_t prefillAmount);
     virtual ~HttpNode();
     virtual Type type() const { return kTypeHttpIn; }
     virtual StreamError pullData(DataPullReq &dp, int timeout);
     virtual void confirmRead(int size);
+    virtual void pause(bool wait);
+    void setIoTimeout(int timeoutMs) { mIoTimeoutMs = timeoutMs; }
     void setUrl(const char* url, const char* recStationName);
     bool isConnected() const;
     const char* trackName() const;
     bool recordingIsActive() const;
     bool recordingIsEnabled() const;
-    int delayFromRetryCnt(int tries);
 };

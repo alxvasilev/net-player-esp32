@@ -300,7 +300,7 @@ public:
         mMutex.unlock();
         return true;
     }
-    int getWriteBuf(char*& buf, int reqSize)
+    int getWriteBuf(char*& buf, int reqSize, int timeoutMs)
     {
         MutexLocker locker(mMutex);
         int maxPossible = mBufEnd - mWritePtr;
@@ -316,9 +316,10 @@ public:
             }
             {
                 MutexUnlocker unlocker(mMutex);
-                auto ret = waitForReadOp(-1);
+                auto ret = waitForReadOp(timeoutMs);
                 if (ret <= 0) {
-                    return -1;
+                    buf = nullptr;
+                    return ret;
                 }
             }
         }

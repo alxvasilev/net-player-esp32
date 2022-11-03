@@ -109,8 +109,8 @@ bool I2sOutputNode::setFormat(StreamFormat fmt)
     return true;
 }
 
-I2sOutputNode::I2sOutputNode(int port, i2s_pin_config_t* pinCfg, uint32_t stackSize, int8_t cpuCore)
-:AudioNodeWithTask("node-i2s-out", stackSize, 20, cpuCore), mFormat(kDefaultSamplerate, 16, 2)
+I2sOutputNode::I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t* pinCfg, uint32_t stackSize, int8_t cpuCore)
+:AudioNodeWithTask(parent, "node-i2s-out", stackSize, 20, cpuCore), mFormat(kDefaultSamplerate, 16, 2)
 {
     if (port == 0xff) {
         mUseInternalDac = true;

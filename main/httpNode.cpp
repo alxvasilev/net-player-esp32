@@ -106,6 +106,9 @@ bool HttpNode::createClient()
     };
     esp_http_client_set_header(mClient, "User-Agent", "curl/7.65.3");
     esp_http_client_set_header(mClient, "Icy-MetaData", "1");
+    if (mIoTimeoutMs >= 0) {
+        esp_http_client_set_timeout_ms(mClient, mIoTimeoutMs);
+    }
     return true;
 }
 
@@ -172,7 +175,7 @@ bool HttpNode::connect(bool isReconnect)
         snprintf(rang_header, 32, "bytes=%lld-", mBytePos);
         esp_http_client_set_header(mClient, "Range", rang_header);
     }
-    sendEvent(kEventConnecting, isReconnect);
+    plSendEvent(kEventConnecting, isReconnect);
 
     for (int tries = 0; tries < 26; tries++) {
         auto err = esp_http_client_open(mClient, 0);
@@ -224,7 +227,7 @@ bool HttpNode::connect(bool isReconnect)
         if (!mIcyParser.icyInterval()) {
             ESP_LOGW(TAG, "Source does not send ShoutCast metadata");
         }
-        sendEvent(kEventConnected, isReconnect);
+        plSendEvent(kEventConnected, isReconnect);
         return true;
     }
     return false;
@@ -296,8 +299,8 @@ bool HttpNode::recv()
 {
     for (int retries = 0; retries < 26; retries++) { // retry net errors
         char* buf;
-        auto bufSize = mRingBuf.getWriteBuf(buf, kReadSize);
-        if (bufSize < 0) { // stop flag was set
+        auto bufSize = mRingBuf.getWriteBuf(buf, kReadSize, mIoTimeoutMs);
+        if (bufSize <= 0) { // stop flag was set
             return false;
         }
         if (bufSize > kReadSize) { // ringbuf will return max possible value, which may be more than the requested
@@ -333,7 +336,7 @@ bool HttpNode::recv()
                 if (mRecorder && mIcyHadNewTrack) { // start recording only on second icy track event - first track may be incomplete
                     LOCK();
                     bool ok = mRecorder->onNewTrack(mIcyParser.trackName(), mStreamFormat);
-                    sendEvent(kEventRecording, ok);
+                    plSendEvent(kEventRecording, ok);
                 }
                 mIcyHadNewTrack = true;
             }
@@ -378,7 +381,17 @@ void HttpNode::setUrl(const char* url, const char* recStaName)
         mCmdQueue.post(kCommandSetUrl, data);
     }
 }
-
+void HttpNode::pause(bool wait)
+{
+    // The ring buffer may be full and the thread waiting for space to be freed. If nobody consumes the
+    // data, this will result in the thread hanging and not accepting commands. That's why we clear the
+    // ringbuffer as well
+    AudioNodeWithTask::pause(false);
+    mRingBuf.clear();
+    if (wait) {
+        waitForState(AudioNode::kStatePaused);
+    }
+}
 bool HttpNode::dispatchCommand(Command &cmd)
 {
     if (AudioNodeWithTask::dispatchCommand(cmd)) {
@@ -423,7 +436,7 @@ void HttpNode::nodeThreadFunc()
             }
         }
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
-            recv(); // retries and goes to new playlist track
+            recv(); // retries and goes to new playlist track. Timeout is for waiting for free space in ringbuf
         }
     }
 }
@@ -441,8 +454,8 @@ HttpNode::~HttpNode()
     free(mRecordingStationName);
 }
 
-HttpNode::HttpNode(size_t bufSize, size_t prefillAmount)
-: AudioNodeWithTask("node-http", kStackSize), mRingBuf(bufSize, haveSpiRam()),
+HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize, size_t prefillAmount)
+: AudioNodeWithTask(parent, "node-http", kStackSize), mRingBuf(bufSize, haveSpiRam()),
   mPrefillAmount(prefillAmount), mIcyParser(mMutex)
 {
 }
@@ -493,7 +506,7 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp, int timeout)
                 mIcyEventAfterBytes = -1;
                 // no need to lock icy info, as our thread is the one who modifies it
                 ESP_LOGI(TAG, "Sending title event '%s'", mIcyParser.trackName());
-                sendEvent(kEventTrackInfo, (uintptr_t)mIcyParser.trackName());
+                plSendEvent(kEventTrackInfo, (uintptr_t)mIcyParser.trackName());
             }
         }
         return kNoError;
@@ -532,7 +545,7 @@ bool HttpNode::recordingMaybeEnable() {
         mRecorder.reset(new TrackRecorder("/sdcard/rec"));
     }
     mRecorder->setStation(mRecordingStationName);
-    sendEvent(kEventRecording, true);
+    plSendEvent(kEventRecording, true);
     return true;
 }
 
@@ -542,7 +555,7 @@ void HttpNode::recordingCancelCurrent() {
         return;
     }
     mRecorder->abortTrack();
-    sendEvent(kEventRecording, false);
+    plSendEvent(kEventRecording, false);
 }
 void HttpNode::recordingStop() {
     LOCK();
@@ -551,7 +564,7 @@ void HttpNode::recordingStop() {
         free(mRecordingStationName);
         mRecordingStationName = nullptr;
     }
-    sendEvent(kEventRecording, false);
+    plSendEvent(kEventRecording, false);
 }
 bool HttpNode::recordingIsActive() const
 {

@@ -20,7 +20,7 @@ protected:
     void equalizerReinit(StreamFormat fmt);
     void updateBandGain(uint8_t band);
 public:
-    EqualizerNode(const float* gains=nullptr);
+    EqualizerNode(IAudioPipeline& parent, const float* gains=nullptr);
     virtual Type type() const { return kTypeEqualizer; }
     virtual StreamError pullData(DataPullReq &dpr, int timeout) override;
     virtual void confirmRead(int size) override { mPrev->confirmRead(size); }

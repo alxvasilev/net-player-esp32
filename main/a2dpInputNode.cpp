@@ -36,10 +36,10 @@ void A2dpInputNode::eventCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *
             auto state = param->conn_stat.state;
             if (state == ESP_A2D_CONNECTION_STATE_DISCONNECTED) {
                 ESP_LOGI(TAG, "Disconnected");
-                gSelf->sendEvent(kEventDisconnect);
+                gSelf->plSendEvent(kEventDisconnect);
             } else if (state == ESP_A2D_CONNECTION_STATE_CONNECTED) {
                 ESP_LOGI(TAG, "Connected");
-                gSelf->sendEvent(kEventConnect);
+                gSelf->plSendEvent(kEventConnect);
             }
             break;
         }
@@ -92,8 +92,8 @@ void A2dpInputNode::dataCallback(const uint8_t* data, uint32_t len)
     gSelf->mRingBuf.write((char*)data, len);
 }
 
-A2dpInputNode::A2dpInputNode(const char* btName)
-: AudioNodeWithState(TAG), mRingBuf(kBufferSize)
+A2dpInputNode::A2dpInputNode(IAudioPipeline& parent, const char* btName)
+: AudioNodeWithState(parent, TAG), mRingBuf(kBufferSize)
 {
     if (gSelf) {
         ESP_LOGE(TAG, "Only a single instance is allowed, and one already exists");

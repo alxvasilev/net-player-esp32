@@ -58,9 +58,9 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp, int timeout)
             return kTimeout;
         }
         if (!mDecoder) {
-            ESP_LOGI(mTag, "No decoder, creating one");
             createDecoder(idp.fmt.codec); // clears any remaining data from input buffer
             if (!mDecoder) {
+                plNotifyError(kErrNoCodec);
                 return kErrNoCodec;
             }
             mFormatChangeCtr = idp.fmt.ctr;

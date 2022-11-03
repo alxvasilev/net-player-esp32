@@ -26,7 +26,7 @@ protected:
     void dmaFillWithSilence();
     bool setFormat(StreamFormat fmt);
 public:
-    I2sOutputNode(int port, i2s_pin_config_t* pinCfg, uint32_t stackSize, int8_t cpuCore=-1);
+    I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t* pinCfg, uint32_t stackSize, int8_t cpuCore=-1);
     ~I2sOutputNode();
     void useVolumeInterface(bool enable) { mUseVolumeInterface = enable; }
     virtual Type type() const { return kTypeI2sOut; }

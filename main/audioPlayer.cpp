@@ -111,23 +111,25 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
     ESP_LOGI(TAG, "Creating audio pipeline");
     AudioNode* pcmSource = nullptr;
     switch(inType) {
-    case AudioNode::kTypeHttpIn:
+    case AudioNode::kTypeHttpIn: {
+        HttpNode* http;
         if (AudioNode::haveSpiRam()) {
             ESP_LOGI(TAG, "Allocating %d bytes in SPIRAM for http buffer", kHttpBufSizeSpiRam);
-            mStreamIn.reset(new HttpNode(kHttpBufSizeSpiRam, 32768));
+            http = new HttpNode(*this, kHttpBufSizeSpiRam, 32768);
         } else {
             ESP_LOGI(TAG, "Allocating %d bytes internal RAM for http buffer", kHttpBufSizeSpiRam);
-            mStreamIn.reset(new HttpNode(kHttpBufSizeInternal, kHttpBufSizeInternal * 3 / 4));
+            http = new HttpNode(*this, kHttpBufSizeInternal, kHttpBufSizeInternal * 3 / 4);
         }
-        mStreamIn->setEventHandler(this);
-        mStreamIn->subscribeToEvents(0xffff);
+        http->setIoTimeout(1000);
+        mStreamIn.reset(http);
 
-        mDecoder.reset(new DecoderNode);
+        mDecoder.reset(new DecoderNode(*this));
         mDecoder->linkToPrev(mStreamIn.get());
         pcmSource = mDecoder.get();
         break;
+    }
     case AudioNode::kTypeA2dpIn:
-        mStreamIn.reset(new A2dpInputNode("NetPlayer"));
+        mStreamIn.reset(new A2dpInputNode(*this, "NetPlayer"));
         mDecoder.reset();
         pcmSource = mStreamIn.get();
         break;
@@ -136,7 +138,7 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         return false;
     }
     if (mFlags & kFlagUseEqualizer) {
-        mEqualizer.reset(new EqualizerNode(sDefaultEqGains));
+        mEqualizer.reset(new EqualizerNode(*this, sDefaultEqGains));
         mEqualizer->linkToPrev(pcmSource);
         pcmSource = mEqualizer.get();
         auto vuAtInput = mNvsHandle.readDefault<uint8_t>("vuAtEqInput", 0);
@@ -154,7 +156,7 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
             .data_out_num = 27,
             .data_in_num = -1,
         };
-        mStreamOut.reset(new I2sOutputNode(0, &cfg, kI2sStackSize, kI2sCpuCore));
+        mStreamOut.reset(new I2sOutputNode(*this, 0, &cfg, kI2sStackSize, kI2sCpuCore));
         if ((mFlags & kFlagUseEqualizer) == 0) {
             static_cast<I2sOutputNode*>(mStreamOut.get())->useVolumeInterface(true);
         }
@@ -353,7 +355,7 @@ bool AudioPlayer::playUrl(const char* url, const char* record)
     lcdUpdateTrackTitle(nullptr);
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
     http.setUrl(url, record);
-    if (isStopped()) {
+    if (!isPlaying()) {
         play();
     }
     return true;
@@ -852,11 +854,19 @@ void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
         stationList->registerHttpHandlers(server);
     }
 }
-
-bool AudioPlayer::onEvent(AudioNode *self, uint32_t event, uintptr_t buf, size_t bufSize)
+void AudioPlayer::onNodeError(AudioNode& node, int error)
 {
-    if (self->type() != AudioNode::kTypeHttpIn) {
-        return true;
+    asyncCall([this, error, nodeName = std::string((const char*)node.tag())]() {
+        ESP_LOGW(TAG, "Error %d from node '%s', pausing pipeline", error, nodeName.c_str());
+        LOCK_PLAYER();
+        pause();
+    });
+}
+
+void AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t buf, size_t bufSize)
+{
+    if (node.type() != AudioNode::kTypeHttpIn) {
+        return;
     }
     // We are in the http node's thread, must not do any locking from here, so we call
     // into the player via async messages
@@ -875,7 +885,6 @@ bool AudioPlayer::onEvent(AudioNode *self, uint32_t event, uintptr_t buf, size_t
             }
         });
     }
-    return true;
 }
 
 void AudioPlayer::lcdTimedDrawTask(void* ctx)
