@@ -210,9 +210,9 @@ extern "C" void app_main(void)
 
     lcd.puts("Waiting log conn...\n");
     auto ret = netLogger.waitForLogConnection(4);
-    if (otaInProgress) {
+    if (gOtaInProgress) {
         lcd.puts("OTA Update in progress...\n");
-        vTaskDelay(portMAX_DELAY);
+        return;
     } else {
         lcd.puts("OTA NOT in progress\n");
     }
@@ -225,8 +225,10 @@ extern "C" void app_main(void)
 //====
     lcd.puts("Starting Player...\n");
     player.reset(new AudioPlayer(lcd));
+    MutexLocker locker(player->mutex);
     player->registerUrlHanlers(gHttpServer);
     otaNotifyCallback = []() {
+        MutexLocker locker(player->mutex);
         player->stop();
     };
     if (player->inputType() == AudioNode::kTypeHttpIn) {
@@ -307,39 +309,6 @@ static const httpd_uri_t indexUrl = {
     .user_ctx  = nullptr
 };
 
-static esp_err_t changeInputUrlHandler(httpd_req_t *req)
-{
-    UrlParams params(req);
-    auto type = params.strVal("mode");
-    if (!type) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No mode param");
-        return ESP_OK;
-    }
-    switch(type.str[0]) {
-        case 'b':
-            player->changeInput(AudioNode::kTypeA2dpIn);
-            httpd_resp_sendstr(req, "Switched to Bluetooth A2DP sink");
-            break;
-        case 'h':
-            player->changeInput(AudioNode::kTypeHttpIn);
-            httpd_resp_sendstr(req, "Switched to HTTP client");
-            break;
-        default:
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid mode param");
-            return ESP_OK;
-    }
-    ESP_LOGI(TAG, "Changed input node to type %d", player->nvs().readDefault<uint8_t>("inType", AudioNode::kTypeHttpIn));
-    return ESP_OK;
-}
-static const httpd_uri_t changeInputUrl = {
-    .uri       = "/inmode",
-    .method    = HTTP_GET,
-    .handler   = changeInputUrlHandler,
-    /* Let's pass response string in user
-     * context to demonstrate it's usage */
-    .user_ctx  = nullptr
-};
-
 
 void stopWebserver() {
     /* Stop the web server */
@@ -371,6 +340,5 @@ void startWebserver(bool isAp)
     netLogger.registerWithHttpServer(gHttpServer, "/log");
     httpd_register_uri_handler(gHttpServer, &otaUrlHandler);
     httpd_register_uri_handler(gHttpServer, &indexUrl);
-    httpd_register_uri_handler(gHttpServer, &changeInputUrl);
     httpFsRegisterHandlers(gHttpServer);
 }

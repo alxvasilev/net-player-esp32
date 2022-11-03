@@ -9,16 +9,16 @@ enum { kOtaBufSize = 512 };
 static constexpr const char* TAG = "OTA";
 
 void defaultOtaNotifyCallback() {}
-bool otaInProgress = false;
+volatile bool gOtaInProgress = false;
 
 OtaNotifyCallback otaNotifyCallback = &defaultOtaNotifyCallback;
 struct OtaInProgressSetter
 {
     OtaInProgressSetter() {
-        otaInProgress = true;
+        gOtaInProgress = true;
     }
     ~OtaInProgressSetter() {
-        otaInProgress = false;
+        gOtaInProgress = false;
     }
 };
 
@@ -35,12 +35,14 @@ bool rollbackIsPendingVerify()
 /* Receive .Bin file */
 static esp_err_t OTA_update_post_handler(httpd_req_t *req)
 {
+    OtaInProgressSetter inProgress;
     otaNotifyCallback();
     int contentLen = req->content_len;
-    ESP_LOGI(TAG, "OTA request received, image size: %d",contentLen);
+    ESP_LOGW(TAG, "OTA request received, image size: %d",contentLen);
     char* otaBuf = new char[kOtaBufSize]; // no need to free it, we will reboot
     const auto update_partition = esp_ota_get_next_update_partition(NULL);
     esp_ota_handle_t ota_handle;
+    ESP_LOGW(TAG, "Erasing partition...");
     esp_err_t err = esp_ota_begin(update_partition, contentLen, &ota_handle);
     if (err == ESP_ERR_OTA_ROLLBACK_INVALID_STATE) {
         ESP_LOGW(TAG, "Invalid OTA state of running app, trying to set it");
@@ -59,8 +61,7 @@ static esp_err_t OTA_update_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    OtaInProgressSetter inProgress;
-    ESP_LOGI(TAG, "Writing to partition '%s' subtype %d at offset 0x%x",
+    ESP_LOGW(TAG, "Writing to partition '%s' subtype %d at offset 0x%x",
         update_partition->label, update_partition->subtype, update_partition->address);
 
     uint64_t tsStart = esp_timer_get_time();

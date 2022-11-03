@@ -12,5 +12,5 @@ extern const httpd_uri_t otaUrlHandler;
 // use it to stop any ongoing process
 typedef void(*OtaNotifyCallback)();
 extern OtaNotifyCallback otaNotifyCallback;
-extern bool otaInProgress;
+extern volatile bool gOtaInProgress;
 #endif

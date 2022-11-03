@@ -328,13 +328,13 @@ bool HttpNode::recv()
             continue;
         }
         if (mIcyParser.icyInterval()) {
+            LOCK();
             bool isFirst = !mIcyParser.trackName();
             bool gotTitle = mIcyParser.processRecvData(buf, rlen);
             if (gotTitle) {
                 mIcyEventAfterBytes = isFirst ? 0 : mRingBuf.dataSize();
                 ESP_LOGW(TAG, "Track title changed to: '%s', will signal after %d bytes", mIcyParser.trackName(), mIcyEventAfterBytes);
                 if (mRecorder && mIcyHadNewTrack) { // start recording only on second icy track event - first track may be incomplete
-                    LOCK();
                     bool ok = mRecorder->onNewTrack(mIcyParser.trackName(), mStreamFormat);
                     plSendEvent(kEventRecording, ok);
                 }
@@ -499,6 +499,7 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp, int timeout)
     } else if (ret == 0){
         return kTimeout;
     } else {
+        LOCK(); // for the ICY stuff
         dp.size = ret;
         if (mIcyEventAfterBytes >= 0) {
             mIcyEventAfterBytes -= ret;

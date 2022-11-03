@@ -87,6 +87,7 @@ protected:
     void lcdSetupForTrackTitle();
     void lcdUpdateTrackTitle(const char* buf);
     void lcdScrollTrackTitle(int step=1);
+    void lcdDisplayStationName(const char* name);
     void lcdUpdateStationInfo();
     void lcdUpdateRecIcon();
     // web URL handlers
@@ -99,6 +100,7 @@ protected:
     static esp_err_t resetSubsystemUrlHandler(httpd_req_t *req);
     static esp_err_t nvsGetParamUrlHandler(httpd_req_t* req);
     static esp_err_t nvsSetParamUrlHandler(httpd_req_t* req);
+    static esp_err_t changeInputUrlHandler(httpd_req_t *req);
     void registerHttpGetHandler(httpd_handle_t server,
         const char* path, esp_err_t(*handler)(httpd_req_t*));
 public:
