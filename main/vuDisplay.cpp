@@ -16,7 +16,7 @@ void VuDisplay::init(NvsHandle& nvs)
     mLevelPerLed = (100 * int32_t(kLevelMax + 1) + numLeds / 2) / numLeds; // 100x the rounded division, i.e. fixed point two-decimal precision
     mLedHeight = nvs.readDefault<uint8_t>("vuLedHeight", kDefLedHeight);
     mChanSpacing = nvs.readDefault<uint8_t>("vuChanSpacing", kDefChanSpacing);
-    mYellowStartX = mStepWidth * (100 * (int32_t)nvs.readDefault<int16_t>("vuYellowThresh", kLevelMax - 255)) / mLevelPerLed;
+    mYellowStartX = mStepWidth * (100 * (int32_t)nvs.readDefault<int16_t>("vuYellowThresh", kDefYellowThresh)) / mLevelPerLed;
     enum { kTicksPerSec = 43 }; // ~1024 samples at 44100 Hz
     auto pkDropSpeed = nvs.readDefault<uint8_t>("vuPeakDropSpeed", kDefPeakDropSpeed);
     mPeakDropTicks = (kTicksPerSec * mStepWidth + pkDropSpeed / 2) / pkDropSpeed;

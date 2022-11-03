@@ -12,7 +12,10 @@ class VuDisplay {
         kLevelSmoothFactor = 4, kDefPeakHoldMs = 30, kDefPeakDropSpeed = 20,
         kDefLedWidth = 1, kDefLedHeight = 10, kDefLedSpacing = 1, kDefChanSpacing = 2
     };
-    enum: uint16_t { kLevelMax = std::numeric_limits<int16_t>::max() };
+    enum: uint16_t {
+        kLevelMax = std::numeric_limits<int16_t>::max(),
+        kDefYellowThresh = kLevelMax - 256
+    };
     struct ChanCtx
     {
         int16_t barY;
