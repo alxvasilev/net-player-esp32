@@ -14,7 +14,7 @@ class VuDisplay {
     };
     enum: uint16_t {
         kLevelMax = std::numeric_limits<int16_t>::max(),
-        kDefYellowThresh = kLevelMax - 256
+        kDefYellowThresh = kLevelMax - 512
     };
     struct ChanCtx
     {
