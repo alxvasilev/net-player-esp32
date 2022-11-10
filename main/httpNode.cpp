@@ -40,7 +40,7 @@ CodecType HttpNode::codecFromContentType(const char* content_type)
     }
     else if (strcasecmp(content_type, "audio/ogg") == 0 ||
              strcasecmp(content_type, "application/ogg") == 0) {
-        return kCodecOgg;
+        return kCodecOggTransport;
     }
     else if (strcasecmp(content_type, "audio/wav") == 0) {
         return kCodecWav;
@@ -61,7 +61,7 @@ CodecType HttpNode::codecFromContentType(const char* content_type)
 
 bool HttpNode::isPlaylist()
 {
-    auto codec = mStreamFormat.codec;
+    auto codec = mStreamFormat.codec();
     if (codec == kPlaylistM3u8 || codec == kPlaylistPls) {
         return true;
     }
@@ -122,7 +122,7 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
     auto self = static_cast<HttpNode*>(evt->user_data);
     auto key = evt->header_key;
     if (strcasecmp(key, "Content-Type") == 0) {
-        self->mStreamFormat.codec = self->codecFromContentType(evt->header_value);
+        self->mStreamFormat.setCodec(self->codecFromContentType(evt->header_value));
         ESP_LOGI(TAG, "Parsed content-type '%s' as %s", evt->header_value,
             self->mStreamFormat.codecTypeStr());
     } else {
@@ -140,19 +140,10 @@ bool HttpNode::connect(bool isReconnect)
     }
     ESP_LOGI(mTag, "Connecting to '%s'...", mUrl);
     if (!isReconnect) {
-        ESP_LOGI(mTag, "connect: Waiting for buffer to drain...");
-        // Wait till buffer is drained before changing format descriptor
-        if (mWaitingPrefill && mRingBuf.hasData()) {
-            ESP_LOGW(mTag, "Connect: Read state is kReadPrefill, but the buffer should be drained, allowing read");
-            setWaitingPrefill(false);
+        {
+            LOCK();
+            mStreamStartPos = mRxByteCtr; // mStreamStartPos is read in pullData()
         }
-        bool ret = mRingBuf.waitForEmpty();
-        if (!ret) {
-            return false;
-        }
-        ESP_LOGI(mTag, "connect: Buffer drained");
-        mStreamFormat.reset();
-        mBytePos = 0;
         recordingMaybeEnable();
     } else {
         recordingCancelCurrent();
@@ -166,13 +157,12 @@ bool HttpNode::connect(bool isReconnect)
     }
     // request IceCast stream metadata
     mIcyParser.reset();
-    mIcyHadNewTrack = false;
 
     esp_http_client_set_header(mClient, "User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36");
 
-    if (mBytePos) { // we are resuming, send position
+    if (isReconnect) { // we are resuming, send position
         char rang_header[32];
-        snprintf(rang_header, 32, "bytes=%lld-", mBytePos);
+        snprintf(rang_header, 32, "bytes=%lld-", mRxByteCtr - mStreamStartPos);
         esp_http_client_set_header(mClient, "Range", rang_header);
     }
     plSendEvent(kEventConnecting, isReconnect);
@@ -228,11 +218,13 @@ bool HttpNode::connect(bool isReconnect)
             ESP_LOGW(TAG, "Source does not send ShoutCast metadata");
         }
         plSendEvent(kEventConnected, isReconnect);
+        if (!isReconnect) {
+            postStreamEvent_Lock(mStreamStartPos, kStreamChanged, mStreamFormat);
+        }
         return true;
     }
     return false;
 }
-
 bool HttpNode::parseResponseAsPlaylist()
 {
     if (!isPlaylist()) {
@@ -327,21 +319,26 @@ bool HttpNode::recv()
             connect(true);
             continue;
         }
+        LOCK();
         if (mIcyParser.icyInterval()) {
-            LOCK();
             bool isFirst = !mIcyParser.trackName();
             bool gotTitle = mIcyParser.processRecvData(buf, rlen);
             if (gotTitle) {
-                mIcyEventAfterBytes = isFirst ? 0 : mRingBuf.dataSize();
-                ESP_LOGW(TAG, "Track title changed to: '%s', will signal after %d bytes", mIcyParser.trackName(), mIcyEventAfterBytes);
-                if (mRecorder && mIcyHadNewTrack) { // start recording only on second icy track event - first track may be incomplete
+                ESP_LOGW(TAG, "Track title changed to: '%s'", mIcyParser.trackName());
+                postStreamEvent_NoLock(
+                    isFirst ? mStreamStartPos : (mRxByteCtr + rlen - mIcyParser.bytesSinceLastMeta()),
+                    kTitleChanged, strdup(mIcyParser.trackName())
+                );
+
+                if (mRecorder && !isFirst) { // start recording only on second icy track event - first track may be incomplete
                     bool ok = mRecorder->onNewTrack(mIcyParser.trackName(), mStreamFormat);
                     plSendEvent(kEventRecording, ok);
                 }
-                mIcyHadNewTrack = true;
             }
         }
         mRingBuf.commitWrite(rlen);
+        mRxByteCtr += rlen;
+
         // First commit the write, only after that record to SD card,
         // to avoid blocking the stream consumer
         // Note: The buffer is still valid, even if it has been consumed
@@ -349,10 +346,9 @@ bool HttpNode::recv()
         if (mRecorder) {
             mRecorder->onData(buf, rlen);
         }
-        mBytePos += rlen;
-        ESP_LOGD(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.dataSize());
-        //TODO: Implement IceCast metadata support
-        if (mWaitingPrefill && mRingBuf.dataSize() >= mPrefillAmount) {
+        auto ringBufDataSize = mRingBuf.dataSize();
+        ESP_LOGD(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, ringBufDataSize);
+        if (mWaitingPrefill && (ringBufDataSize >= mPrefillAmount)) {
             ESP_LOGI(mTag, "Buffer prefilled >= %d bytes, allowing read", mPrefillAmount);
             setWaitingPrefill(false);
         }
@@ -460,58 +456,66 @@ HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize, size_t prefillAmount)
 {
 }
 
-AudioNode::StreamError HttpNode::pullData(DataPullReq& dp, int timeout)
+AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
 {
-    ElapsedTimer tim;
     if (mFlushRequested) {
         mFlushRequested = false;
         return kStreamFlush;
     }
     while (mWaitingPrefill) {
-        auto ret = waitPrefillChange(timeout);
-        if (ret < 0) {
+        if (!waitPrefillChange()) {
             return kStreamStopped;
-        } else if (ret == 0) {
-            return kTimeout;
         }
-    }
-    timeout -= tim.msElapsed();
-    if (timeout <= 0) {
-        return kTimeout;
     }
     if (!dp.size) { // caller only wants to get the stream format
-        auto ret = mRingBuf.waitForData(timeout);
+        // no need for locking, mStreamFormat is updated by pull thread
+        if (mStreamFormat) {
+            dp.fmt = mStreamFormat;
+            return kNoError;
+        }
+        // we have no data and no codec info, wait for data to start arriving. This will ensure
+        // that a stream change event will also be posted
+        auto ret = mRingBuf.waitForData(-1);
         if (ret < 0) {
             return kStreamStopped;
-        } else if (ret == 0) {
-            return kTimeout;
         }
-        dp.fmt = mStreamFormat;
-        return kNoError;
+        myassert(ret);
     }
-    tim.reset();
-    auto ret = mRingBuf.contigRead(dp.buf, dp.size, timeout);
-    if (tim.msElapsed() > timeout) {
-        ESP_LOGW(mTag, "RingBuf read took more than timeout: took %d, timeout %d", tim.msElapsed(), timeout);
-    }
-    if (ret < 0) {
-        return kStreamStopped;
-    } else if (ret == 0){
-        return kTimeout;
-    } else {
-        LOCK(); // for the ICY stuff
-        dp.size = ret;
-        if (mIcyEventAfterBytes >= 0) {
-            mIcyEventAfterBytes -= ret;
-            if (mIcyEventAfterBytes <= 0) {
-                mIcyEventAfterBytes = -1;
-                // no need to lock icy info, as our thread is the one who modifies it
-                ESP_LOGI(TAG, "Sending title event '%s'", mIcyParser.trackName());
-                plSendEvent(kEventTrackInfo, (uintptr_t)mIcyParser.trackName());
+    {
+        LOCK();
+        while (!mStreamEventQueue.empty()) {
+            auto& event = *mStreamEventQueue.front();
+            auto eventPos = event.streamPos;
+            auto readPos = mRxByteCtr - mRingBuf.dataSize();
+            if (eventPos <= readPos) {
+                decltype(mStreamEventQueue)::Popper popper(mStreamEventQueue);
+                if (event.type == kStreamChanged) {
+                    dp.fmt = this->mStreamFormat = event.streamFmt;
+                    return kStreamChanged;
+                } else if (event.type == kTitleChanged) {
+                    ESP_LOGI(TAG, "Sending title event '%s'", (const char*)event.data);
+                    plSendEvent(kEventTrackInfo, (uintptr_t)event.data);
+                    continue;
+                }
+            } else if (eventPos < readPos + dp.size) {
+                // If we were called with zero size for a format probe,
+                // a stream change event must have been dequeued already
+                myassert(dp.size > 0);
+                dp.size = eventPos - readPos;
+                break;
             }
         }
-        return kNoError;
     }
+    // If we were called with zero size for a format probe,
+    // a stream change event must have been dequeued already
+    myassert(dp.size > 0);
+    auto ret = mRingBuf.contigRead(dp.buf, dp.size, -1);
+    if (ret < 0) {
+        return kStreamStopped;
+    }
+    myassert(ret > 0);
+    dp.size = ret;
+    return kNoError;
 }
 
 void HttpNode::confirmRead(int size)
@@ -525,15 +529,14 @@ void HttpNode::setWaitingPrefill(bool prefill)
     mEvents.setBits(kEvtPrefillChange);
 }
 
-int8_t HttpNode::waitPrefillChange(int msTimeout)
+bool HttpNode::waitPrefillChange()
 {
-    auto bits = mEvents.waitForOneAndReset(kEvtPrefillChange|kEvtStopRequest, msTimeout);
+    auto bits = mEvents.waitForOneAndReset(kEvtPrefillChange|kEvtStopRequest, -1);
     if (bits & kEvtStopRequest) {
-        return -1;
-    } else if (bits & kEvtPrefillChange) {
-        return 1;
+        return false;
     } else {
-        return 0;
+        myassert(bits & kEvtPrefillChange);
+        return true;
     }
 }
 

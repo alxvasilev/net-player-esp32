@@ -24,9 +24,11 @@ enum CodecType: uint8_t {
     kCodecUnknown = 0,
     kCodecMp3,
     kCodecAac,
-    kCodecOgg,
     kCodecM4a,
+    kCodecOggTransport,
+    kCodecOggVorbis,
     kCodecFlac,
+    kCodecOggFlac,
     kCodecOpus,
     kCodecWav,
     // ====
@@ -37,54 +39,64 @@ enum CodecType: uint8_t {
 struct StreamFormat
 {
 protected:
-    uint8_t nChannels: 1;
+    union {
+        struct {
+            uint8_t mNumChannels: 1;
+            uint32_t mSampleRate: 19;
+            uint8_t mBitsPerSample: 2;
+            int mReserved: 2;
+            CodecType mCodec: 8;
+        };
+        uint32_t mCode;
+    };
 public:
-    uint32_t samplerate: 19;
-    bool ctr: 1; // toogled with every change of the format, to signal e.g. reset of the (same) decider
-protected:
-    bool mReserved: 1;
-    uint8_t mBits: 2;
-    void zero() { memset(this, 0, sizeof(StreamFormat)); }
-public:
-    CodecType codec: 8;
-    static uint8_t encodeBitRes(uint8_t bits) { return (bits >> 3) - 1; }
-    static uint8_t decodeBitRes(uint8_t bits) { return (bits + 1) << 3; }
-    StreamFormat(uint32_t sr, uint8_t bits, uint8_t channels)
+    operator bool() const { return mCode != 0; }
+    static uint8_t encodeBps(uint8_t bits) { return (bits >> 3) - 1; }
+    static uint8_t decodeBps(uint8_t bits) { return (bits + 1) << 3; }
+    void clear() { mCode = 0; }
+    StreamFormat(CodecType codec, uint32_t sr, uint8_t bits, uint8_t channels): mCode(0)
     {
-        static_assert(sizeof(StreamFormat) == sizeof(uint32_t), "");
-        zero();
-        nChannels = channels-1;
-        samplerate = sr;
-        mBits = encodeBitRes(bits);
+        set(codec, sr, bits, channels);
     }
-    StreamFormat(CodecType aCodec)
+    StreamFormat(uint32_t sr, uint8_t bps, uint8_t channels): mCode(0)
     {
-        static_assert(sizeof(StreamFormat) == sizeof(uint32_t), "");
-        zero();
-        codec = aCodec;
+        setSampleRate(sr);
+        setBitsPerSample(bps);
+        setNumChannels(channels);
     }
-    StreamFormat()
+    StreamFormat(): mCode(0)
     {
-        static_assert(sizeof(StreamFormat) == sizeof(uint32_t), "");
-        zero();
+        static_assert(sizeof(StreamFormat) == sizeof(uint32_t), "Size of StreamFormat must be 32bit");
     }
-    bool operator==(StreamFormat other) const { return toCode() == other.toCode(); }
-    bool operator!=(StreamFormat other) const { return toCode() != other.toCode(); }
-    void reset()
+    StreamFormat(CodecType codec): mCode(0)
     {
-        bool ctrSave = ctr;
-        zero();
-        ctr = !ctrSave;
+        setCodec(codec);
     }
-    uint32_t toCode() const { return *reinterpret_cast<const uint32_t*>(this); }
-    uint8_t bits() const { return decodeBitRes(mBits); }
-    void setBits(uint8_t bits) { mBits = encodeBitRes(bits); }
-    uint8_t channels() const { return nChannels + 1; }
-    bool isStereo() const { return nChannels != 0; }
-    void setChannels(uint8_t ch) { nChannels = ch - 1; }
-    operator bool() const { return toCode() != 0; }
+    bool operator==(StreamFormat other) const { return mCode == other.mCode; }
+    bool operator!=(StreamFormat other) const { return mCode != other.mCode; }
+    uint32_t asCode() const { return mCode; }
+    void set(CodecType codec, uint32_t sr, uint8_t bits, uint8_t channels) {
+        mCodec = codec;
+        setNumChannels(channels);
+        mSampleRate = sr;
+        setBitsPerSample(bits);
+    }
+    void set(uint32_t sr, uint8_t bits, uint8_t channels) {
+        setNumChannels(channels);
+        mSampleRate = sr;
+        setBitsPerSample(bits);
+    }
+    CodecType codec() const { return mCodec; }
+    void setCodec(CodecType codec) { mCodec = codec; }
+    uint32_t sampleRate() const { return mSampleRate; }
+    void setSampleRate(uint32_t sr) { mSampleRate = sr; }
+    uint8_t bitsPerSample() const { return decodeBps(mBitsPerSample); }
+    void setBitsPerSample(uint8_t bps) { mBitsPerSample = encodeBps(bps); }
+    uint8_t numChannels() const { return mNumChannels + 1; }
+    bool isStereo() const { return mNumChannels != 0; }
+    void setNumChannels(uint8_t ch) { mNumChannels = ch - 1; }
     static const char* codecTypeToStr(CodecType type);
-    const char* codecTypeStr() const { return codecTypeToStr(codec); }
+    const char* codecTypeStr() const { return codecTypeToStr(mCodec); }
 };
 
 class AudioNode;
@@ -133,9 +145,6 @@ protected:
     const char* mTag;
     Mutex mMutex;
     AudioNode* mPrev = nullptr;
-    int64_t mBytePos = 0;
-    void* mUserp = nullptr;
-    uint32_t mSubscribedEvents = 0;
     inline void plSendEvent(uint32_t type, uintptr_t arg=0, int bufSize=0);
     inline void plNotifyError(int error);
     AudioNode(IAudioPipeline& parent, const char* tag): mPipeline(parent), mTag(tag) {}
@@ -147,6 +156,11 @@ public:
         return sHaveSpiRam
             ? heap_caps_malloc(spiramSize, MALLOC_CAP_SPIRAM) : malloc(internalSize);
     }
+    static void* mallocTrySpiram(size_t size)
+    {
+        return sHaveSpiRam
+            ? heap_caps_malloc(size, MALLOC_CAP_SPIRAM) : malloc(size);
+    }
     virtual Type type() const = 0;
     virtual IAudioVolume* volumeInterface() { return nullptr; }
     virtual ~AudioNode() {}
@@ -154,15 +168,17 @@ public:
     AudioNode* prev() const { return mPrev; }
     enum StreamError: int8_t {
         kNoError = 0,
-        kTimeout = -1,
-        kStreamStopped = -2,
-        kFormatChange = -3,
-        kNeedMoreData = -4,
-        kStreamFlush = - 5,
-        kErrNoCodec = -6,
-        kErrDecode = -7,
-        kErrStreamFmt = -8,
-        kErrBuffer = -9
+        kTimeout,
+        kStreamStopped,
+        kStreamChanged,
+        kCodecChanged,
+        kTitleChanged,
+        kNeedMoreData,
+        kStreamFlush,
+        kErrNoCodec,
+        kErrDecode,
+        kErrStreamFmt,
+        kErrBuffer
     };
     struct DataPullReq
     {
@@ -180,7 +196,7 @@ public:
     // Upon return, buf is set to the internal buffer containing the data, and size is updated to the available data
     // for reading from it. Once the caller reads the amount it needs, it must call
     // confirmRead() with the actual amount read.
-    virtual StreamError pullData(DataPullReq& dpr, int timeout) = 0;
+    virtual StreamError pullData(DataPullReq& dpr) = 0;
     virtual void confirmRead(int amount) = 0;
     static StreamError threeStateStreamError(int ret) {
         if (ret > 0) {

@@ -31,7 +31,7 @@ public:
     void useVolumeInterface(bool enable) { mUseVolumeInterface = enable; }
     virtual Type type() const { return kTypeI2sOut; }
     virtual IAudioVolume* volumeInterface() override { return this; }
-    virtual StreamError pullData(DataPullReq& dpr, int timeout) { return kTimeout; }
+    virtual StreamError pullData(DataPullReq& dpr) { return kTimeout; }
     virtual void confirmRead(int amount) {}
 };
 

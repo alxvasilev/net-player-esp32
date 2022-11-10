@@ -20,33 +20,49 @@
 #include "playlist.hpp"
 #include "icyParser.hpp"
 #include "recorder.hpp"
+#include "staticQueue.hpp"
 
 class HttpNode: public AudioNodeWithTask
 {
 protected:
-    enum { kPollTimeoutMs = 1000, kHttpClientBufSize = 512, kReadSize = 1024,
-           kStackSize = 3600 };
-    enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1,
-                    kCommandNotifyFlushed };
+    enum { kPollTimeoutMs = 1000, kHttpClientBufSize = 512, kReadSize = 1024, kStackSize = 3600 };
+    enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1, kCommandNotifyFlushed };
     // Read mode dictates how the pullData() caller behaves. Since it may
     // need to wait for the read mode to change to a specific value, the enum values
     // are flags
     enum: uint8_t { kEvtPrefillChange = kEvtLast << 1 };
+    struct QueuedStreamEvent {
+        uint32_t streamPos;
+        union {
+            void* data;
+            StreamFormat streamFmt;
+        };
+        StreamError type;
+        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, StreamFormat fmt):
+            streamPos(aStreamPos), streamFmt(fmt), type(aType) {}
+        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, void* aData):
+            streamPos(aStreamPos), data(aData), type(aType) {}
+        ~QueuedStreamEvent() {
+            if (type == kTitleChanged) {
+                free(data);
+            }
+        }
+    };
     char* mUrl = nullptr;
     char* mRecordingStationName = nullptr;
     StreamFormat mStreamFormat;
     esp_http_client_handle_t mClient = nullptr;
     bool mAutoNextTrack = true; /* connect next track without open/close */
     Playlist mPlaylist; /* media playlist */
-    size_t mStackSize;
     RingBuf mRingBuf;
+    StaticQueue<QueuedStreamEvent, 6> mStreamEventQueue;
+    int64_t mRxByteCtr = 0;
+    int64_t mStreamStartPos = 0;
     volatile bool mWaitingPrefill = true;
     volatile bool mFlushRequested = false;
     int mPrefillAmount;
     int mContentLen;
     IcyParser mIcyParser;
-    int mIcyEventAfterBytes = -1;
-    bool mIcyHadNewTrack = false;
     std::unique_ptr<TrackRecorder> mRecorder;
     int mIoTimeoutMs = -1;
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
@@ -61,8 +77,12 @@ protected:
     void destroyClient();
     bool nextTrack();
     bool recv();
+    template <typename T>
+    bool postStreamEvent_Lock(int64_t streamPos, StreamError event, T arg);
+    template <typename T>
+    bool postStreamEvent_NoLock(int64_t streamPos, StreamError event, T arg);
     void setWaitingPrefill(bool prefill);
-    int8_t waitPrefillChange(int msTimeout);
+    bool waitPrefillChange();
     int delayFromRetryCnt(int tries);
     void nodeThreadFunc();
     virtual bool dispatchCommand(Command &cmd);
@@ -85,7 +105,7 @@ public:
     HttpNode(IAudioPipeline& parent, size_t bufSize, size_t prefillAmount);
     virtual ~HttpNode();
     virtual Type type() const { return kTypeHttpIn; }
-    virtual StreamError pullData(DataPullReq &dp, int timeout);
+    virtual StreamError pullData(DataPullReq &dp);
     virtual void confirmRead(int size);
     virtual void pause(bool wait);
     void setIoTimeout(int timeoutMs) { mIoTimeoutMs = timeoutMs; }
@@ -95,3 +115,29 @@ public:
     bool recordingIsActive() const;
     bool recordingIsEnabled() const;
 };
+template <typename T>
+bool HttpNode::postStreamEvent_Lock(int64_t streamPos, StreamError event, T arg) {
+    for(;;) {
+        bool ok;
+        {
+            MutexLocker locker(mMutex);
+            ok = mStreamEventQueue.emplaceBack(streamPos, event, arg);
+        }
+        if (ok) {
+            return true;
+        }
+        if (mRingBuf.waitForReadOp(-1) < 0) {
+            return false;
+        }
+    }
+}
+template <typename T>
+bool HttpNode::postStreamEvent_NoLock(int64_t streamPos, StreamError event, T arg) {
+    while (!mStreamEventQueue.emplaceBack(streamPos, event, arg)) {
+        MutexUnlocker unlock(mMutex);
+        if (mRingBuf.waitForReadOp(-1) < 0) {
+            return false;
+        }
+    }
+    return true;
+}

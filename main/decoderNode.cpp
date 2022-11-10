@@ -8,113 +8,83 @@ bool DecoderNode::createDecoder(CodecType type)
     switch (type) {
     case kCodecMp3:
         ESP_LOGI(mTag, "Creating MP3 decoder");
-        mDecoder = new DecoderMp3();
+        mDecoder = new DecoderMp3(*mPrev);
         return true;
     case kCodecAac:
         ESP_LOGI(mTag, "Creating AAC decoder");
-        mDecoder = new DecoderAac();
+//        mDecoder = new DecoderAac();
         return true;
     case kCodecFlac:
         ESP_LOGI(mTag, "Creating FLAC decoder");
-        mDecoder = new DecoderFlac();
+//        mDecoder = new DecoderFlac();
+        return true;
+    case kCodecOggFlac:
+        ESP_LOGI(mTag, "Creating Ogg/FLAC decoder");
+//      mDecoder = new DecoderFlac(true);
+        return true;
+    case kCodecOggVorbis:
+        ESP_LOGI(mTag, "Creating Ogg/Vorbis decoder");
+//      mDecoder = new DecoderVorbis();
         return true;
     default:
-        ESP_LOGW(mTag, "No decoder for codec type %s", StreamFormat::codecTypeToStr(type));
         return false;
     }
 }
 
-bool DecoderNode::changeDecoder(CodecType type)
+AudioNode::StreamError DecoderNode::detectCodecCreateDecoder(CodecType type)
 {
-    if (mDecoder) {
-        delete mDecoder;
-        mDecoder = nullptr;
+    return kErrNoCodec;
+    /*
+    if (createDecoder(type)) {
+        return kNoError;
     }
-    return createDecoder(type);
+    int16_t detected;
+    if (type == kCodecOggTransport) {
+        detected = OggCodecDetector::detect(*mPrev);
+    }
+    else {
+        return kErrNoCodec;
+    }
+    if (detected < 0) {
+        ESP_LOGW(mTag, "Error %d detecting %s-encapsulated codec", detected, StreamFormat::codecTypeToStr(type));
+        return (StreamError)detected;
+    }
+    return createDecoder((CodecType)detected) ? kNoError : kErrNoCodec;
+    */
 }
 
-AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp, int timeout)
+AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
 {
-    if (timeout < 0) {
-        timeout = 0x7fffffff;
-    }
     for (;;) {
-        if (timeout < 0) {
-            return kTimeout;
-        }
         // get only stream format, no data, but wait for data to be available (so we know the stream format)
-        DataPullReq idp(0);
-        ElapsedTimer tim;
-        auto err = mPrev->pullData(idp, timeout);
-        if (err) {
-            if (err == kStreamFlush && mDecoder) {
-                ESP_LOGW(mTag, "kStreamFlush returned by upstream node, resetting decoder");
-                mDecoder->reset();
-            }
-            return err;
-        }
-        timeout -= tim.msElapsed();
-        if (timeout <= 0) {
-            return kTimeout;
-        }
         if (!mDecoder) {
-            createDecoder(idp.fmt.codec); // clears any remaining data from input buffer
-            if (!mDecoder) {
-                plNotifyError(kErrNoCodec);
-                return kErrNoCodec;
+            DataPullReq idp(0);
+            auto err = mPrev->pullData(idp);
+            if (err && err != kStreamChanged) {
+                return err;
             }
-            mFormatChangeCtr = idp.fmt.ctr;
-            continue;
-        }
-        // handle format/stream change
-        bool ctrChanged = idp.fmt.ctr != mFormatChangeCtr;
-        bool codecChanged = idp.fmt.codec != mDecoder->type();
-        if (ctrChanged || codecChanged) {
-            auto ret = mDecoder->decode(nullptr, 0);
-            if (ret <= 0) {
-                mFormatChangeCtr = idp.fmt.ctr;
-                if (codecChanged) {
-                    ESP_LOGW(mTag, "Stream encoding changed");
-                    changeDecoder(idp.fmt.codec);
-                } else {
-                    ESP_LOGW(mTag, "Stream changed, but codec not - resetting codec");
-                    mDecoder->reset();
-                }
-                continue;
-            } else {
-                odp.buf = mDecoder->outputBuf();
-                odp.size = ret;
-                odp.fmt = mDecoder->outputFmt();
-                return kNoError;
-            }
-        }
-        // do actual stream read and decode
-        int bytesNeeded = mDecoder->inputBytesNeeded();
-        int ret;
-        if (bytesNeeded > 0) {
-            tim.reset();
-            idp.reset(bytesNeeded);
-            auto err = mPrev->pullData(idp, timeout);
+            err = detectCodecCreateDecoder(idp.fmt.codec());
             if (err) {
                 return err;
             }
-            timeout -= tim.msElapsed();
-            myassert(idp.fmt.codec == mDecoder->type());
-            ret = mDecoder->decode(idp.buf, idp.size);
-            mPrev->confirmRead(idp.size);
-        } else {
-            ret = mDecoder->decode(nullptr, 0);
+            myassert(mDecoder);
         }
-        if (ret == kNeedMoreData) {
-            ESP_LOGD(mTag, "Need more data, repeating");
-            continue;
-        } else if (ret < 0) {
-            return (StreamError)ret;
+        auto err = mDecoder->pullData(odp);
+        if (!err) {
+            return kNoError;
         }
-        myassert(ret > 0);
-        odp.buf = mDecoder->outputBuf();
-        odp.size = ret;
-        odp.fmt = mDecoder->outputFmt();
-        return kNoError;
+        else if (err == kStreamChanged) {
+            if (odp.fmt.codec() == mDecoder->outputFormat.codec()) {
+                mDecoder->reset();
+                return kStreamChanged;
+            } else {
+                delete mDecoder;
+                mDecoder = nullptr;
+                return kStreamChanged;
+            }
+        }
+        else {
+            return err;
+        }
     }
 }

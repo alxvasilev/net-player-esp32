@@ -22,7 +22,7 @@ protected:
 public:
     EqualizerNode(IAudioPipeline& parent, const float* gains=nullptr);
     virtual Type type() const { return kTypeEqualizer; }
-    virtual StreamError pullData(DataPullReq &dpr, int timeout) override;
+    virtual StreamError pullData(DataPullReq &dpr) override;
     virtual void confirmRead(int size) override { mPrev->confirmRead(size); }
     void setBandGain(uint8_t band, float dbGain);
     void setAllGains(const float* gains);

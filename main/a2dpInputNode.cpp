@@ -70,13 +70,13 @@ void A2dpInputNode::eventCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *
                     samplerate = 16000;
                 }
                 ESP_LOGI(TAG, "Bluetooth configured, sample rate=%d", samplerate);
-                if (samplerate == gSelf->mFormat.samplerate) {
+                if (samplerate == gSelf->mFormat.sampleRate()) {
                     return;
                 }
                 // TODO: Flush ringbuffer
-                gSelf->mFormat.setChannels(2);
-                gSelf->mFormat.setBits(16);
-                gSelf->mFormat.samplerate = samplerate;
+                gSelf->mFormat.setNumChannels(2);
+                gSelf->mFormat.setBitsPerSample(16);
+                gSelf->mFormat.setSampleRate(samplerate);
             }
             break;
         }
@@ -123,9 +123,9 @@ void A2dpInputNode::doStop()
 A2dpInputNode::~A2dpInputNode()
 {
 }
-AudioNode::StreamError A2dpInputNode::pullData(DataPullReq& dpr, int timeout)
+AudioNode::StreamError A2dpInputNode::pullData(DataPullReq& dpr)
 {
-    auto ret = mRingBuf.contigRead(dpr.buf, dpr.size, timeout);
+    auto ret = mRingBuf.contigRead(dpr.buf, dpr.size, -1);
     if (ret > 0) {
         dpr.size = ret;
         dpr.fmt = mFormat;

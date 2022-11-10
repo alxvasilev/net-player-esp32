@@ -181,10 +181,12 @@ const char* StreamFormat::codecTypeToStr(CodecType type)
     switch (type) {
         case kCodecMp3: return "mp3";
         case kCodecAac: return "aac";
-        case kCodecOgg: return "ogg";
+        case kCodecOggTransport: return "ogg";
         case kCodecM4a: return "m4a";
         case kCodecFlac: return "flac";
         case kCodecOpus: return "opus";
+        case kCodecOggFlac: return "ogg/flac";
+        case kCodecOggVorbis: return "ogg/vobris";
         case kCodecUnknown: return "none";
         default: return "(unknown)";
     }

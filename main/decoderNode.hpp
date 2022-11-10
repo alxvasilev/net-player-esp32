@@ -5,37 +5,33 @@
 class Decoder
 {
 protected:
-    StreamFormat mOutputFormat;
+    AudioNode& mSrcNode;
 public:
+    StreamFormat outputFormat;
+    Decoder(AudioNode& src, CodecType codec): mSrcNode(src), outputFormat(codec) {}
     virtual ~Decoder() {}
     virtual CodecType type() const = 0;
-    /** returns an approximate amount of data that should be provided until the next
-     * decode has enough data to complete. May be negative in case the data in the buffer
-     * is more than enough
-     */
-    virtual int inputBytesNeeded() = 0;
-    /** Decodes the provided data in buf, and sets the value of `size` to the number
-     * of consumed bytes. Outputs pcm data to the internal PCM buffer, returning
-     * the number of bytes written to the PCM buffer in case a frame was decoded, or
-     * a negative DecodeResult error code
-     */
-    virtual int decode(const char* buf, int size) = 0;
-    virtual char* outputBuf() = 0;
+    virtual AudioNode::StreamError pullData(AudioNode::DataPullReq& output) = 0;
     virtual void reset() = 0;
-    StreamFormat outputFmt() const { return mOutputFormat; }
 };
-
+/*
+class CodecDetector
+{
+public:
+    // @returns if >= 0, it's a CodecType, if < 0, it's a StreamError
+    static int16_t detectCodec(AudioNode& src, int timeout);
+};
+*/
 class DecoderNode: public AudioNode
 {
 protected:
     Decoder* mDecoder = nullptr;
-    bool mFormatChangeCtr;
+    AudioNode::StreamError detectCodecCreateDecoder(CodecType type);
     bool createDecoder(CodecType type);
-    bool changeDecoder(CodecType type);
 public:
     DecoderNode(IAudioPipeline& parent): AudioNode(parent, "decoder"){}
     virtual Type type() const { return kTypeDecoder; }
-    virtual StreamError pullData(DataPullReq& dpr, int timeout);
+    virtual StreamError pullData(DataPullReq& dpr);
     virtual void confirmRead(int size) {}
     virtual ~DecoderNode() {}
     friend class Decoder;

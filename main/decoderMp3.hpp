@@ -14,22 +14,19 @@ protected:
     struct mad_stream mMadStream;
     struct mad_frame mMadFrame;
     struct mad_synth mMadSynth;
-    char mInputBuf[kInputBufSize];
-    int mInputLen = 0;
-    char mOutputBuf[kOutputBufSize];
+    unsigned char* mInputBuf;
+    unsigned char* mOutputBuf;
     bool initStreamFormat(mad_header& header);
     int output(const mad_pcm& pcm);
     void initMadState();
     void freeMadState();
     void logEncodingInfo();
+    void reset();
 public:
     virtual CodecType type() const { return kCodecMp3; }
-    DecoderMp3();
-    ~DecoderMp3();
-    virtual int inputBytesNeeded();
-    virtual int decode(const char* buf, int size);
-    virtual char* outputBuf() { return mOutputBuf; }
-    virtual void reset();
+    DecoderMp3(AudioNode& src);
+    virtual ~DecoderMp3();
+    virtual AudioNode::StreamError pullData(AudioNode::DataPullReq& dpr);
 };
 
 #endif

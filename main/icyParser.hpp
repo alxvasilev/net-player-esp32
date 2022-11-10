@@ -27,11 +27,12 @@ protected:
     int32_t mIcyInterval = 0;
     int16_t mIcyRemaining = 0;
     DynBuffer mIcyMetaBuf;
+    void parseIcyData(); // we extract only StreamTitle
 public:
     IcyParser(Mutex& infoMutex): IcyInfo(infoMutex) {}
     int32_t icyInterval() const { return mIcyInterval; }
+    int32_t bytesSinceLastMeta() const { return mIcyCtr; }
     void reset();
     bool parseHeader(const char* key, const char* value);
     bool processRecvData(char* buf, int& rlen);
-    void parseIcyData(); // we extract only StreamTitle
 };

@@ -26,8 +26,8 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt)
 {
     ESP_LOGI(mTag, "Equalizer reinit");
     mFormat = fmt;
-    mChanCount = fmt.channels();
-    mSampleRate = fmt.samplerate;
+    mChanCount = fmt.numChannels();
+    mSampleRate = fmt.sampleRate();
     if (mEqualizer) {
         esp_equalizer_uninit(mEqualizer);
     }
@@ -72,16 +72,16 @@ float EqualizerNode::bandGain(uint8_t band)
     MutexLocker locker(mMutex);
     return mGains[band];
 }
-AudioNode::StreamError EqualizerNode::pullData(DataPullReq &dpr, int timeout)
+AudioNode::StreamError EqualizerNode::pullData(DataPullReq &dpr)
 {
     MutexLocker locker(mMutex);
-    auto ret = mPrev->pullData(dpr, timeout);
+    auto ret = mPrev->pullData(dpr);
     if (ret < 0) {
         return ret;
     }
     if (dpr.fmt != mFormat) {
-        if (dpr.fmt.bits() != 16) {
-            ESP_LOGE(mTag, "Only 16 bits per sample supported, but stream is %d-bit", dpr.fmt.bits());
+        if (dpr.fmt.bitsPerSample() != 16) {
+            ESP_LOGE(mTag, "Only 16 bits per sample supported, but stream is %d-bit", dpr.fmt.bitsPerSample());
             return kErrStreamFmt;
         }
         equalizerReinit(dpr.fmt);

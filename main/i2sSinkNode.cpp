@@ -32,27 +32,16 @@ void I2sOutputNode::nodeThreadFunc()
             return;
         }
         myassert(mState == kStateRunning);
-        bool lastWasUnderrun = false;
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
             DataPullReq dpr(kDataPullSize); // read all available data
-            auto err = mPrev->pullData(dpr, kPipelineReadTimeout);
-            if (err == kTimeout || err == kStreamFlush) {
-                if (!lastWasUnderrun) {
-                    lastWasUnderrun = true;
-                    ESP_LOGW(mTag, "Buffer underrun (%dms timeout), code %d", kPipelineReadTimeout, err);
+            auto err = mPrev->pullData(dpr);
+            if (err) {
+                if (err == kStreamChanged && (dpr.fmt != mFormat)) {
+                    setFormat(dpr.fmt);
                 }
-                //i2s_zero_dma_buffer(mPort);
                 continue;
-            } else if (err) {
-                i2s_zero_dma_buffer(mPort);
-                setState(kStatePaused);
-                break;
             }
-            lastWasUnderrun = false;
-            if (dpr.fmt != mFormat) {
-                setFormat(dpr.fmt);
-            }
-
+            myassert(dpr.size);
             if (mUseVolumeInterface) {
                 processVolumeAndLevel(dpr);
             }
@@ -90,19 +79,19 @@ void I2sOutputNode::dmaFillWithSilence()
 
 bool I2sOutputNode::setFormat(StreamFormat fmt)
 {
-    auto bits = fmt.bits();
-    if (bits != 16) {
-        ESP_LOGE(mTag, "Only 16bit sample width is supported, but %d provided", bits);
+    auto bps = fmt.bitsPerSample();
+    if (bps != 16) {
+        ESP_LOGE(mTag, "Only 16bit sample width is supported, but %d provided", bps);
         return false;
     }
-    auto samplerate = fmt.samplerate;
-    ESP_LOGW(mTag, "Setting output mode to %d-bit %s, %d Hz", bits,
-        (fmt.channels() == 2) ? "stereo" : "mono", samplerate);
+    auto samplerate = fmt.sampleRate();
+    ESP_LOGW(mTag, "Setting output mode to %d-bit %s, %d Hz", bps,
+        fmt.isStereo() ? "stereo" : "mono", samplerate);
     auto err = i2s_set_clk(mPort, samplerate,
-        (i2s_bits_per_sample_t)fmt.bits(), (i2s_channel_t)fmt.channels());
+        (i2s_bits_per_sample_t)bps, (i2s_channel_t)fmt.numChannels());
     if (err == ESP_FAIL) {
         ESP_LOGE(mTag, "i2s_set_clk failed: rate: %d, bits: %d, ch: %d. Error: %s",
-            samplerate, bits, fmt.channels(), esp_err_to_name(err));
+            samplerate, bps, fmt.numChannels(), esp_err_to_name(err));
         return false;
     }
     mFormat = fmt;
