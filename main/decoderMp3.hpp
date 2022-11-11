@@ -16,6 +16,7 @@ protected:
     struct mad_synth mMadSynth;
     unsigned char* mInputBuf;
     unsigned char* mOutputBuf;
+    int mInputLen = 0;
     bool initStreamFormat(mad_header& header);
     int output(const mad_pcm& pcm);
     void initMadState();

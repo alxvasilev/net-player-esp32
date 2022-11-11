@@ -50,6 +50,9 @@ void DecoderFlac::errorCb(const FLAC__StreamDecoder *decoder, FLAC__StreamDecode
 {
     ESP_LOGE(TAG, "FLAC decoder notified about error: %d", status);
 }
+void DecoderFlac::metadataCb(const FLAC__StreamDecoder *decoder, const FLAC__StreamMetadata *metadata, void *client_data)
+{
+}
 
 AudioNode::StreamError DecoderFlac::pullData(AudioNode::DataPullReq& output)
 {

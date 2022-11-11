@@ -61,8 +61,7 @@ CodecType HttpNode::codecFromContentType(const char* content_type)
 
 bool HttpNode::isPlaylist()
 {
-    auto codec = mStreamFormat.codec();
-    if (codec == kPlaylistM3u8 || codec == kPlaylistPls) {
+    if (mInCodec == kPlaylistM3u8 || mInCodec == kPlaylistPls) {
         return true;
     }
     char *dot = strrchr(mUrl, '.');
@@ -94,7 +93,7 @@ bool HttpNode::createClient()
     cfg.url = mUrl;
     cfg.event_handler = httpHeaderHandler;
     cfg.user_data = this;
-    cfg.timeout_ms = kPollTimeoutMs;
+    cfg.timeout_ms = kHttpRecvTimeoutMs;
     cfg.buffer_size = kHttpClientBufSize;
     cfg.method = HTTP_METHOD_GET;
 
@@ -106,9 +105,6 @@ bool HttpNode::createClient()
     };
     esp_http_client_set_header(mClient, "User-Agent", "curl/7.65.3");
     esp_http_client_set_header(mClient, "Icy-MetaData", "1");
-    if (mIoTimeoutMs >= 0) {
-        esp_http_client_set_timeout_ms(mClient, mIoTimeoutMs);
-    }
     return true;
 }
 
@@ -122,9 +118,9 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
     auto self = static_cast<HttpNode*>(evt->user_data);
     auto key = evt->header_key;
     if (strcasecmp(key, "Content-Type") == 0) {
-        self->mStreamFormat.setCodec(self->codecFromContentType(evt->header_value));
+        self->mInCodec = self->codecFromContentType(evt->header_value);
         ESP_LOGI(TAG, "Parsed content-type '%s' as %s", evt->header_value,
-            self->mStreamFormat.codecTypeStr());
+            StreamFormat::codecTypeToStr(self->mInCodec));
     } else {
         self->mIcyParser.parseHeader(key, evt->header_value);
     }
@@ -219,7 +215,7 @@ bool HttpNode::connect(bool isReconnect)
         }
         plSendEvent(kEventConnected, isReconnect);
         if (!isReconnect) {
-            postStreamEvent_Lock(mStreamStartPos, kStreamChanged, mStreamFormat);
+            postStreamEvent_Lock(mStreamStartPos, kStreamChanged, mInCodec);
         }
         return true;
     }
@@ -291,8 +287,8 @@ bool HttpNode::recv()
 {
     for (int retries = 0; retries < 26; retries++) { // retry net errors
         char* buf;
-        auto bufSize = mRingBuf.getWriteBuf(buf, kReadSize, mIoTimeoutMs);
-        if (bufSize <= 0) { // stop flag was set
+        auto bufSize = mRingBuf.getWriteBuf(buf, kReadSize, -1);
+        if (bufSize < 0) { // stop flag was set
             return false;
         }
         if (bufSize > kReadSize) { // ringbuf will return max possible value, which may be more than the requested
@@ -302,7 +298,7 @@ bool HttpNode::recv()
         if (rlen <= 0) {
             mRingBuf.abortWrite();
             if (errno == ETIMEDOUT) {
-                continue;
+                return false;
             }
             ESP_LOGW(TAG, "Error receiving http stream, errno: %d, contentLen: %d, recv len = %d",
                 errno, mContentLen, rlen);
@@ -331,7 +327,7 @@ bool HttpNode::recv()
                 );
 
                 if (mRecorder && !isFirst) { // start recording only on second icy track event - first track may be incomplete
-                    bool ok = mRecorder->onNewTrack(mIcyParser.trackName(), mStreamFormat);
+                    bool ok = mRecorder->onNewTrack(mIcyParser.trackName(), mInCodec);
                     plSendEvent(kEventRecording, ok);
                 }
             }
@@ -404,7 +400,6 @@ bool HttpNode::dispatchCommand(Command &cmd)
         cmd.arg = nullptr;
         mRingBuf.clear();
 
-        mFlushRequested = true; // request flush along the pipeline
         setWaitingPrefill(true);
         setState(kStateRunning);
         break;
@@ -458,30 +453,14 @@ HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize, size_t prefillAmount)
 
 AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
 {
-    if (mFlushRequested) {
-        mFlushRequested = false;
-        return kStreamFlush;
-    }
     while (mWaitingPrefill) {
+        ESP_LOGI(TAG, "Waiting ringbuf prefill...");
         if (!waitPrefillChange()) {
             return kStreamStopped;
         }
     }
-    if (!dp.size) { // caller only wants to get the stream format
-        // no need for locking, mStreamFormat is updated by pull thread
-        if (mStreamFormat) {
-            dp.fmt = mStreamFormat;
-            return kNoError;
-        }
-        // we have no data and no codec info, wait for data to start arriving. This will ensure
-        // that a stream change event will also be posted
-        auto ret = mRingBuf.waitForData(-1);
-        if (ret < 0) {
-            return kStreamStopped;
-        }
-        myassert(ret);
-    }
     {
+        // First, process stream events that are due
         LOCK();
         while (!mStreamEventQueue.empty()) {
             auto& event = *mStreamEventQueue.front();
@@ -490,30 +469,34 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
             if (eventPos <= readPos) {
                 decltype(mStreamEventQueue)::Popper popper(mStreamEventQueue);
                 if (event.type == kStreamChanged) {
-                    dp.fmt = this->mStreamFormat = event.streamFmt;
+                    this->mOutCodec = event.codec;
+                    dp.fmt.setCodec(event.codec);
+                    dp.size = 0;
                     return kStreamChanged;
                 } else if (event.type == kTitleChanged) {
                     ESP_LOGI(TAG, "Sending title event '%s'", (const char*)event.data);
                     plSendEvent(kEventTrackInfo, (uintptr_t)event.data);
                     continue;
                 }
-            } else if (eventPos < readPos + dp.size) {
-                // If we were called with zero size for a format probe,
-                // a stream change event must have been dequeued already
+            } else if (eventPos < readPos + dp.size) { // there is an event within the read window
+                // If we were called with zero size for a format probe, the previous 'if' will handle it
                 myassert(dp.size > 0);
                 dp.size = eventPos - readPos;
                 break;
             }
         }
     }
-    // If we were called with zero size for a format probe,
-    // a stream change event must have been dequeued already
-    myassert(dp.size > 0);
+    if (dp.size == 0) { // there was no due stream change event, and this is a codec probe
+        assert(mOutCodec); // waiting for prefill guarantees we already have a stream
+        dp.fmt.setCodec(mOutCodec);
+        return kNoError;
+    }
     auto ret = mRingBuf.contigRead(dp.buf, dp.size, -1);
     if (ret < 0) {
+        dp.size = 0;
         return kStreamStopped;
     }
-    myassert(ret > 0);
+    myassert(ret > 0); // no timeout
     dp.size = ret;
     return kNoError;
 }

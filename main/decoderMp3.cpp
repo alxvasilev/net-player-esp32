@@ -34,6 +34,7 @@ void DecoderMp3::freeMadState()
 
 void DecoderMp3::reset()
 {
+    mad_stream_init(&mMadStream);
     freeMadState();
     initMadState();
     outputFormat.clear();
@@ -41,35 +42,43 @@ void DecoderMp3::reset()
 
 AudioNode::StreamError DecoderMp3::pullData(AudioNode::DataPullReq &odpr)
 {
-    int dataLen = 0;
+    bool needMoreData = !mMadStream.buffer;
     for (;;) {
-        AudioNode::DataPullReq idpr(kInputBufSize - dataLen);
-        auto err = mSrcNode.pullData(idpr);
-        if (err) {
-            return err;
-        }
-        myassert(idpr.size);
-        myassert(idpr.size + dataLen <= kInputBufSize);
-        memcpy(mInputBuf + dataLen, idpr.buf, idpr.size);
-        dataLen += idpr.size;
-        mad_stream_buffer(&mMadStream, mInputBuf, dataLen);
-        if (mad_frame_decode(&mMadFrame, &mMadStream)) { // returns 0 on success, -1 on error
+        if (needMoreData) {
+            needMoreData = false;
+            auto currLen = mMadStream.bufend - mMadStream.next_frame;
+            if (currLen > 0) {
+                memmove(mInputBuf, mMadStream.next_frame, currLen);
+            }
+            auto reqSize = kInputBufSize - currLen;
+            if (reqSize <= 0) {
+                ESP_LOGE(TAG, "Input buffer full, but can't decode frame");
+                return AudioNode::kErrDecode;
+            }
+            AudioNode::DataPullReq idpr(reqSize);
+            auto event = mSrcNode.pullData(idpr);
+            if (event) {
+                return event;
+            }
+            myassert(idpr.size && idpr.size <= reqSize);
             mSrcNode.confirmRead(idpr.size);
+            memcpy(mInputBuf + currLen, idpr.buf, idpr.size);
+            mad_stream_buffer(&mMadStream, mInputBuf, currLen + idpr.size);
+        }
+        auto ret = mad_frame_decode(&mMadFrame, &mMadStream);
+        if (ret) { // returns 0 on success, -1 on error
             if (mMadStream.error == MAD_ERROR_BUFLEN) {
-                ESP_LOGI(TAG, "mad_frame_decode: MAD_ERROR_BUFLEN");
+             // ESP_LOGI(TAG, "mad_frame_decode: MAD_ERROR_BUFLEN");
+                needMoreData = true;
                 continue;
             } else if (MAD_RECOVERABLE(mMadStream.error)) {
-                ESP_LOGI(TAG, "mad_frame_decode: recoverable '%s'", mad_stream_errorstr(&mMadStream));
-                dataLen = 0;
+                ESP_LOGW(TAG, "mad_frame_decode: recoverable '%s'", mad_stream_errorstr(&mMadStream));
                 continue;
             } else { // unrecoverable error
-                ESP_LOGI(TAG, "mad_frame_decode: Unrecoverable '%s'", mad_stream_errorstr(&mMadStream));
+                ESP_LOGW(TAG, "mad_frame_decode: Unrecoverable '%s'", mad_stream_errorstr(&mMadStream));
                 return AudioNode::kErrDecode;
             }
         } else {
-            int consumed = idpr.size - (mMadStream.bufend - mMadStream.next_frame);
-            assert(consumed >= 0);
-            mSrcNode.confirmRead(consumed);
             ESP_LOGD(TAG, "Successfully decoded frame of size %d\n", mMadStream.next_frame - mMadStream.buffer);
             mad_synth_frame(&mMadSynth, &mMadFrame);
             auto slen = output(mMadSynth.pcm);

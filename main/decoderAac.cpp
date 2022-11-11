@@ -59,7 +59,7 @@ AudioNode::StreamError DecoderAac::pullData(AudioNode::DataPullReq& output)
         inputLen += idpr.size;
 
         unsigned char* inPtr = mInputBuf;
-        int remain = idpr.size;
+        int remain = inputLen;
         auto err = AACDecode(mDecoder, &inPtr, &remain, mOutputBuf);
         if (err == ERR_AAC_INDATA_UNDERFLOW) { // need more data
          // ESP_LOGI(TAG, "decoder underflow");

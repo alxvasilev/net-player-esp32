@@ -76,7 +76,7 @@ AudioNode::StreamError EqualizerNode::pullData(DataPullReq &dpr)
 {
     MutexLocker locker(mMutex);
     auto ret = mPrev->pullData(dpr);
-    if (ret < 0) {
+    if (ret) {
         return ret;
     }
     if (dpr.fmt != mFormat) {

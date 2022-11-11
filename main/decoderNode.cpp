@@ -12,11 +12,11 @@ bool DecoderNode::createDecoder(CodecType type)
         return true;
     case kCodecAac:
         ESP_LOGI(mTag, "Creating AAC decoder");
-//        mDecoder = new DecoderAac();
+        mDecoder = new DecoderAac(*mPrev);
         return true;
     case kCodecFlac:
         ESP_LOGI(mTag, "Creating FLAC decoder");
-//        mDecoder = new DecoderFlac();
+        mDecoder = new DecoderFlac(*mPrev);
         return true;
     case kCodecOggFlac:
         ESP_LOGI(mTag, "Creating Ogg/FLAC decoder");
@@ -33,11 +33,11 @@ bool DecoderNode::createDecoder(CodecType type)
 
 AudioNode::StreamError DecoderNode::detectCodecCreateDecoder(CodecType type)
 {
-    return kErrNoCodec;
-    /*
     if (createDecoder(type)) {
         return kNoError;
     }
+    return kErrNoCodec;
+    /*
     int16_t detected;
     if (type == kCodecOggTransport) {
         detected = OggCodecDetector::detect(*mPrev);
@@ -58,8 +58,11 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
     for (;;) {
         // get only stream format, no data, but wait for data to be available (so we know the stream format)
         if (!mDecoder) {
+            printf("No decoder, creating one\n");
             DataPullReq idp(0);
             auto err = mPrev->pullData(idp);
+            printf("Format get returned %d\n", err);
+
             if (err && err != kStreamChanged) {
                 return err;
             }

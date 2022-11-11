@@ -120,7 +120,6 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
             ESP_LOGI(TAG, "Allocating %d bytes internal RAM for http buffer", kHttpBufSizeSpiRam);
             http = new HttpNode(*this, kHttpBufSizeInternal, kHttpBufSizeInternal * 3 / 4);
         }
-        http->setIoTimeout(1000);
         mStreamIn.reset(http);
 
         mDecoder.reset(new DecoderNode(*this));

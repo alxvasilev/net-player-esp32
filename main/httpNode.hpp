@@ -25,7 +25,7 @@
 class HttpNode: public AudioNodeWithTask
 {
 protected:
-    enum { kPollTimeoutMs = 1000, kHttpClientBufSize = 512, kReadSize = 1024, kStackSize = 3600 };
+    enum { kHttpRecvTimeoutMs = 2000, kHttpClientBufSize = 512, kReadSize = 1024, kStackSize = 3600 };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1, kCommandNotifyFlushed };
     // Read mode dictates how the pullData() caller behaves. Since it may
     // need to wait for the read mode to change to a specific value, the enum values
@@ -34,12 +34,12 @@ protected:
     struct QueuedStreamEvent {
         uint32_t streamPos;
         union {
+            CodecType codec;
             void* data;
-            StreamFormat streamFmt;
         };
         StreamError type;
-        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, StreamFormat fmt):
-            streamPos(aStreamPos), streamFmt(fmt), type(aType) {}
+        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, CodecType aCodec):
+            streamPos(aStreamPos), codec(aCodec), type(aType) {}
         QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, void* aData):
             streamPos(aStreamPos), data(aData), type(aType) {}
         ~QueuedStreamEvent() {
@@ -50,8 +50,9 @@ protected:
     };
     char* mUrl = nullptr;
     char* mRecordingStationName = nullptr;
-    StreamFormat mStreamFormat;
     esp_http_client_handle_t mClient = nullptr;
+    CodecType mInCodec = kCodecUnknown;
+    CodecType mOutCodec = kCodecUnknown;
     bool mAutoNextTrack = true; /* connect next track without open/close */
     Playlist mPlaylist; /* media playlist */
     RingBuf mRingBuf;
@@ -59,12 +60,10 @@ protected:
     int64_t mRxByteCtr = 0;
     int64_t mStreamStartPos = 0;
     volatile bool mWaitingPrefill = true;
-    volatile bool mFlushRequested = false;
     int mPrefillAmount;
     int mContentLen;
     IcyParser mIcyParser;
     std::unique_ptr<TrackRecorder> mRecorder;
-    int mIoTimeoutMs = -1;
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     static CodecType codecFromContentType(const char* content_type);
     bool isPlaylist();
@@ -108,7 +107,6 @@ public:
     virtual StreamError pullData(DataPullReq &dp);
     virtual void confirmRead(int size);
     virtual void pause(bool wait);
-    void setIoTimeout(int timeoutMs) { mIoTimeoutMs = timeoutMs; }
     void setUrl(const char* url, const char* recStationName);
     bool isConnected() const;
     const char* trackName() const;
