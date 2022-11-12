@@ -15,7 +15,6 @@ DecoderFlac::DecoderFlac(AudioNode& src): Decoder(src, kCodecFlac)
         ESP_LOGE(TAG, "Out of memory allocating FLAC decoder");
         abort();
     }
-    ESP_LOGI(TAG, "Flac decoder uses approx %zu bytes of RAM", kOutputBufSize); //FIXME
     auto ret = FLAC__stream_decoder_init_stream(mDecoder, readCb, nullptr, nullptr, nullptr, nullptr,
          writeCb, metadataCb, errorCb, this);
     assert(ret == FLAC__STREAM_DECODER_INIT_STATUS_OK);
@@ -38,6 +37,7 @@ FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *dec
     if (!event) {
         *bytes = dpr.size;
         memcpy(buffer, dpr.buf, dpr.size);
+        self.mSrcNode.confirmRead(dpr.size);
         return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
     }
     if (event == AudioNode::kStreamChanged) {
@@ -81,13 +81,12 @@ FLAC__StreamDecoderWriteStatus DecoderFlac::writeCb(const FLAC__StreamDecoder *d
         return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
     }
     auto& fmt = self.outputFormat;
-    if (!fmt) {
+    if (!fmt.sampleRate()) {
         fmt.setNumChannels(nChans);
         auto bps = header.bits_per_sample;
         assert(bps == 16);
         fmt.setBitsPerSample(header.bits_per_sample);
         fmt.setSampleRate(header.sample_rate);
-        fmt.setCodec(kCodecFlac);
     }
     if (nChans == 2) {
         auto ch0 = buffer[0];

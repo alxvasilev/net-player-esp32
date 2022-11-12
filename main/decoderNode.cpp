@@ -5,30 +5,33 @@
 
 bool DecoderNode::createDecoder(CodecType type)
 {
+    auto freeBefore = heapFreeTotal();
     switch (type) {
     case kCodecMp3:
         ESP_LOGI(mTag, "Creating MP3 decoder");
         mDecoder = new DecoderMp3(*mPrev);
-        return true;
+        break;
     case kCodecAac:
         ESP_LOGI(mTag, "Creating AAC decoder");
         mDecoder = new DecoderAac(*mPrev);
-        return true;
+        break;
     case kCodecFlac:
         ESP_LOGI(mTag, "Creating FLAC decoder");
         mDecoder = new DecoderFlac(*mPrev);
-        return true;
+        break;
     case kCodecOggFlac:
         ESP_LOGI(mTag, "Creating Ogg/FLAC decoder");
 //      mDecoder = new DecoderFlac(true);
-        return true;
+        break;
     case kCodecOggVorbis:
         ESP_LOGI(mTag, "Creating Ogg/Vorbis decoder");
 //      mDecoder = new DecoderVorbis();
-        return true;
+        break;
     default:
         return false;
     }
+    ESP_LOGI(mTag, "Decoder uses approx %d bytes of RAM", freeBefore - heapFreeTotal());
+    return true;
 }
 
 AudioNode::StreamError DecoderNode::detectCodecCreateDecoder(CodecType type)
@@ -58,36 +61,55 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
     for (;;) {
         // get only stream format, no data, but wait for data to be available (so we know the stream format)
         if (!mDecoder) {
-            printf("No decoder, creating one\n");
             DataPullReq idp(0);
             auto err = mPrev->pullData(idp);
-            printf("Format get returned %d\n", err);
 
             if (err && err != kStreamChanged) {
                 return err;
             }
-            err = detectCodecCreateDecoder(idp.fmt.codec());
+            err = detectCodecCreateDecoder(idp.codec);
             if (err) {
-                return err;
+                if (err == kStreamChanged) {
+                    myassert(!mDecoder);
+                    continue;
+                } else {
+                    return err;
+                }
             }
             myassert(mDecoder);
         }
+        // Pull requested size is ignored here, codec always returns whole frames.
+        // And in case codec returns an event, having it pre-initialized to zero,
+        // it doesn't need to zero-out the size field
+        odp.size = 0;
         auto err = mDecoder->pullData(odp);
         if (!err) {
             return kNoError;
         }
-        else if (err == kStreamChanged) {
-            if (odp.fmt.codec() == mDecoder->outputFormat.codec()) {
+        myassert(odp.size == 0);
+        if (err == kStreamChanged) {
+            if (odp.codec == mDecoder->codec) {
                 mDecoder->reset();
-                return kStreamChanged;
             } else {
                 delete mDecoder;
                 mDecoder = nullptr;
-                return kStreamChanged;
             }
+            continue;
         }
         else {
             return err;
         }
     }
 }
+int32_t DecoderNode::heapFreeTotal()
+{
+    int32_t result = xPortGetFreeHeapSize();
+    if (AudioNode::haveSpiRam()) {
+        result += heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    }
+    return result;
+}
+
+
+
+

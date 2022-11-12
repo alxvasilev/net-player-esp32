@@ -36,12 +36,13 @@ void I2sOutputNode::nodeThreadFunc()
             DataPullReq dpr(kDataPullSize); // read all available data
             auto err = mPrev->pullData(dpr);
             if (err) {
-                if (err == kStreamChanged && (dpr.fmt != mFormat)) {
-                    setFormat(dpr.fmt);
-                }
                 continue;
             }
             myassert(dpr.size);
+            if (dpr.fmt != mFormat) {
+                ESP_LOGI(mTag, "Changing I2S output format");
+                setFormat(dpr.fmt);
+            }
             if (mUseVolumeInterface) {
                 processVolumeAndLevel(dpr);
             }

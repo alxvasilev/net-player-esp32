@@ -8,9 +8,9 @@ protected:
     AudioNode& mSrcNode;
 public:
     StreamFormat outputFormat;
-    Decoder(AudioNode& src, CodecType codec): mSrcNode(src), outputFormat(codec) {}
+    CodecType codec;
+    Decoder(AudioNode& src, CodecType aCodec): mSrcNode(src), codec(aCodec) {}
     virtual ~Decoder() {}
-    virtual CodecType type() const = 0;
     virtual AudioNode::StreamError pullData(AudioNode::DataPullReq& output) = 0;
     virtual void reset() = 0;
 };
@@ -28,6 +28,7 @@ protected:
     Decoder* mDecoder = nullptr;
     AudioNode::StreamError detectCodecCreateDecoder(CodecType type);
     bool createDecoder(CodecType type);
+    static int32_t heapFreeTotal(); // used to  calculate memory usage for codecs
 public:
     DecoderNode(IAudioPipeline& parent): AudioNode(parent, "decoder"){}
     virtual Type type() const { return kTypeDecoder; }

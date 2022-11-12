@@ -41,7 +41,6 @@ void DecoderAac::reset()
     freeDecoder();
     initDecoder();
     outputFormat.clear();
-    outputFormat.setCodec(kCodecAac);
 }
 
 AudioNode::StreamError DecoderAac::pullData(AudioNode::DataPullReq& output)

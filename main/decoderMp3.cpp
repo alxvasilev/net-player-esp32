@@ -102,9 +102,9 @@ void DecoderMp3::logEncodingInfo()
         case MAD_MODE_STEREO: stmode = "stereo"; break;
         default: stmode = "unknown"; break;
     }
-    ESP_LOGW(TAG, "MPEG1 Layer %d, 16-bit %s, %d Hz, %lu bps",
-        mMadFrame.header.layer, stmode, mMadFrame.header.samplerate,
-        mMadFrame.header.bitrate);
+    ESP_LOGW(TAG, "MPEG1 Layer %d, 16-bit %s, %dkHz, %lukbps",
+        mMadFrame.header.layer, stmode, mMadFrame.header.samplerate / 1000,
+        mMadFrame.header.bitrate / 1000);
 }
 
 static inline uint16_t scale(mad_fixed_t sample) {
@@ -121,8 +121,18 @@ int DecoderMp3::output(const mad_pcm& pcmData)
     }
 
     if (!outputFormat.sampleRate()) { // we haven't yet initialized output format info
-        outputFormat.setSampleRate(pcmData.samplerate);
-        outputFormat.setNumChannels(pcmData.channels);
+        auto sr = pcmData.samplerate;
+        if (sr != 11025 && sr != 22050 && sr != 44100 && sr != 48000) {
+            ESP_LOGE(TAG, "Invalid/unsupported sample rate: %d\n", sr);
+            return AudioNode::kErrDecode;
+        }
+        outputFormat.setSampleRate(sr);
+        auto chans = pcmData.channels;
+        if (chans > 2) {
+            ESP_LOGE(TAG, "Too many channels: %d", chans);
+            return AudioNode::kErrDecode;
+        }
+        outputFormat.setNumChannels(chans);
         outputFormat.setBitsPerSample(16);
         logEncodingInfo();
     }

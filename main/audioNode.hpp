@@ -45,7 +45,6 @@ protected:
             uint32_t mSampleRate: 19;
             uint8_t mBitsPerSample: 2;
             int mReserved: 2;
-            CodecType mCodec: 8;
         };
         uint32_t mCode;
     };
@@ -54,10 +53,6 @@ public:
     static uint8_t encodeBps(uint8_t bits) { return (bits >> 3) - 1; }
     static uint8_t decodeBps(uint8_t bits) { return (bits + 1) << 3; }
     void clear() { mCode = 0; }
-    StreamFormat(CodecType codec, uint32_t sr, uint8_t bits, uint8_t channels): mCode(0)
-    {
-        set(codec, sr, bits, channels);
-    }
     StreamFormat(uint32_t sr, uint8_t bps, uint8_t channels): mCode(0)
     {
         setSampleRate(sr);
@@ -68,26 +63,14 @@ public:
     {
         static_assert(sizeof(StreamFormat) == sizeof(uint32_t), "Size of StreamFormat must be 32bit");
     }
-    StreamFormat(CodecType codec): mCode(0)
-    {
-        setCodec(codec);
-    }
     bool operator==(StreamFormat other) const { return mCode == other.mCode; }
     bool operator!=(StreamFormat other) const { return mCode != other.mCode; }
     uint32_t asCode() const { return mCode; }
-    void set(CodecType codec, uint32_t sr, uint8_t bits, uint8_t channels) {
-        mCodec = codec;
-        setNumChannels(channels);
-        mSampleRate = sr;
-        setBitsPerSample(bits);
-    }
     void set(uint32_t sr, uint8_t bits, uint8_t channels) {
         setNumChannels(channels);
-        mSampleRate = sr;
+        setSampleRate(sr);
         setBitsPerSample(bits);
     }
-    CodecType codec() const { return mCodec; }
-    void setCodec(CodecType codec) { mCodec = codec; }
     uint32_t sampleRate() const { return mSampleRate; }
     void setSampleRate(uint32_t sr) { mSampleRate = sr; }
     uint8_t bitsPerSample() const { return decodeBps(mBitsPerSample); }
@@ -95,9 +78,8 @@ public:
     uint8_t numChannels() const { return mNumChannels + 1; }
     bool isStereo() const { return mNumChannels != 0; }
     void setNumChannels(uint8_t ch) { mNumChannels = ch - 1; }
-    static const char* codecTypeToStr(CodecType type);
-    const char* codecTypeStr() const { return codecTypeToStr(mCodec); }
 };
+const char* codecTypeToStr(CodecType type);
 
 class AudioNode;
 
@@ -182,14 +164,19 @@ public:
     };
     struct DataPullReq
     {
-        char* buf;
+        char* buf = nullptr;
         int size;
-        StreamFormat fmt;
-        DataPullReq(size_t aSize) { reset(aSize); }
+        union {
+            StreamFormat fmt;
+            CodecType codec;
+        };
+        DataPullReq(size_t aSize): size(aSize) {}
         void reset(size_t aSize)
         {
             size = aSize;
             buf = nullptr;
+            fmt.clear();
+            myassert(codec == kCodecUnknown);
         }
     };
 

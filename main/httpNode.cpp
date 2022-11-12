@@ -113,14 +113,13 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
     if (evt->event_id != HTTP_EVENT_ON_HEADER) {
         return ESP_OK;
     }
-    ESP_LOGW(TAG, "hdr: '%s': '%s'", evt->header_key, evt->header_value);
+    ESP_LOGI(TAG, "hdr: '%s': '%s'", evt->header_key, evt->header_value);
 
     auto self = static_cast<HttpNode*>(evt->user_data);
     auto key = evt->header_key;
     if (strcasecmp(key, "Content-Type") == 0) {
         self->mInCodec = self->codecFromContentType(evt->header_value);
-        ESP_LOGI(TAG, "Parsed content-type '%s' as %s", evt->header_value,
-            StreamFormat::codecTypeToStr(self->mInCodec));
+        ESP_LOGI(TAG, "Parsed content-type '%s' as %s", evt->header_value, codecTypeToStr(self->mInCodec));
     } else {
         self->mIcyParser.parseHeader(key, evt->header_value);
     }
@@ -470,7 +469,7 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
                 decltype(mStreamEventQueue)::Popper popper(mStreamEventQueue);
                 if (event.type == kStreamChanged) {
                     this->mOutCodec = event.codec;
-                    dp.fmt.setCodec(event.codec);
+                    dp.codec = event.codec;
                     dp.size = 0;
                     return kStreamChanged;
                 } else if (event.type == kTitleChanged) {
@@ -490,7 +489,7 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
     }
     if (dp.size == 0) { // there was no due stream change event, and this is a codec probe
         assert(mOutCodec); // waiting for prefill guarantees we already have a stream
-        dp.fmt.setCodec(mOutCodec);
+        dp.codec = mOutCodec;
         return kNoError;
     }
     auto ret = mRingBuf.contigRead(dp.buf, dp.size, -1);
