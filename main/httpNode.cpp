@@ -483,6 +483,8 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
                 myassert(dp.size > 0);
                 dp.size = eventPos - readPos;
                 break;
+            } else {
+                break;
             }
         }
     }
