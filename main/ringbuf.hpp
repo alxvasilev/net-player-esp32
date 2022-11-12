@@ -181,7 +181,6 @@ public:
     }
     int dataSize()
     {
-        MutexLocker locker(mMutex);
         return mDataSize;
     }
     int totalEmptySpace()
