@@ -7,7 +7,7 @@
 class DecoderAac: public Decoder
 {
 protected:
-    enum { kInputBufSize = 2048, kOutputBufSize = 2 * 2 *
+    enum { kInputBufSize = 1024, kMinAllowedAacInputSize = 400, kOutputBufSize = 2 * 2 *
 #ifdef HELIX_FEATURE_AUDIO_CODEC_AAC_SBR
            2048
 #else
@@ -16,8 +16,10 @@ protected:
     };
     HAACDecoder mDecoder;
     unsigned char* mInputBuf;
+    unsigned char* mNextFramePtr;
     int16_t* mOutputBuf;
-    int mOutputSize = 0;
+    int mInputLen;
+    int mOutputLen;
     void initDecoder();
     void freeDecoder();
     void getStreamFormat();

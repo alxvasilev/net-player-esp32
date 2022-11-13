@@ -14,13 +14,12 @@ DecoderAac::DecoderAac(AudioNode& src): Decoder(src, kCodecAac)
 }
 void DecoderAac::initDecoder()
 {
-    mOutputSize = 0;
-    auto before = xPortGetFreeHeapSize();
+    mInputLen = mOutputLen = 0;
+    mNextFramePtr = mInputBuf;
     mDecoder = AACInitDecoder();
     if (!mDecoder) {
         ESP_LOGE(TAG, "Out of memory creating AAC decoder.");
     }
-    ESP_LOGW(TAG, "Allocating AAC decoder took approx %d bytes of RAM (without buffers)", before - xPortGetFreeHeapSize());
 }
 void DecoderAac::freeDecoder()
 {
@@ -37,7 +36,6 @@ DecoderAac::~DecoderAac()
 
 void DecoderAac::reset()
 {
-    mOutputSize = 0;
     freeDecoder();
     initDecoder();
     outputFormat.clear();
@@ -45,55 +43,68 @@ void DecoderAac::reset()
 
 AudioNode::StreamError DecoderAac::pullData(AudioNode::DataPullReq& output)
 {
-    int inputLen = 0;
+    bool needMoreData = (mInputLen == 0);
     for(;;) {
-        AudioNode::DataPullReq idpr(kInputBufSize - inputLen);
-        auto event = mSrcNode.pullData(idpr);
-        if (event) {
-            return event;
-        }
-        myassert(idpr.size);
-        myassert(idpr.size + inputLen <= kInputBufSize);
-        memcpy(mInputBuf + inputLen, idpr.buf, idpr.size);
-        inputLen += idpr.size;
-
-        unsigned char* inPtr = mInputBuf;
-        int remain = inputLen;
-        auto err = AACDecode(mDecoder, &inPtr, &remain, mOutputBuf);
-        if (err == ERR_AAC_INDATA_UNDERFLOW) { // need more data
-         // ESP_LOGI(TAG, "decoder underflow");
+        if (needMoreData || mInputLen < kMinAllowedAacInputSize) {
+            needMoreData = false;
+            if (mNextFramePtr != mInputBuf) {
+                memmove(mInputBuf, mNextFramePtr, mInputLen);
+                mNextFramePtr = mInputBuf;
+            }
+            int reqSize = kInputBufSize - mInputLen;
+            if (reqSize <= 0) {
+                ESP_LOGE(TAG, "Can't decode a frame, even though input buffer is full");
+                return AudioNode::kErrDecode;
+            }
+            AudioNode::DataPullReq idpr(reqSize);
+            auto event = mSrcNode.pullData(idpr);
+            if (event) {
+                return event;
+            }
+            // Existing data starts at mInputBuf
+            myassert(idpr.size && idpr.size <= reqSize);
+            memcpy(mInputBuf + mInputLen, idpr.buf, idpr.size);
             mSrcNode.confirmRead(idpr.size);
+            mInputLen += idpr.size;
+        }
+        // printf("AACDecode: inLen=%d, offs=%d\n", mInputLen, mNextFramePtr - mInputBuf);
+        auto err = AACDecode(mDecoder, &mNextFramePtr, &mInputLen, mOutputBuf);
+        if (err == ERR_AAC_INDATA_UNDERFLOW) { // need more data
+            ESP_LOGD(TAG, "Decoder underflow");
+            needMoreData = true;
             continue;
         }
         else if (err == 0) { // decode success
-            int consumed = idpr.size - remain;
-            myassert(consumed >= 0);
-            mSrcNode.confirmRead(consumed);
-            if (!mOutputSize) { // we haven't yet initialized output format info
+            if (!mOutputLen) { // we haven't yet initialized output format info
                 getStreamFormat();
             }
             output.buf = (char*)mOutputBuf;
-            output.size = mOutputSize;
+            output.size = mOutputLen;
             output.fmt = outputFormat;
             return AudioNode::kNoError;
         }
         else { //err < 0 - error, try to re-sync
-            // inPtr and remain are guaranteed to not be updated if AACDecode() failed
-            ESP_LOGI(TAG, "Decode error %d, looking for next sync word", err);
-            auto pos = AACFindSyncWord(mInputBuf + 1, inputLen - 1);
+            // mNextFramePtr and mInputLen are guaranteed to not be updated if AACDecode() failed
+            ESP_LOGW(TAG, "Decode error %d, looking for next sync word", err);
+            auto pos = AACFindSyncWord(mNextFramePtr + 1, mInputLen - 1);
             if (pos >= 0) {
-                mSrcNode.confirmRead(idpr.size);
                 pos += 1; // adjust for +1 start in buffer
                 ESP_LOGI(TAG, "Sync word found at %d, discarding data before it and repeating", pos);
-                inputLen -= pos;
-                memmove(mInputBuf, mInputBuf+pos, inputLen);
+                mNextFramePtr += pos;
+                mInputLen -= pos;
                 continue;
             }
             // can't find frame start, discard everything in buffer and request more data
             ESP_LOGI(TAG, "Can't find sync word, discarding whole buffer and requesting more data");
-            // this can be the first byte of a sync word, preserve it
-            mSrcNode.confirmRead(mInputBuf[inputLen - 1] == 0xff ? idpr.size - 1 : idpr.size);
-            inputLen = 0;
+            mNextFramePtr = mInputBuf;
+            if (*(mNextFramePtr + mInputLen - 1) == 0xff) {
+                // this can be the first byte of a sync word, preserve it
+                *mInputBuf = 0xff;
+                mInputLen = 1;
+            } else {
+                mInputLen = 0;
+            }
+            needMoreData = true;
             continue;
         }
         myassert(false); // shouldn't reach here
@@ -107,7 +118,7 @@ void DecoderAac::getStreamFormat()
     outputFormat.setSampleRate(info.sampRateOut);
     outputFormat.setNumChannels(info.nChans);
     outputFormat.setBitsPerSample(16);
-    mOutputSize = info.outputSamps * sizeof(uint16_t);
+    mOutputLen = info.outputSamps * sizeof(uint16_t);
     ESP_LOGW(TAG, "AAC%s 16-bit %s, %d Hz, %d bps, %d samples/frame",
         info.sampRateOut == info.sampRateCore ? "" : " SBR",
         info.nChans == 2 ? "stereo" : "mono", info.sampRateOut,
