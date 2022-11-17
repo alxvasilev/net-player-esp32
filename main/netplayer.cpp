@@ -31,21 +31,8 @@ static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
 static constexpr gpio_num_t kPinLed = GPIO_NUM_2;
 
 static const char *TAG = "netplay";
-static const char gPlaylist[] =
-"http://streams.greenhost.nl:8080/live\n\
-http://78.129.150.144/stream.mp3?ipport=78.129.150.144_5064\n\
-http://stream01048.westreamradio.com:80/wsm-am-mp3\n\
-https://mediaserv38.live-streams.nl:18030/stream\n\
-http://94.23.252.14:8067/player\n\
-http://italo.italo.nu/live";
 
-
-        // "http://icestreaming.rai.it/12.mp3");
-        // "http://94.23.252.14:8067/player");
-        // "https://dl.espressif.com/dl/audio/ff-16b-2c-44100hz.mp3");
-        // BBC m4a "http://a.files.bbci.co.uk/media/live/manifesto/audio/simulcast/hls/nonuk/sbr_low/llnw/bbc_radio_one.m3u8"
-
-httpd_handle_t gHttpServer = nullptr;
+AudioPlayer::HttpServerInfo gHttpServer;
 std::unique_ptr<AudioPlayer> player;
 std::unique_ptr<WifiBase> wifi;
 TaskList taskList;
@@ -167,7 +154,7 @@ static constexpr ST7735Display::PinCfg lcdPins = {
 extern "C" void app_main(void)
 {
 //  esp_log_level_set("*", ESP_LOG_DEBUG);
-    AudioNode::detectSpiRam();
+    utils::detectSpiRam();
     configGpios();
 
     rollbackCheckUserForced();
@@ -224,9 +211,8 @@ extern "C" void app_main(void)
     sdcard.init(HSPI_HOST, pins, "/sdcard");
 //====
     lcd.puts("Starting Player...\n");
-    player.reset(new AudioPlayer(lcd));
+    player.reset(new AudioPlayer(lcd, gHttpServer));
     MutexLocker locker(player->mutex);
-    player->registerUrlHanlers(gHttpServer);
     otaNotifyCallback = []() {
         MutexLocker locker(player->mutex);
         player->stop();
@@ -269,7 +255,7 @@ static esp_err_t indexUrlHandler(httpd_req_t *req)
     esp_chip_info(&chip_info);
     buf.printf("%zu of %zu\nFree external RAM: ",
         heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_total_size(MALLOC_CAP_INTERNAL));
-    if (AudioNode::haveSpiRam()) {
+    if (utils::haveSpiRam()) {
         buf.printf("%zu of %zu\n",
             heap_caps_get_free_size(MALLOC_CAP_SPIRAM), heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
     } else {
@@ -312,33 +298,33 @@ static const httpd_uri_t indexUrl = {
 
 void stopWebserver() {
     /* Stop the web server */
-    if (!gHttpServer) {
+    if (!gHttpServer.server) {
         return;
     }
     netLogger.unregisterWithHttpServer("/log");
-    httpd_stop(gHttpServer);
-    gHttpServer = nullptr;
+    httpd_stop(gHttpServer.server);
+    gHttpServer.server = nullptr;
 }
 
 void startWebserver(bool isAp)
 {
-    if (gHttpServer) {
+    if (gHttpServer.server) {
         stopWebserver();
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 4096;
-    config.max_uri_handlers = 20;
+    config.max_uri_handlers = 24;
     config.uri_match_fn = httpd_uri_match_wildcard;
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
-    if (httpd_start(&gHttpServer, &config) != ESP_OK) {
+    if (httpd_start(&gHttpServer.server, &config) != ESP_OK) {
         ESP_LOGI(TAG, "Error starting server!");
         return;
     }
     // Set URI handlers
     ESP_LOGI(TAG, "Registering URI handlers");
-    netLogger.registerWithHttpServer(gHttpServer, "/log");
-    httpd_register_uri_handler(gHttpServer, &otaUrlHandler);
-    httpd_register_uri_handler(gHttpServer, &indexUrl);
-    httpFsRegisterHandlers(gHttpServer);
+    netLogger.registerWithHttpServer(gHttpServer.server, "/log");
+    httpd_register_uri_handler(gHttpServer.server, &otaUrlHandler);
+    httpd_register_uri_handler(gHttpServer.server, &indexUrl);
+    httpFsRegisterHandlers(gHttpServer.server);
 }

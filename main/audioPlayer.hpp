@@ -9,6 +9,7 @@
 #include "stationList.hpp"
 #include "recorder.hpp"
 #include "vuDisplay.hpp"
+#include "dlna.hpp"
 
 class DecoderNode;
 class EqualizerNode;
@@ -24,6 +25,11 @@ public:
     static constexpr int kHttpBufSizeInternal = 35 * 1024;
     static constexpr int kHttpBufSizeSpiRam = 350 * 1024;
     static constexpr int kDefTitleScrollFps = 15;
+    struct HttpServerInfo {
+        httpd_handle_t server = nullptr;
+        uint16_t port = 0;
+        bool isSsl = false;
+    };
 protected:
     enum Flags: uint8_t
     { kFlagUseEqualizer = 1, kFlagListenerHooked = 2, kFlagNoWaitPrefill = 4 };
@@ -55,6 +61,8 @@ protected:
     NvsHandle mNvsHandle;
     ST7735Display& mLcd;
     EventGroup mEvents;
+    HttpServerInfo& mHttpServer;
+    std::unique_ptr<DlnaHandler> mDlna;
 // general display stuff
     ST7735Display::Color mFontColor = ST7735Display::rgb(255, 255, 128);
     VuDisplay mVuDisplay;
@@ -80,6 +88,7 @@ protected:
     void initFromNvs();
     float equalizerDoSetBandGain(int band, float dbGain);
     void equalizerSaveGains();
+    void createDlnaHandler();
     void lcdInit();
     void lcdDrawGui();
     void initTimedDrawTask();
@@ -101,14 +110,13 @@ protected:
     static esp_err_t nvsGetParamUrlHandler(httpd_req_t* req);
     static esp_err_t nvsSetParamUrlHandler(httpd_req_t* req);
     static esp_err_t changeInputUrlHandler(httpd_req_t *req);
-    void registerHttpGetHandler(httpd_handle_t server,
-        const char* path, esp_err_t(*handler)(httpd_req_t*));
+    void registerHttpGetHandler(const char* path, esp_err_t(*handler)(httpd_req_t*));
 public:
     Mutex mutex;
     std::unique_ptr<StationList> stationList;
     void setLogLevel(esp_log_level_t level);
-    AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, ST7735Display& lcd, bool useEq=true);
-    AudioPlayer(ST7735Display& lcd);
+    AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, ST7735Display& lcd, HttpServerInfo& httpServer, bool useEq=true);
+    AudioPlayer(ST7735Display& lcd, HttpServerInfo& httpServer);
     ~AudioPlayer();
     AudioNode::Type inputType() const { return mStreamIn->type(); }
     AudioNode::Type outputType() const { return mStreamOut->type(); }
@@ -130,7 +138,7 @@ public:
     bool equalizerSetBand(int band, float dbGain);
     // format is: bandIdx1=gain1;bandIdx2=gain2....
     bool equalizerSetGainsBulk(char* str, size_t len);
-    void registerUrlHanlers(httpd_handle_t server);
+    void registerUrlHanlers();
     // AudioNode::EventHandler interface
     virtual void onNodeEvent(AudioNode& node, uint32_t type, uintptr_t arg, size_t bufSize) override;
     virtual void onNodeError(AudioNode& node, int error) override;

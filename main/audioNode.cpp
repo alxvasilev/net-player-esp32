@@ -19,23 +19,6 @@
 #include "playlist.hpp"
 #include "audioNode.hpp"
 
-bool AudioNode::sHaveSpiRam = false;
-void AudioNode::detectSpiRam()
-{
-    // Detect SPI RAM presence
-    auto buf = heap_caps_malloc(4, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (buf)
-    {
-        free(buf);
-        sHaveSpiRam = true;
-        ESP_LOGI("", "SPI RAM available");
-    }
-    else
-    {
-        ESP_LOGI("", "SPI RAM NOT available");
-    }
-}
-
 void AudioNodeWithState::setState(State newState)
 {
     if (newState == mState) {

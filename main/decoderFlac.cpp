@@ -5,7 +5,7 @@ static const char* TAG = "flac";
 
 DecoderFlac::DecoderFlac(AudioNode& src): Decoder(src, kCodecFlac)
 {
-    mOutputBuf = (int16_t*)AudioNode::mallocTrySpiram(kOutputBufSize);
+    mOutputBuf = (int16_t*)utils::mallocTrySpiram(kOutputBufSize);
     if (!mOutputBuf) {
         ESP_LOGE(TAG, "Out of memory allocating %zu bytes for output buffer", kOutputBufSize);
         abort();

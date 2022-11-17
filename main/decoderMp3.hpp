@@ -7,7 +7,7 @@ class DecoderMp3: public Decoder
 {
 protected:
     enum {
-        kInputBufSize = 3000,
+        kInputBufSize = 2048,
         kSamplesPerFrame = 1152,
         kOutputBufSize = kSamplesPerFrame * 4 // each mp3 packet decodes to 1152 samples, for 16 bit stereo, multiply by 4
     };

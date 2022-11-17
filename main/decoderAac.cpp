@@ -4,7 +4,7 @@ static const char* TAG = "aacdec";
 
 DecoderAac::DecoderAac(AudioNode& src): Decoder(src, kCodecAac)
 {
-    mInputBuf = (unsigned char*)AudioNode::mallocTrySpiram(kInputBufSize + kOutputBufSize);
+    mInputBuf = (unsigned char*)utils::mallocTrySpiram(kInputBufSize + kOutputBufSize);
     if (!mInputBuf) {
         ESP_LOGE(TAG, "Out of memory allocating buffers");
         abort();

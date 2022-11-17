@@ -10,6 +10,7 @@
 #include "a2dpInputNode.hpp"
 #include <stdfonts.hpp>
 #include <string>
+#include <esp_netif.h> // for createDlnaHandler()
 
 extern Font font_CamingoBold43;
 extern Font font_Camingo22;
@@ -51,15 +52,16 @@ void AudioPlayer::createOutputA2dp()
     */
 }
 
-AudioPlayer::AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, ST7735Display& lcd, bool useEq)
-:mFlags(useEq ? kFlagUseEqualizer : (Flags)0),
- mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd), mEvents(kEventTerminating), mVuDisplay(mLcd)
+AudioPlayer::AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, ST7735Display& lcd, HttpServerInfo& httpServer, bool useEq)
+: mFlags(useEq ? kFlagUseEqualizer : (Flags)0), mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd),
+  mEvents(kEventTerminating), mHttpServer(httpServer), mVuDisplay(mLcd)
 {
     init(inType, outType);
 }
 
-AudioPlayer::AudioPlayer(ST7735Display& lcd)
-:mFlags((Flags)0), mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd), mVuDisplay(mLcd)
+AudioPlayer::AudioPlayer(ST7735Display& lcd, HttpServerInfo& httpServer)
+: mFlags((Flags)0), mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd),
+  mHttpServer(httpServer), mVuDisplay(mLcd)
 {
     init(AudioNode::kTypeUnknown, AudioNode::kTypeUnknown);
 }
@@ -76,10 +78,13 @@ void AudioPlayer::init(AudioNode::Type inType, AudioNode::Type outType)
     {
         createPipeline(inType, outType);
     }
+    initTimedDrawTask();
     if (inputType() == AudioNode::kTypeHttpIn) {
         stationList.reset(new StationList(mutex));
+        createDlnaHandler();
+        mDlna->start();
     }
-    initTimedDrawTask();
+    registerUrlHanlers();
 }
 void AudioPlayer::initFromNvs()
 {
@@ -94,7 +99,14 @@ void AudioPlayer::initFromNvs()
         myassert(false);
     }
 }
-
+void AudioPlayer::createDlnaHandler()
+{
+    tcpip_adapter_ip_info_t ipInfo;
+    char url[48];
+    tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ipInfo);
+    snprintf(url, sizeof(url), "http%s://" IPSTR ":%d", mHttpServer.isSsl ? "s":"", IP2STR(&ipInfo.ip), 80);
+    mDlna.reset(new DlnaHandler(mHttpServer.server, url, *this));
+}
 void AudioPlayer::lcdInit()
 {
     mVuDisplay.init(mNvsHandle);
@@ -113,7 +125,7 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
     switch(inType) {
     case AudioNode::kTypeHttpIn: {
         HttpNode* http;
-        if (AudioNode::haveSpiRam()) {
+        if (utils::haveSpiRam()) {
             ESP_LOGI(TAG, "Allocating %d bytes in SPIRAM for http buffer", kHttpBufSizeSpiRam);
             http = new HttpNode(*this, kHttpBufSizeSpiRam, 32768);
         } else {
@@ -604,8 +616,7 @@ esp_err_t AudioPlayer::pauseUrlHandler(httpd_req_t *req)
     return ESP_OK;
 }
 
-void AudioPlayer::registerHttpGetHandler(httpd_handle_t server,
-    const char* path, esp_err_t(*handler)(httpd_req_t*))
+void AudioPlayer::registerHttpGetHandler(const char* path, esp_err_t(*handler)(httpd_req_t*))
 {
     httpd_uri_t desc = {
         .uri       = path,
@@ -613,7 +624,7 @@ void AudioPlayer::registerHttpGetHandler(httpd_handle_t server,
         .handler   = handler,
         .user_ctx  = this
     };
-    httpd_register_uri_handler(server, &desc);
+    httpd_register_uri_handler(mHttpServer.server, &desc);
 }
 
 esp_err_t AudioPlayer::volumeUrlHandler(httpd_req_t *req)
@@ -859,20 +870,20 @@ esp_err_t AudioPlayer::changeInputUrlHandler(httpd_req_t *req)
     return ESP_OK;
 }
 
-void AudioPlayer::registerUrlHanlers(httpd_handle_t server)
+void AudioPlayer::registerUrlHanlers()
 {
-    registerHttpGetHandler(server, "/play", &playUrlHandler);
-    registerHttpGetHandler(server, "/pause", &pauseUrlHandler);
-    registerHttpGetHandler(server, "/vol", &volumeUrlHandler);
-    registerHttpGetHandler(server, "/eqget", &equalizerDumpUrlHandler);
-    registerHttpGetHandler(server, "/eqset", &equalizerSetUrlHandler);
-    registerHttpGetHandler(server, "/status", &getStatusUrlHandler);
-    registerHttpGetHandler(server, "/nvget", &nvsGetParamUrlHandler);
-    registerHttpGetHandler(server, "/nvset", &nvsSetParamUrlHandler);
-    registerHttpGetHandler(server, "/inmode", &changeInputUrlHandler);
-    registerHttpGetHandler(server, "/reset", &resetSubsystemUrlHandler);
+    registerHttpGetHandler("/play", &playUrlHandler);
+    registerHttpGetHandler("/pause", &pauseUrlHandler);
+    registerHttpGetHandler("/vol", &volumeUrlHandler);
+    registerHttpGetHandler("/eqget", &equalizerDumpUrlHandler);
+    registerHttpGetHandler("/eqset", &equalizerSetUrlHandler);
+    registerHttpGetHandler("/status", &getStatusUrlHandler);
+    registerHttpGetHandler("/nvget", &nvsGetParamUrlHandler);
+    registerHttpGetHandler("/nvset", &nvsSetParamUrlHandler);
+    registerHttpGetHandler("/inmode", &changeInputUrlHandler);
+    registerHttpGetHandler("/reset", &resetSubsystemUrlHandler);
     if (stationList) {
-        stationList->registerHttpHandlers(server);
+        stationList->registerHttpHandlers(mHttpServer.server);
     }
 }
 

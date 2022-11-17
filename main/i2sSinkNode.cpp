@@ -115,7 +115,7 @@ I2sOutputNode::I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t*
     cfg.bits_per_sample = (i2s_bits_per_sample_t) 16;
     cfg.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
     cfg.communication_format = I2S_COMM_FORMAT_I2S_MSB;
-    cfg.dma_buf_count = AudioNode::haveSpiRam() ? kDmaBufCntSpiRam : kDmaBufCntInternalRam;
+    cfg.dma_buf_count = utils::haveSpiRam() ? kDmaBufCntSpiRam : kDmaBufCntInternalRam;
     cfg.dma_buf_len = kDmaBufLen;
     cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL3|ESP_INTR_FLAG_IRAM;
     cfg.tx_desc_auto_clear = true;

@@ -131,18 +131,6 @@ protected:
     inline void plNotifyError(int error);
     AudioNode(IAudioPipeline& parent, const char* tag): mPipeline(parent), mTag(tag) {}
 public:
-    static void detectSpiRam();
-    static bool haveSpiRam() { return sHaveSpiRam; }
-    static void* mallocTrySpiram(size_t internalSize, size_t spiramSize)
-    {
-        return sHaveSpiRam
-            ? heap_caps_malloc(spiramSize, MALLOC_CAP_SPIRAM) : malloc(internalSize);
-    }
-    static void* mallocTrySpiram(size_t size)
-    {
-        return sHaveSpiRam
-            ? heap_caps_malloc(size, MALLOC_CAP_SPIRAM) : malloc(size);
-    }
     virtual Type type() const = 0;
     virtual IAudioVolume* volumeInterface() { return nullptr; }
     virtual ~AudioNode() {}

@@ -104,7 +104,7 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
 int32_t DecoderNode::heapFreeTotal()
 {
     int32_t result = xPortGetFreeHeapSize();
-    if (AudioNode::haveSpiRam()) {
+    if (utils::haveSpiRam()) {
         result += heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     }
     return result;

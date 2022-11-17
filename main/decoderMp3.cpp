@@ -5,7 +5,7 @@ static const char* TAG = "mp3dec";
 
 DecoderMp3::DecoderMp3(AudioNode& src): Decoder(src, kCodecMp3)
 {
-    mInputBuf = (unsigned char*)AudioNode::mallocTrySpiram(kInputBufSize + kOutputBufSize);
+    mInputBuf = (unsigned char*)utils::mallocTrySpiram(kInputBufSize + kOutputBufSize);
     if (!mInputBuf) {
         ESP_LOGE(TAG, "Out of memory allocating I/O buffers");
         abort();
