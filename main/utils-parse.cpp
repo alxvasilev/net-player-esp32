@@ -130,6 +130,7 @@ void KeyValParser::Substring::trimSpaces()
 bool KeyValParser::parse(char pairDelim, char keyValDelim, int flags)
 {
     auto end = mBuf + mSize - 1;
+    assert(*end == 0);
     char* pch = mBuf;
     for (;;) {
         auto start = pch;
