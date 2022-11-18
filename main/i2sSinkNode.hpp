@@ -16,7 +16,7 @@ protected:
     bool mUseVolumeInterface = false;
     enum {
         kDmaBufLen = 1023,
-        kDmaBufCntInternalRam = 2, kDmaBufCntSpiRam = 4, // in samples, multiply by 4 for bytes
+        kDmaBufCntInternalRam = 2, kDmaBufCntSpiRam = 6, // in samples, multiply by 4 for bytes
         kDataPullSize = kDmaBufLen * 4, // one dma buffer
         kPipelineReadTimeout = 1000, // in milliseconds
         kDefaultSamplerate = 44100

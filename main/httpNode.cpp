@@ -113,7 +113,7 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
     if (evt->event_id != HTTP_EVENT_ON_HEADER) {
         return ESP_OK;
     }
-    ESP_LOGI(TAG, "hdr: '%s': '%s'", evt->header_key, evt->header_value);
+    ESP_LOGI(TAG, "\e[34mhdr: '%s': '%s'", evt->header_key, evt->header_value);
 
     auto self = static_cast<HttpNode*>(evt->user_data);
     auto key = evt->header_key;
