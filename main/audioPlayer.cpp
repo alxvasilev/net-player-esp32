@@ -516,7 +516,7 @@ bool AudioPlayer::equalizerSetGainsBulk(char* str, size_t len)
         equalizerSaveGains();
         return true;
     }
-    KeyValParser vals(str, len);
+    KeyValParser vals(str, len + 1);
     vals.parse(';', '=', KeyValParser::kTrimSpaces);
     bool ok = true;
     for (const auto& kv: vals.keyVals()) {
