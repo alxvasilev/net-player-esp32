@@ -283,7 +283,7 @@ void DlnaHandler::ssdpRxTaskFunc()
             break;
         }
         mMsgBuf[len] = '\0';
-        bool supported = parseSsdpRequest(mMsgBuf, len, svcName);
+        bool supported = parseSsdpRequest(mMsgBuf, len + 1, svcName);
         if (!supported) {
             continue;
         }
