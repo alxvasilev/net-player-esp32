@@ -1,6 +1,6 @@
 #ifndef DLNA_HPP_HEADER_
 #define DLNA_HPP_HEADER_
-
+#include <string>
 class AudioPlayer;
 typedef struct _mxml_node_s mxml_node_t;
 
@@ -18,6 +18,7 @@ protected:
     sockaddr_in mAddr;
     TaskHandle_t mSsdpRxTask;
     AudioPlayer& mPlayer;
+    std::string mAvTransportUri;
     char mUuid[13];
     bool mTerminate = false;
     char mMsgBuf[480];
@@ -32,9 +33,9 @@ protected:
     bool parseSsdpRequest(char* str, int len, SvcName& svcName);
     static esp_err_t httpDlnaDescGetHandler(httpd_req_t* req);
     static esp_err_t httpDlnaCommandHandler(httpd_req_t* req);
-    static esp_err_t handleAvTransportCommand(httpd_req_t* req, const char* cmd, mxml_node_t* cmdNode);
-    static esp_err_t handleConnMgrCommand(httpd_req_t* req, const char* cmd, mxml_node_t* cmdNode);
-    static esp_err_t handleRenderCtlCommand(httpd_req_t* req, const char*, mxml_node_t* cmdNode);
+    bool handleAvTransportCommand(httpd_req_t* req, const char* cmd, mxml_node_t* cmdNode, std::string& result);
+    bool handleConnMgrCommand(httpd_req_t* req, const char* cmd, mxml_node_t* cmdNode, std::string& result);
+    bool handleRenderCtlCommand(httpd_req_t* req, const char* cmd, mxml_node_t* cmdNode, std::string& result);
 
 public:
     DlnaHandler(httpd_handle_t httpServer, const char* hostPort, AudioPlayer& player);

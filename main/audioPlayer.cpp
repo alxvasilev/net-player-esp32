@@ -363,7 +363,8 @@ bool AudioPlayer::playUrl(const char* url, const char* record)
     }
     lcdUpdateTrackTitle(nullptr);
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
-    http.setUrl(url, record);
+    auto urlInfo = HttpNode::UrlInfo::Create(url, ++mStreamSeqNo, record);
+    http.setUrl(urlInfo);
     if (!isPlaying()) {
         play();
     }
@@ -448,7 +449,18 @@ void AudioPlayer::stop()
    }
    lcdUpdatePlayState(kSymStopped);
 }
-
+uint32_t AudioPlayer::positionTenthSec() const
+{
+    if (!isPlaying() || !mStreamOut || (mStreamOut->type() != AudioNode::kTypeI2sOut)) {
+        return 0;
+    }
+    auto& i2sOut = *static_cast<I2sOutputNode*>(mStreamOut.get());
+    MutexLocker locker(i2sOut.mutex);
+    if (i2sOut.mStreamId != mStreamSeqNo) {
+        return 0;
+    }
+    return i2sOut.positionTenthSec();
+}
 bool AudioPlayer::volumeSet(uint16_t vol)
 {
     if (!mVolumeInterface) {
@@ -908,7 +920,8 @@ void AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t buf, si
             LOCK_PLAYER();
             lcdUpdateTrackTitle(title.c_str());
         });
-    } else {
+    }
+    else {
         asyncCall([this, event]() {
             LOCK_PLAYER();
             if (event == HttpNode::kEventConnected) {
@@ -977,9 +990,9 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf)
         mLcd.clear(mLcd.cursorX, mLcd.cursorY, mLcd.width(), mLcd.fontHeight());
         return;
     }
-    mTrackTitle.reserve(len + 4);
-    mTrackTitle.assign(buf, len);
-    mTrackTitle.append(" * ", 4);
+    mLcdTrackTitle.reserve(len + 4);
+    mLcdTrackTitle.assign(buf, len);
+    mLcdTrackTitle.append(" * ", 4);
     mTitleScrollCharOffset = mTitleScrollPixOffset = 0;
     mTitleScrollEnabled = true;
 }
@@ -993,15 +1006,15 @@ void AudioPlayer::lcdSetupForTrackTitle()
 
 void AudioPlayer::lcdScrollTrackTitle(int step)
 {
-    if (mTrackTitle.dataSize() <= 1) {
+    if (mLcdTrackTitle.dataSize() <= 1) {
         return;
     }
     lcdSetupForTrackTitle();
 
-    auto title = mTrackTitle.buf() + mTitleScrollCharOffset;
-    auto titleEnd = mTrackTitle.buf() + mTrackTitle.dataSize() - 1; // without terminating null
+    auto title = mLcdTrackTitle.buf() + mTitleScrollCharOffset;
+    auto titleEnd = mLcdTrackTitle.buf() + mLcdTrackTitle.dataSize() - 1; // without terminating null
     if (title >= titleEnd) {
-        title = mTrackTitle.buf();
+        title = mLcdTrackTitle.buf();
         mTitleScrollCharOffset = mTitleScrollPixOffset = 0;
     } else {
         // display first partial char, if any
@@ -1017,7 +1030,7 @@ void AudioPlayer::lcdScrollTrackTitle(int step)
     for(;;) {
         char ch = *title;
         if (!ch) {
-            title = mTrackTitle.buf();
+            title = mLcdTrackTitle.buf();
             ch = *title;
         }
         title++;

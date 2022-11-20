@@ -26,6 +26,7 @@ void I2sOutputNode::adjustSamplesForInternalDac(char* sBuff, int len)
 
 void I2sOutputNode::nodeThreadFunc()
 {
+    MutexLocker locker(mutex);
     for (;;) {
         processMessages();
         if (mTerminate) {
@@ -34,8 +35,18 @@ void I2sOutputNode::nodeThreadFunc()
         myassert(mState == kStateRunning);
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
             DataPullReq dpr(kDataPullSize); // read all available data
-            auto err = mPrev->pullData(dpr);
+            StreamError err;
+            {
+                MutexUnlocker unlocker(mutex);
+                err = mPrev->pullData(dpr);
+            }
             if (err) {
+                if (err == kStreamChanged) {
+                    // dpr does not contain PCM format info, but codec type and streamId
+                    mSampleCtr = 0;
+                    mStreamId = dpr.streamId;
+                    printf("streamId set to %u\n", mStreamId);
+                }
                 continue;
             }
             myassert(dpr.size);
@@ -43,6 +54,7 @@ void I2sOutputNode::nodeThreadFunc()
                 ESP_LOGI(mTag, "Changing I2S output format");
                 setFormat(dpr.fmt);
             }
+            mSampleCtr += dpr.size >> mBytesPerSampleShiftDiv;
             if (mUseVolumeInterface) {
                 processVolumeAndLevel(dpr);
             }
@@ -96,6 +108,8 @@ bool I2sOutputNode::setFormat(StreamFormat fmt)
         return false;
     }
     mFormat = fmt;
+    uint bytesPerSample = fmt.numChannels() * (bps / 8);
+    for (mBytesPerSampleShiftDiv = 0; bytesPerSample; bytesPerSample >>= 1, mBytesPerSampleShiftDiv++);
     return true;
 }
 
@@ -145,3 +159,12 @@ I2sOutputNode::~I2sOutputNode()
     i2s_driver_uninstall(mPort);
 }
 
+uint32_t I2sOutputNode::positionTenthSec() const
+{
+    auto sr = mFormat.sampleRate();
+    uint32_t divider = (sr / 10);
+    if (divider == 0) {
+        return 0;
+    }
+    return (mSampleCtr + (divider >> 1)) / divider;
+}

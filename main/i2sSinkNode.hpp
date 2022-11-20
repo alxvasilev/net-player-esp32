@@ -8,11 +8,15 @@
 
 class I2sOutputNode: public AudioNodeWithTask, public DefaultVolumeImpl
 {
+public:
+    Mutex mutex;
+    uint32_t mStreamId = 0;
 protected:
     i2s_port_t mPort;
-    bool mUseInternalDac;
     StreamFormat mFormat;
-    int mReadTimeout;
+    uint64_t mSampleCtr;
+    bool mUseInternalDac;
+    uint8_t mBytesPerSampleShiftDiv;
     bool mUseVolumeInterface = false;
     enum {
         kDmaBufLen = 1023,
@@ -33,6 +37,7 @@ public:
     virtual IAudioVolume* volumeInterface() override { return this; }
     virtual StreamError pullData(DataPullReq& dpr) { return kTimeout; }
     virtual void confirmRead(int amount) {}
+    uint32_t positionTenthSec() const;
 };
 
 #endif

@@ -64,33 +64,31 @@ bool HttpNode::isPlaylist()
     if (mInCodec == kPlaylistM3u8 || mInCodec == kPlaylistPls) {
         return true;
     }
-    char *dot = strrchr(mUrl, '.');
+    char *dot = strrchr(url(), '.');
     return (dot && ((strcasecmp(dot, ".m3u") == 0 || strcasecmp(dot, ".m3u8") == 0)));
 }
 
-void HttpNode::doSetUrl(const char *url, const char* recStaName=nullptr)
+void HttpNode::doSetUrl(UrlInfo* urlInfo)
 {
-    ESP_LOGI(mTag, "Setting url to %s", url);
-    if (mUrl) {
-        free(mUrl);
-    }
-    mUrl = strdup(url);
-    if (mRecordingStationName) {
-        free(mRecordingStationName);
-        mRecordingStationName = nullptr;
-    }
-    if (recStaName) {
-        mRecordingStationName = strdup(recStaName);
-    }
+    ESP_LOGI(mTag, "Setting url to %s", urlInfo->url);
     if (mClient) {
-        esp_http_client_set_url(mClient, mUrl); // do it here to avoid keeping reference to the old, freed one
+        esp_http_client_set_url(mClient, urlInfo->url); // do it here to avoid keeping reference to the old, freed one
     }
+    free(mUrlInfo);
+    mUrlInfo = urlInfo;
+}
+void HttpNode::updateUrl(const char* url)
+{
+    auto urlInfo = mUrlInfo
+        ? UrlInfo::Create(url, mUrlInfo->streamId, mUrlInfo->recStaName)
+        : UrlInfo::Create(url, 0, nullptr);
+    doSetUrl(urlInfo);
 }
 bool HttpNode::createClient()
 {
     assert(!mClient);
     esp_http_client_config_t cfg = {};
-    cfg.url = mUrl;
+    cfg.url = url();
     cfg.event_handler = httpHeaderHandler;
     cfg.user_data = this;
     cfg.timeout_ms = kHttpRecvTimeoutMs;
@@ -129,11 +127,11 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
 bool HttpNode::connect(bool isReconnect)
 {
     myassert(mState != kStateStopped);
-    if (!mUrl) {
+    if (!url()) {
         ESP_LOGE(mTag, "connect: URL has not been set");
         return false;
     }
-    ESP_LOGI(mTag, "Connecting to '%s'...", mUrl);
+    ESP_LOGI(mTag, "Connecting to '%s'...", url());
     if (!isReconnect) {
         {
             LOCK();
@@ -174,11 +172,10 @@ bool HttpNode::connect(bool isReconnect)
             continue;
         }
 
-        mContentLen = esp_http_client_fetch_headers(mClient);
+        int32_t contentLen = esp_http_client_fetch_headers(mClient);
 
         int status_code = esp_http_client_get_status_code(mClient);
-        ESP_LOGI(TAG, "Connected to '%s': http code: %d, content-length: %u",
-            mUrl, status_code, mContentLen);
+        ESP_LOGI(TAG, "Connected to '%s': http code: %d, content-length: %d", url(), status_code, contentLen);
 
         if (status_code < 0) {
             auto msDelay = delayFromRetryCnt(tries);
@@ -198,55 +195,53 @@ bool HttpNode::connect(bool isReconnect)
             ESP_LOGE(mTag, "Non-200 response code %d", status_code);
             return false;
         }
-        ESP_LOGI(TAG, "Checking if response is a playlist");
-        if (parseResponseAsPlaylist()) {
-            ESP_LOGI(TAG, "Response parsed as playlist");
-            auto url = mPlaylist.getNextTrack();
-            if (!url) {
-                ESP_LOGE(TAG, "Response is a playlist, but couldn't obtain an url from it");
+        auto ret = handleResponseAsPlaylist(contentLen);
+        if (ret) {
+            if (ret <= -2) {
                 return false;
+            } else { // retriable network error (-1) or is a playlist and url was updated(> 0)
+                continue;
             }
-            doSetUrl(url);
-            continue;
         }
         if (!mIcyParser.icyInterval()) {
             ESP_LOGW(TAG, "Source does not send ShoutCast metadata");
         }
         plSendEvent(kEventConnected, isReconnect);
         if (!isReconnect) {
-            postStreamEvent_Lock(mStreamStartPos, kStreamChanged, mInCodec);
+            postStreamEvent_Lock(mStreamStartPos, kStreamChanged, mInCodec, mUrlInfo->streamId);
         }
         return true;
     }
     return false;
 }
-bool HttpNode::parseResponseAsPlaylist()
+int8_t HttpNode::handleResponseAsPlaylist(int32_t contentLen)
 {
     if (!isPlaylist()) {
-        ESP_LOGI(TAG, "Content length and url don't looke like a playlist");
-        return false;
+        return 0;
     }
-    std::unique_ptr<char, decltype(::free)*> buf((char*)malloc(mContentLen), ::free);
-    int bufLen = mContentLen;
-    for (int retry = 0; retry < 4; retry++) {
-        if (!buf.get()) {
-            ESP_LOGE(TAG, "Out of memory allocating buffer for playlist download");
-            return true; // return empty playlist
-        }
-        int rlen = esp_http_client_read(mClient, buf.get(), mContentLen);
-        if (rlen < 0) {
-            disconnect();
-            connect();
-            if (mContentLen != bufLen) {
-                buf.reset((char*)realloc(buf.get(), mContentLen));
-            }
-            continue;
-        }
-        buf.get()[rlen] = 0;
-        mPlaylist.load(buf.get());
-        return true;
+    ESP_LOGI(TAG, "Response looks like a playlist");
+    std::unique_ptr<char[]> buf(new char[contentLen + 1]);
+    if (!buf.get()) {
+        ESP_LOGE(TAG, "Out of memory allocating buffer for playlist download");
+        return -2;
     }
-    return true;
+    int rlen = esp_http_client_read(mClient, buf.get(), contentLen);
+    if (rlen < 0) {
+        ESP_LOGW(TAG, "Error %d receiving playlist, retrying...", esp_http_client_get_errno(mClient));
+        return -1;
+    } else if (rlen != contentLen) {
+        ESP_LOGW(TAG, "Playlist download incomplete, retrying...");
+        return -1;
+    }
+    buf.get()[rlen] = 0;
+    mPlaylist.load(buf.get());
+    auto url = mPlaylist.getNextTrack();
+    if (!url) {
+        ESP_LOGE(TAG, "Response is a playlist, but couldn't obtain an url from it");
+        return -2;
+    }
+    updateUrl(url);
+    return 1;
 }
 
 void HttpNode::disconnect()
@@ -269,19 +264,6 @@ bool HttpNode::isConnected() const
     return mClient != nullptr;
 }
 
-bool HttpNode::nextTrack()
-{
-    if (!mAutoNextTrack) {
-        return false;
-    }
-    auto url = mPlaylist.getNextTrack();
-    if (!url) {
-        return false;
-    }
-    doSetUrl(url);
-    return true;
-}
-
 bool HttpNode::recv()
 {
     for (int retries = 0; retries < 26; retries++) { // retry net errors
@@ -299,8 +281,7 @@ bool HttpNode::recv()
             if (errno == ETIMEDOUT) {
                 return false;
             }
-            ESP_LOGW(TAG, "Error receiving http stream, errno: %d, contentLen: %d, recv len = %d",
-                errno, mContentLen, rlen);
+            ESP_LOGW(TAG, "Error '%s' receiving http stream, recv len = %d", strerror(errno), rlen);
             // even though len == 0 means graceful disconnect, i.e.
             //track end => should go to next track, this often happens when
             // network lags and stream sender aborts sending to us
@@ -353,23 +334,13 @@ bool HttpNode::recv()
     return false;
 }
 
-void HttpNode::setUrl(const char* url, const char* recStaName)
+void HttpNode::setUrl(UrlInfo* urlInfo)
 {
     if (!mTaskId) {
-        doSetUrl(url, recStaName);
+        doSetUrl(urlInfo);
     } else {
         ESP_LOGI(mTag, "Posting setUrl command");
-        auto urlLen = strlen(url);
-        auto staNameLen = recStaName ? strlen(recStaName) : 0;
-        char* data = (char*)malloc(urlLen + staNameLen + 2);
-        strcpy(data, url);
-        data[urlLen] = 0;
-        if (recStaName) {
-            strcpy(data+urlLen+1, recStaName);
-        } else {
-            data[urlLen+1] = 0;
-        }
-        mCmdQueue.post(kCommandSetUrl, data);
+        mCmdQueue.post(kCommandSetUrl, urlInfo);
     }
 }
 void HttpNode::pause(bool wait)
@@ -391,11 +362,7 @@ bool HttpNode::dispatchCommand(Command &cmd)
     switch(cmd.opcode) {
     case kCommandSetUrl: {
         destroyClient();
-        const char* url = (const char*)cmd.arg;
-        const char* staName = strchr(url, 0) + 1;
-        doSetUrl(url, staName);
-
-        free(cmd.arg);
+        doSetUrl((UrlInfo*)cmd.arg);
         cmd.arg = nullptr;
         mRingBuf.clear();
 
@@ -440,8 +407,7 @@ HttpNode::~HttpNode()
 {
     stop();
     destroyClient();
-    free(mUrl);
-    free(mRecordingStationName);
+    free(mUrlInfo);
 }
 
 HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize, size_t prefillAmount)
@@ -470,6 +436,7 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
                 if (event.type == kStreamChanged) {
                     this->mOutCodec = event.codec;
                     dp.codec = event.codec;
+                    dp.streamId = event.streamId;
                     dp.size = 0;
                     return kStreamChanged;
                 } else if (event.type == kTitleChanged) {
@@ -526,13 +493,14 @@ bool HttpNode::waitPrefillChange()
 
 bool HttpNode::recordingMaybeEnable() {
     LOCK();
-    if (!mRecordingStationName) {
+    auto staName = recStaName();
+    if (!staName) {
         return false;
     }
     if (!mRecorder) {
         mRecorder.reset(new TrackRecorder("/sdcard/rec"));
     }
-    mRecorder->setStation(mRecordingStationName);
+    mRecorder->setStation(staName);
     plSendEvent(kEventRecording, true);
     return true;
 }
@@ -548,9 +516,8 @@ void HttpNode::recordingCancelCurrent() {
 void HttpNode::recordingStop() {
     LOCK();
     mRecorder.reset();
-    if (mRecordingStationName) {
-        free(mRecordingStationName);
-        mRecordingStationName = nullptr;
+    if (recStaName()) {
+        mUrlInfo->recStaName = nullptr;
     }
     plSendEvent(kEventRecording, false);
 }

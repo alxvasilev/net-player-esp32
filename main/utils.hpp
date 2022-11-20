@@ -38,6 +38,11 @@ public:
         return sHaveSpiRam
             ? heap_caps_malloc(size, MALLOC_CAP_SPIRAM) : malloc(size);
     }
+    constexpr uint32_t static log2(uint32_t n) noexcept
+    {
+        return (n > 1) ? 1 + log2(n >> 1) : 0;
+    }
+    static int16_t currentCpuFreq();
 };
 
 class UrlParams: public KeyValParser
@@ -95,7 +100,7 @@ static void asyncCall(Cb&& func)
         {
             esp_timer_create_args_t args = {};
             args.dispatch_method = ESP_TIMER_TASK;
-            args.name = "setTimeout timer";
+            args.name = "asyncCall";
             args.arg = this;
             args.callback = &onTimer;
             ESP_ERROR_CHECK(esp_timer_create(&args, &mTimer));
@@ -133,7 +138,5 @@ template<>
         void operator()(FILE* file) const { fclose(file); }
     };
 }
-
-int16_t currentCpuFreq();
 
 #endif

@@ -34,7 +34,7 @@ bool DecoderNode::createDecoder(CodecType type)
     return true;
 }
 
-AudioNode::StreamError DecoderNode::detectCodecCreateDecoder(CodecType type)
+AudioNode::StreamError DecoderNode::detectCodecCreateDecoder(CodecType type, DataPullReq& odp)
 {
     if (createDecoder(type)) {
         return kNoError;
@@ -64,10 +64,11 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
             DataPullReq idp(0);
             auto err = mPrev->pullData(idp);
 
-            if (err && err != kStreamChanged) {
+            if (err) {
+                odp = idp;
                 return err;
             }
-            err = detectCodecCreateDecoder(idp.codec);
+            err = detectCodecCreateDecoder(idp.codec, odp);
             if (err) {
                 if (err == kStreamChanged) {
                     myassert(!mDecoder);
@@ -94,11 +95,8 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
                 delete mDecoder;
                 mDecoder = nullptr;
             }
-            continue;
         }
-        else {
-            return err;
-        }
+        return err;
     }
 }
 int32_t DecoderNode::heapFreeTotal()

@@ -26,7 +26,8 @@ class DecoderNode: public AudioNode
 {
 protected:
     Decoder* mDecoder = nullptr;
-    AudioNode::StreamError detectCodecCreateDecoder(CodecType type);
+    // odp in case there is a stream event that needs to be propagated
+    AudioNode::StreamError detectCodecCreateDecoder(CodecType type, DataPullReq& odp);
     bool createDecoder(CodecType type);
     static int32_t heapFreeTotal(); // used to  calculate memory usage for codecs
 public:

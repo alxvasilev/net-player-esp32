@@ -75,9 +75,9 @@ float EqualizerNode::bandGain(uint8_t band)
 AudioNode::StreamError EqualizerNode::pullData(DataPullReq &dpr)
 {
     MutexLocker locker(mMutex);
-    auto ret = mPrev->pullData(dpr);
-    if (ret) {
-        return ret;
+    auto event = mPrev->pullData(dpr);
+    if (event) {
+        return event;
     }
     if (dpr.fmt != mFormat) {
         if (dpr.fmt.bitsPerSample() != 16) {

@@ -39,7 +39,7 @@ UrlParams::UrlParams(httpd_req_t* req)
     parse('&', '=', kUrlUnescape);
 }
 
-int16_t currentCpuFreq() {
+int16_t utils::currentCpuFreq() {
     rtc_cpu_freq_config_t conf;
     rtc_clk_cpu_freq_get_config(&conf);
     return conf.freq_mhz;

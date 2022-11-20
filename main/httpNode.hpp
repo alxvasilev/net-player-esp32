@@ -24,6 +24,28 @@
 
 class HttpNode: public AudioNodeWithTask
 {
+public:
+    struct UrlInfo {
+        uint32_t streamId;
+        const char* url;
+        const char* recStaName;
+        static UrlInfo* Create(const char* aUrl, uint32_t streamId, const char* aRecStaName) noexcept
+        {
+            auto urlLen = strlen(aUrl) + 1;
+            auto staLen = aRecStaName ? strlen(aRecStaName) : 0;
+            auto inst = (UrlInfo*)malloc(sizeof(UrlInfo) + urlLen + staLen);
+            inst->streamId = streamId;
+            inst->url = (char*)inst + sizeof(UrlInfo);
+            memcpy((char*)inst->url, aUrl, urlLen);
+            if (aRecStaName) {
+                inst->recStaName = inst->url + urlLen;
+                memcpy((char*)inst->recStaName, aRecStaName, staLen);
+            } else {
+                inst->recStaName = nullptr;
+            }
+            return inst;
+        }
+    };
 protected:
     enum { kHttpRecvTimeoutMs = 2000, kHttpClientBufSize = 512, kReadSize = 1024, kStackSize = 3600 };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1, kCommandNotifyFlushed };
@@ -32,14 +54,17 @@ protected:
     // are flags
     enum: uint8_t { kEvtPrefillChange = kEvtLast << 1 };
     struct QueuedStreamEvent {
-        uint32_t streamPos;
+        int64_t streamPos;
         union {
-            CodecType codec;
+            struct {
+                uint32_t streamId: 24;
+                CodecType codec;
+            };
             void* data;
         };
         StreamError type;
-        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, CodecType aCodec):
-            streamPos(aStreamPos), codec(aCodec), type(aType) {}
+        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, CodecType aCodec, uint32_t aStreamId):
+            streamPos(aStreamPos), streamId(aStreamId), codec(aCodec), type(aType) {}
         QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, void* aData):
             streamPos(aStreamPos), data(aData), type(aType) {}
         ~QueuedStreamEvent() {
@@ -48,12 +73,10 @@ protected:
             }
         }
     };
-    char* mUrl = nullptr;
-    char* mRecordingStationName = nullptr;
+    UrlInfo* mUrlInfo = nullptr;
     esp_http_client_handle_t mClient = nullptr;
     CodecType mInCodec = kCodecUnknown;
     CodecType mOutCodec = kCodecUnknown;
-    bool mAutoNextTrack = true; /* connect next track without open/close */
     Playlist mPlaylist; /* media playlist */
     RingBuf mRingBuf;
     StaticQueue<QueuedStreamEvent, 6> mStreamEventQueue;
@@ -64,22 +87,24 @@ protected:
     int mContentLen;
     IcyParser mIcyParser;
     std::unique_ptr<TrackRecorder> mRecorder;
+    const char* url() const { return mUrlInfo ? mUrlInfo->url : nullptr; }
+    const char* recStaName() const { return mUrlInfo ? mUrlInfo->recStaName : nullptr; }
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     static CodecType codecFromContentType(const char* content_type);
     bool isPlaylist();
     bool createClient();
     bool parseContentType();
-    bool parseResponseAsPlaylist();
-    void doSetUrl(const char* url, const char* staName);
+    int8_t handleResponseAsPlaylist(int32_t contentLen);
+    void doSetUrl(UrlInfo* urlInfo);
+    void updateUrl(const char* url);
     bool connect(bool isReconnect=false);
     void disconnect();
     void destroyClient();
-    bool nextTrack();
     bool recv();
-    template <typename T>
-    bool postStreamEvent_Lock(int64_t streamPos, StreamError event, T arg);
-    template <typename T>
-    bool postStreamEvent_NoLock(int64_t streamPos, StreamError event, T arg);
+    template <typename... Args>
+    bool postStreamEvent_Lock(int64_t streamPos, StreamError event, Args... args);
+    template <typename... Args>
+    bool postStreamEvent_NoLock(int64_t streamPos, StreamError event, Args... args);
     void setWaitingPrefill(bool prefill);
     bool waitPrefillChange();
     int delayFromRetryCnt(int tries);
@@ -107,19 +132,19 @@ public:
     virtual StreamError pullData(DataPullReq &dp);
     virtual void confirmRead(int size);
     virtual void pause(bool wait);
-    void setUrl(const char* url, const char* recStationName);
+    void setUrl(UrlInfo* urlInfo);
     bool isConnected() const;
     const char* trackName() const;
     bool recordingIsActive() const;
     bool recordingIsEnabled() const;
 };
-template <typename T>
-bool HttpNode::postStreamEvent_Lock(int64_t streamPos, StreamError event, T arg) {
+template <typename... Args>
+bool HttpNode::postStreamEvent_Lock(int64_t streamPos, StreamError event, Args... args) {
     for(;;) {
         bool ok;
         {
             MutexLocker locker(mMutex);
-            ok = mStreamEventQueue.emplaceBack(streamPos, event, arg);
+            ok = mStreamEventQueue.emplaceBack(streamPos, event, args...);
         }
         if (ok) {
             return true;
@@ -129,9 +154,9 @@ bool HttpNode::postStreamEvent_Lock(int64_t streamPos, StreamError event, T arg)
         }
     }
 }
-template <typename T>
-bool HttpNode::postStreamEvent_NoLock(int64_t streamPos, StreamError event, T arg) {
-    while (!mStreamEventQueue.emplaceBack(streamPos, event, arg)) {
+template <typename... Args>
+bool HttpNode::postStreamEvent_NoLock(int64_t streamPos, StreamError event, Args... args) {
+    while (!mStreamEventQueue.emplaceBack(streamPos, event, args...)) {
         MutexUnlocker unlock(mMutex);
         if (mRingBuf.waitForReadOp(-1) < 0) {
             return false;

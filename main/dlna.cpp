@@ -5,6 +5,8 @@
 #include "utils.hpp"
 #include "incfile.hpp"
 #include <mxml.h>
+#include "audioPlayer.hpp"
+#include <sstream>
 
 static constexpr const char* TAG = "dlna";
 
@@ -14,9 +16,11 @@ extern const int xmlMain_size;
 EMBED_TEXTFILE("../../dlna/avtrans.xml", xmlAvTrans);
 extern const char xmlAvTrans[];
 extern const int xmlAvTrans_size;
+/*
 EMBED_TEXTFILE("../../dlna/connmgr.xml", xmlConnMgr);
 extern const char xmlConnMgr[];
 extern const int xmlConnMgr_size;
+*/
 EMBED_TEXTFILE("../../dlna/rendctl.xml", xmlRendCtl);
 extern const char xmlRendCtl[];
 extern const int xmlRendCtl_size;
@@ -146,10 +150,12 @@ esp_err_t DlnaHandler::httpDlnaDescGetHandler(httpd_req_t *req)
         resp = xmlAvTrans;
         respSize = xmlAvTrans_size;
     }
+    /*
     else if (strcmp(url, "connmgr.xml") == 0) {
         resp = xmlConnMgr;
         respSize = xmlConnMgr_size;
     }
+    */
     else if (strcmp(url, "rendctl.xml") == 0) {
         resp = xmlRendCtl;
         respSize = xmlRendCtl_size;
@@ -173,26 +179,26 @@ esp_err_t DlnaHandler::httpDlnaCommandHandler(httpd_req_t* req)
         httpd_resp_send_404(req);
         return ESP_FAIL;
     }
-    esp_err_t(*handler)(httpd_req_t*, const char*, mxml_node_t*);
+    bool(DlnaHandler::*handler)(httpd_req_t*, const char*, mxml_node_t*, std::string&);
     url += 6;
     if (strcmp(url, "AVTransport/ctrl") == 0) {
-        handler = handleAvTransportCommand;
-    } else if (strcmp(url, "ConnectionManager/ctrl")) {
-        handler = handleConnMgrCommand;
+        handler = &DlnaHandler::handleAvTransportCommand;
+//    } else if (strcmp(url, "ConnectionManager/ctrl")) {
+//        handler = &DlnaHandler::handleConnMgrCommand;
     } else if (strcmp(url, "RenderingControl/ctrl") == 0) {
-        handler = handleRenderCtlCommand;
+        handler = &DlnaHandler::handleRenderCtlCommand;
     } else { // handle request for service description XMLs
         httpd_resp_send_404(req);
         return ESP_FAIL;
     }
 
     int32_t contentLen = req->content_len;
-    if (!contentLen || contentLen > 2048) {
+    if (!contentLen || contentLen > 3000) {
         ESP_LOGW(TAG, "Control request has too large or missing postdata: content-length: %d", contentLen);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Too large or missing POSTDATA");
         return ESP_FAIL;
     }
-    std::unique_ptr<char, decltype(std::free)*> xml((char*)utils::mallocTrySpiram(contentLen + 1), std::free);
+    std::unique_ptr<char, decltype(::free)*> xml((char*)utils::mallocTrySpiram(contentLen + 1), ::free);
     auto recvLen = httpd_req_recv(req, xml.get(), contentLen);
     if (recvLen != contentLen) {
         ESP_LOGW(TAG, "Ctrl command: error receiving postdata: %s",
@@ -201,7 +207,7 @@ esp_err_t DlnaHandler::httpDlnaCommandHandler(httpd_req_t* req)
     }
     xml.get()[contentLen] = 0; // null-terminate postdata string
     printf("rx XML cmd: %s\n", xml.get());
-    auto tree = mxmlLoadString(NULL, xml.get(), MXML_NO_CALLBACK);
+    auto tree = mxmlLoadString(NULL, xml.get(), MXML_OPAQUE_CALLBACK);
     mxml_node_t* sBody = mxmlFindPath(tree, "s:Envelope/s:Body/");
     if (!sBody) {
         ESP_LOGW(TAG, "s:Body tag not found in XML command");
@@ -218,22 +224,123 @@ esp_err_t DlnaHandler::httpDlnaCommandHandler(httpd_req_t* req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Command XML node does not start with u:");
         return ESP_FAIL;
     }
+    const char* cmdXmlns = mxmlElementGetAttr(cmdNode, "xmlns:u");
+    if (!cmdXmlns) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Command XML node does not have xmlns:u attr");
+        return ESP_FAIL;
+    }
+
+    auto self = static_cast<DlnaHandler*>(req->user_ctx);
+    std::string result =
+        "<?xml version=\"1.0\"?>"
+        "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" "
+            "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">"
+        "<s:Body><";
+    result.append(cmd).append("Response xmlns:u=\"")
+          .append(cmdXmlns).append("\">");
+    bool ok = (self->*handler)(req, cmd+2, cmdNode, result);
+    if (!ok) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Error parsing command");
+        return ESP_FAIL;
+    }
+    result.append("</").append(cmd).append("Response></s:Body></s:Envelope>");
     httpd_resp_set_type(req, "text/xml");
-    return handler(req, cmd+2, cmdNode);
-}
-esp_err_t DlnaHandler::handleAvTransportCommand(httpd_req_t* req, const char* cmd, mxml_node_t* cmdNode)
-{
-    printf("handleAvTransportCommand: %s\n", cmd);
+    printf("DLNA tx:\n%s\n", result.c_str());
+    httpd_resp_send(req, result.c_str(), result.size());
     return ESP_OK;
 }
-esp_err_t DlnaHandler::handleConnMgrCommand(httpd_req_t* req, const char* cmd, mxml_node_t* cmdNode)
+const char* cmdGetParam(mxml_node_t* cmdNode, const char* paramName)
+{
+    auto paramNode = mxmlFindElement(cmdNode, cmdNode, paramName, nullptr, nullptr, MXML_DESCEND_FIRST);
+    if (!paramNode) {
+        ESP_LOGW(TAG, "%s: Could not find param node %s", mxmlGetElement(cmdNode), paramName);
+        return nullptr;
+    }
+    auto val = mxmlGetOpaque(paramNode);
+    if (!val) {
+        ESP_LOGW(TAG, "%s: No value for param %s", mxmlGetElement(cmdNode), paramName);
+        return nullptr;
+    }
+    return val;
+}
+std::string msToHmsString(uint32_t ms)
+{
+    std::ostringstream oss;
+    oss << ms / 3600000 << ':';
+    ms %= 3600000;
+    oss << ms / 60000 << ':';
+    ms %= 60000;
+    oss << ms / 1000 << '.';
+    oss << (ms % 1000);
+    return oss.str();
+}
+bool DlnaHandler::handleAvTransportCommand(httpd_req_t* req, const char* cmd, mxml_node_t* cmdNode, std::string& result)
+{
+    printf("handleAvTransportCommand: %s\n", cmd);
+    MutexLocker locker(mPlayer.mutex);
+    if (strcasecmp(cmd, "Stop") == 0) {
+        mPlayer.pause();
+        return true;
+    }
+    else if (strcasecmp(cmd, "GetTransportInfo") == 0) {
+        result.reserve(256);
+        result.append("<CurrentTransportState>").append(mPlayer.isPlaying() ? "PLAYING" : "STOPPED")
+              .append(
+                  "</CurrentTransportState><CurrentTransportStatus>OK</CurrentTransportStatus>"
+                  "<CurrentSpeed>1</CurrentSpeed>");
+        return true;
+    }
+    else if (strcasecmp(cmd, "SetAVTransportURI") == 0) {
+        const char* url = cmdGetParam(cmdNode, "CurrentURI");
+        if (!url) {
+            return false;
+        }
+        mAvTransportUri = url;
+        return true;
+    }
+    else if (strcasecmp(cmd, "Play") == 0) {
+        mPlayer.playUrl(mAvTransportUri.c_str());
+        return true;
+    }
+    else if (strcasecmp(cmd, "GetPositionInfo") == 0) {
+        auto trkInfo = mPlayer.trackInfo();
+        if (!trkInfo) {
+            return true; //FIXME: What do we return if there is no track playing?
+        }
+        result.append("<Track>1</Track><TrackDuration>").append(msToHmsString(trkInfo->durationMs))
+              .append("</TrackDuration><TrackURI>").append(trkInfo->url)
+              .append("</TrackURI><RelTime>").append(msToHmsString(mPlayer.positionTenthSec() * 100))
+              .append("</RelTime><AbsTime>0:00:00.000</AbsTime><RelCount>0</RelCount><AbsCount>0</AbsCount>");
+        return true;
+    } else {
+        return false;
+    }
+}
+bool DlnaHandler::handleConnMgrCommand(httpd_req_t* req, const char* cmd, mxml_node_t* cmdNode, std::string& result)
 {
     printf("handleConnMgrCommand: %s\n", cmd);
     return ESP_OK;
 }
-esp_err_t DlnaHandler::handleRenderCtlCommand(httpd_req_t* req, const char* cmd, mxml_node_t* cmdNode)
+bool DlnaHandler::handleRenderCtlCommand(httpd_req_t* req, const char* cmd, mxml_node_t* cmdNode, std::string& result)
 {
     printf("handleRenderCtlCommand: %s\n", cmd);
+    MutexLocker locker(mPlayer.mutex);
+    if (strcasecmp(cmd, "SetVolume") == 0) {
+        const char* strVol = cmdGetParam(cmdNode, "DesiredVolume");
+        if (!strVol) {
+            return false;
+        }
+        char* endptr = nullptr;
+        int vol = strtol(strVol, &endptr, 10);
+        if (vol == 0) {
+            if (errno || (endptr == strVol)) {
+                ESP_LOGW(TAG, "%s: Invalid volume level integer '%s'", cmd, strVol);
+                return false;
+            }
+        }
+        mPlayer.volumeSet(vol);
+        return true;
+    }
     return ESP_OK;
 }
 bool DlnaHandler::registerHttpHandlers()
@@ -349,7 +456,7 @@ void DlnaHandler::sendNotifyAlive(const SvcName& svcName)
 }
 void DlnaHandler::sendPacket(int len, uint32_t ip)
 {
-    printf("sending: %.*s\n", len, mMsgBuf);
+    printf("sending: %.*s to %s\n", len, mMsgBuf, inet_ntoa(ip));
     mAddr.sin_addr.s_addr = ip;
     int ret = sendto(mSsdpSocket, mMsgBuf, len, 0, (const sockaddr*)&mAddr, sizeof(mAddr));
     if (ret != len) {

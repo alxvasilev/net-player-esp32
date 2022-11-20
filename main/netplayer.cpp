@@ -262,7 +262,7 @@ static esp_err_t indexUrlHandler(httpd_req_t *req)
         buf.printf("Not available\n");
     }
     buf.printf("chip type: %s\nnum cores: %d\nrunning at %d MHz\nsilicon revision: %d\n",
-        CONFIG_IDF_TARGET, chip_info.cores, currentCpuFreq(), chip_info.revision
+        CONFIG_IDF_TARGET, chip_info.cores, utils::currentCpuFreq(), chip_info.revision
     );
     httpd_resp_send_chunk(req, buf.buf(), buf.dataSize());
     buf.clear();

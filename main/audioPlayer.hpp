@@ -30,6 +30,27 @@ public:
         uint16_t port = 0;
         bool isSsl = false;
     };
+    struct TrackInfo {
+        const char* url;
+        const char* trackName;
+        const char* artistName;
+        uint32_t durationMs;
+        static TrackInfo* Create(const char* aUrl, const char* trkName, const char* artName, uint32_t durMs)
+        {
+            auto urlLen = strlen(aUrl) + 1;
+            auto tnLen = strlen(trkName) + 1;
+            auto anLen = strlen(artName) + 1;
+            auto inst = (TrackInfo*)malloc(sizeof(TrackInfo) + urlLen + tnLen + anLen);
+            inst->durationMs = durMs;
+            inst->url = (char*)inst + sizeof(TrackInfo);
+            memcpy((char*)inst->url, aUrl, urlLen);
+            inst->trackName = inst->url + urlLen;
+            memcpy((char*)inst->trackName, trkName, tnLen);
+            inst->artistName = inst->trackName + tnLen;
+            memcpy((char*)inst->artistName, artName, anLen);
+            return inst;
+        }
+    };
 protected:
     enum Flags: uint8_t
     { kFlagUseEqualizer = 1, kFlagListenerHooked = 2, kFlagNoWaitPrefill = 4 };
@@ -63,12 +84,14 @@ protected:
     EventGroup mEvents;
     HttpServerInfo& mHttpServer;
     std::unique_ptr<DlnaHandler> mDlna;
+    std::unique_ptr<TrackInfo> mTrackInfo;
+    uint32_t mStreamSeqNo = 0;
 // general display stuff
     ST7735Display::Color mFontColor = ST7735Display::rgb(255, 255, 128);
     VuDisplay mVuDisplay;
 // track name scroll stuff
     bool mTitleScrollEnabled = false;
-    DynBuffer mTrackTitle;
+    DynBuffer mLcdTrackTitle;
     int16_t mTitleScrollCharOffset = 0;
     int8_t mTitleScrollPixOffset = 0;
 
@@ -114,6 +137,7 @@ protected:
 public:
     Mutex mutex;
     std::unique_ptr<StationList> stationList;
+    const TrackInfo* trackInfo() const { return mTrackInfo.get(); }
     void setLogLevel(esp_log_level_t level);
     AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, ST7735Display& lcd, HttpServerInfo& httpServer, bool useEq=true);
     AudioPlayer(ST7735Display& lcd, HttpServerInfo& httpServer);
@@ -131,6 +155,7 @@ public:
     void pause();
     void resume();
     void stop();
+    uint32_t positionTenthSec() const;
     int volumeGet();
     bool volumeSet(uint16_t vol);
     uint16_t volumeChange(int step);

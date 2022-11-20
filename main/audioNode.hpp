@@ -156,7 +156,10 @@ public:
         int size;
         union {
             StreamFormat fmt;
-            CodecType codec;
+            union {
+                uint32_t streamId: 24;
+                CodecType codec;
+            };
         };
         DataPullReq(size_t aSize): size(aSize) {}
         void reset(size_t aSize)
