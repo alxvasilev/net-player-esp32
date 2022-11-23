@@ -47,7 +47,7 @@ public:
         }
     };
 protected:
-    enum { kHttpRecvTimeoutMs = 2000, kHttpClientBufSize = 512, kReadSize = 1024, kStackSize = 3600 };
+    enum { kHttpRecvTimeoutMs = 2000, kHttpClientBufSize = 512, kReadSize = 4096, kStackSize = 3600 };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1, kCommandNotifyFlushed };
     // Read mode dictates how the pullData() caller behaves. Since it may
     // need to wait for the read mode to change to a specific value, the enum values
