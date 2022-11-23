@@ -21,18 +21,39 @@
 
 void AudioNodeWithState::setState(State newState)
 {
-    if (newState == mState) {
+    MutexLocker locker(mMutex);
+    auto prevState = state();
+    if (newState == prevState) {
         return;
     }
-    ESP_LOGI(mTag, "state change %d -> %d", mState, newState);
-    mState = newState;
-    mEvents.clearBits(kStateStopped|kStatePaused|kStateRunning);
+    ESP_LOGI(mTag, "State change %s -> %s", stateToStr(prevState), stateToStr(newState));
+    EventBits_t clearStopReq = (newState == kStateRunning) ? kEvtStopRequest : 0;
+    mEvents.clearBits(kStateTerminated|kStateStopped|kStateRunning|clearStopReq);
     mEvents.setBits(newState);
+    mState = newState;
+
+    if (mState == kStateStopped || ((mState == kStateTerminated) && (prevState == kStateRunning))) {
+        onStopped();
+    }
+}
+void AudioNodeWithState::terminate(bool wait)
+{
+    setState(kStateTerminated);
+}
+void AudioNodeWithState::stop(bool wait)
+{
+    setState(kStateStopped);
+}
+bool AudioNodeWithState::run()
+{
+    setState(kStateRunning);
+    return true;
 }
 
 bool AudioNodeWithTask::createAndStartTask()
 {
     mEvents.clearBits(kEvtStopRequest);
+    mTerminate = false;
     auto ret = xTaskCreatePinnedToCore(sTaskFunc, mTag, mStackSize, this, mTaskPrio, &mTaskId,
         mCpuCore < 0 ? tskNO_AFFINITY : mCpuCore);
     if (ret == pdPASS) {
@@ -46,105 +67,94 @@ bool AudioNodeWithTask::createAndStartTask()
 void AudioNodeWithTask::sTaskFunc(void* ctx)
 {
     auto self = static_cast<AudioNodeWithTask*>(ctx);
-    MutexLocker locker(self->mMutex);
-    self->setState(kStatePaused);
-    self->nodeThreadFunc();
     self->setState(kStateStopped);
-    self->mTaskId = nullptr;
+    self->nodeThreadFunc();
+    {
+        MutexLocker locker(self->mMutex);
+        self->mTaskId = nullptr;
+        self->setState(kStateTerminated);
+    }
     vTaskDelete(nullptr);
 }
 
-bool AudioNodeWithState::run()
+bool AudioNodeWithTask::run()
 {
-    if (mEvents.get() & kStateRunning) {
-        ESP_LOGW(mTag, "Node already running");
-        return true;
-    }
-    if (!doRun()) {
-        return false;
-    }
-    waitForState(kStateRunning);
-    return true;
-}
-
-bool AudioNodeWithTask::doRun()
-{
-    if (mEvents.get() & kStateStopped) {
-        mMutex.lock(); // wait for task cleanup
-        mMutex.unlock();
-        myassert(!mTaskId);
-        if (!createAndStartTask()) {
-            ESP_LOGE(mTag, "Error creating task for node");
-            return false;
+    {
+        MutexLocker locker(mMutex);
+        auto currState = state();
+        if (currState == kStateRunning) {
+            ESP_LOGW(mTag, "Node already running");
+            return true;
+        }
+        else if (currState == kStateTerminated) {
+            myassert(!mTaskId);
+            if (!createAndStartTask()) {
+                ESP_LOGE(mTag, "Error creating task for node");
+                return false;
+            }
         }
     }
-    waitForState(kStatePaused);
     mCmdQueue.post(kCommandRun);
     return true;
 }
 
-void AudioNodeWithState::pause(bool wait)
+void AudioNodeWithTask::stop(bool wait)
 {
-    auto state = mState;
-    if (state == kStateStopped) {
-        ESP_LOGW(mTag, "pause(): Node is stopped");
-        return;
-    } else if (state == kStatePaused) {
-        return;
-    } else {
-        doPause();
-        if (wait) {
-            waitForState(kStatePaused);
+    {
+        MutexLocker locker(mMutex);
+        auto currState = state();
+        if (currState == kStateTerminated || currState == kStateStopped) {
+            ESP_LOGI(mTag, "stop: Already stopped/terminated");
+            return;
         }
+        onStopRequest();
+        mEvents.setBits(kEvtStopRequest);
     }
-}
-
-AudioNodeWithState::State AudioNodeWithState::waitForState(unsigned state)
-{
-    return (State)mEvents.waitForOneNoReset(state, -1);
-}
-
-void AudioNodeWithState::waitForStop()
-{
-    waitForState(kStateStopped);
-}
-
-void AudioNodeWithState::stop(bool wait)
-{
-    if (mState == kStateStopped) {
-        ESP_LOGI(mTag, "stop: Already stopped");
-        return;
-    }
-    mTerminate = true;
-    mEvents.setBits(kEvtStopRequest);
-    doStop();
+    mCmdQueue.post(kCommandStop);
     if (wait) {
-        waitForStop();
+        waitForState(kStateStopped);
+    }
+}
+
+void AudioNodeWithTask::terminate(bool wait)
+{
+    {
+        MutexLocker locker(mMutex);
+        if (state() == kStateTerminated) {
+            ESP_LOGI(mTag, "terminate: Already terminated");
+            return;
+        }
+        mTerminate = true;
+        onStopRequest();
+        mEvents.setBits(kEvtStopRequest);
+    }
+    if (wait) {
+        waitForTerminate();
     }
 }
 
 bool AudioNodeWithTask::dispatchCommand(Command& cmd)
 {
+    // State mutex not locked
     switch(cmd.opcode) {
     case kCommandRun:
-        if (mState == kStateRunning) {
+        if (state() == kStateRunning) {
             ESP_LOGW(mTag, "kCommandRun: Already running");
         } else {
             setState(kStateRunning);
         }
         break;
-    case kCommandPause:
-        if (mState == kStatePaused) {
-            ESP_LOGW(mTag, "kCommndPause: Already paused");
+    case kCommandStop:
+        if (state() == kStateStopped) {
+            ESP_LOGW(mTag, "kCommandStop: Already stopped");
         } else {
-            setState(kStatePaused);
+            setState(kStateStopped);
         }
-        setState(kStatePaused);
         break;
     default:
         return false;
     }
-    return true;
+    return false;
 }
 
 void AudioNodeWithTask::processMessages()
@@ -153,9 +163,11 @@ void AudioNodeWithTask::processMessages()
         Command cmd;
         ESP_LOGD(mTag, "Waiting for command...");
         mCmdQueue.get(cmd, -1);
-        dispatchCommand(cmd);
-        if (mState == kStateRunning && mCmdQueue.numMessages() == 0) {
-            break;
+        {
+            dispatchCommand(cmd);
+            if (state() == kStateRunning && mCmdQueue.numMessages() == 0) {
+                break;
+            }
         }
     }
 }
@@ -172,5 +184,28 @@ const char* codecTypeToStr(CodecType type)
         case kCodecOggVorbis: return "ogg/vobris";
         case kCodecUnknown: return "none";
         default: return "(unknown)";
+    }
+}
+const char* AudioNodeWithState::stateToStr(State state)
+{
+    switch(state) {
+        case kStateRunning: return "Running";
+        case kStateStopped: return "Stopped";
+        case kStateTerminated: return "Terminated";
+        default: return "(invalid)";
+    }
+}
+const char* AudioNode::streamEventToStr(StreamError evt) {
+    switch (evt) {
+        case kTimeout: return "kTimeout";
+        case kStreamStopped: return "kStreamStopped";
+        case kStreamChanged: return "kStreamChanged";
+        case kCodecChanged: return "kCodecChanged";
+        case kTitleChanged: return "kTitleChanged";
+        case kErrNoCodec: return "kErrNoCodec";
+        case kErrDecode: return "kErrDecode";
+        case kErrStreamFmt: return "kErrStreamFmt";
+        case kNoError: return "kNoError";
+        default: return "(invalid)";
     }
 }

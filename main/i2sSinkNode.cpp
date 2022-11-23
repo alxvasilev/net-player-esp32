@@ -26,7 +26,6 @@ void I2sOutputNode::adjustSamplesForInternalDac(char* sBuff, int len)
 
 void I2sOutputNode::nodeThreadFunc()
 {
-    MutexLocker locker(mutex);
     for (;;) {
         processMessages();
         if (mTerminate) {
@@ -35,26 +34,29 @@ void I2sOutputNode::nodeThreadFunc()
         myassert(mState == kStateRunning);
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
             DataPullReq dpr(kDataPullSize); // read all available data
-            StreamError err;
-            {
-                MutexUnlocker unlocker(mutex);
-                err = mPrev->pullData(dpr);
-            }
+            auto err = mPrev->pullData(dpr);
             if (err) {
                 if (err == kStreamChanged) {
                     // dpr does not contain PCM format info, but codec type and streamId
+                    MutexLocker locker(mutex);
                     mSampleCtr = 0;
                     mStreamId = dpr.streamId;
-                    printf("streamId set to %u\n", mStreamId);
+                    ESP_LOGI(mTag, "streamId set to %u", mStreamId);
+                    continue;
+                } else {
+                    plSendEvent(kPipeEventStreamError, mStreamId, err);
+                    break;
                 }
-                continue;
             }
             myassert(dpr.size);
             if (dpr.fmt != mFormat) {
                 ESP_LOGI(mTag, "Changing I2S output format");
                 setFormat(dpr.fmt);
             }
-            mSampleCtr += dpr.size >> mBytesPerSampleShiftDiv;
+            {
+                MutexLocker locker(mutex);
+                mSampleCtr += dpr.size >> mBytesPerSampleShiftDiv;
+            }
             if (mUseVolumeInterface) {
                 processVolumeAndLevel(dpr);
             }

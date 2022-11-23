@@ -163,9 +163,6 @@ public:
         }
     }
     int size() const { return mBufEnd - mBuf; }
-    /* NOTE: This is NOT safe if a read or write is in progress
-     * (commitRead/Write has not yet been called)
-     */
     void clear()
     {
         MutexLocker locker(mMutex);
@@ -174,9 +171,11 @@ public:
                 doClear();
                 return;
             }
-            mMutex.unlock();
-            waitFor(kFlagReadOp | kFlagWriteOp, -1);
-            mMutex.lock();
+            {
+                // an operation is in progress, wait for its completion
+                MutexUnlocker unlocker(mMutex);
+                waitFor(kFlagReadOp | kFlagWriteOp, -1);
+            }
         }
     }
     int dataSize()

@@ -1,8 +1,14 @@
 #ifndef DLNA_HPP_HEADER_
 #define DLNA_HPP_HEADER_
 #include <string>
+#include <memory>
+#include "utils.hpp"
+
 class AudioPlayer;
-typedef struct _mxml_node_s mxml_node_t;
+struct TrackInfo;
+namespace tinyxml2 {
+    class XMLElement;
+};
 
 class DlnaHandler {
 protected:
@@ -18,7 +24,7 @@ protected:
     sockaddr_in mAddr;
     TaskHandle_t mSsdpRxTask;
     AudioPlayer& mPlayer;
-    std::string mAvTransportUri;
+    unique_ptr_mfree<TrackInfo> mQueuedTrack;
     char mUuid[13];
     bool mTerminate = false;
     char mMsgBuf[480];
@@ -33,9 +39,9 @@ protected:
     bool parseSsdpRequest(char* str, int len, SvcName& svcName);
     static esp_err_t httpDlnaDescGetHandler(httpd_req_t* req);
     static esp_err_t httpDlnaCommandHandler(httpd_req_t* req);
-    bool handleAvTransportCommand(httpd_req_t* req, const char* cmd, mxml_node_t* cmdNode, std::string& result);
-    bool handleConnMgrCommand(httpd_req_t* req, const char* cmd, mxml_node_t* cmdNode, std::string& result);
-    bool handleRenderCtlCommand(httpd_req_t* req, const char* cmd, mxml_node_t* cmdNode, std::string& result);
+    bool handleAvTransportCommand(httpd_req_t* req, const char* cmd, const tinyxml2::XMLElement& cmdNode, std::string& result);
+    bool handleConnMgrCommand(httpd_req_t* req, const char* cmd, const tinyxml2::XMLElement& cmdNode, std::string& result);
+    bool handleRenderCtlCommand(httpd_req_t* req, const char* cmd, const tinyxml2::XMLElement& cmdNode, std::string& result);
 
 public:
     DlnaHandler(httpd_handle_t httpServer, const char* hostPort, AudioPlayer& player);

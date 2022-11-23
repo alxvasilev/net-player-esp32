@@ -94,14 +94,22 @@ class IAudioVolume;
 class AudioNode
 {
 public:
-    enum EventType: uint32_t {
-        kEventStateChange = 1,
-        kEventData = 2,
-        kEventLastGeneric = 8
+    enum StreamError: int8_t {
+        kNoError = 0,
+        kTimeout,
+        kStreamStopped,
+        kStreamChanged,
+        kCodecChanged,
+        kTitleChanged,
+        kErrNoCodec,
+        kErrDecode,
+        kErrStreamFmt
     };
+    enum { kPipeEventStreamError = 1 };
+
     // we put here the state definitions only because the class name is shorter than AudioNodeWithTask
     enum State: uint8_t {
-        kStateStopped = 1, kStatePaused = 2,
+        kStateTerminated = 1, kStateStopped = 2,
         kStateRunning = 4, kStateLast = kStateRunning
     };
     // Static registry of all possible node types.
@@ -110,19 +118,18 @@ public:
     // of this class
     enum Type: uint8_t {
         kTypeUnknown = 0,
-        kTypeHttpIn,
-        kTypeI2sIn,
-        kTypeA2dpIn,
-        kTypeDecoder,
-        kTypeEncoder,
-        kTypeEqualizer,
-        kTypeI2sOut,
-        kTypeHttpOut,
-        kTypeA2dpOut
+        kTypeHttpIn = 0x80, // convenient for subcategories
+        kTypeA2dpIn = 1,
+        kTypeI2sIn = 2,
+        kTypeDecoder = 3,
+        kTypeEncoder = 4,
+        kTypeEqualizer = 5,
+        kTypeI2sOut = 6,
+        kTypeHttpOut = 7,
+        kTypeA2dpOut = 8
     };
     const char* tag() { return mTag; }
 protected:
-    static bool sHaveSpiRam;
     IAudioPipeline& mPipeline;
     const char* mTag;
     Mutex mMutex;
@@ -134,41 +141,29 @@ public:
     virtual Type type() const = 0;
     virtual IAudioVolume* volumeInterface() { return nullptr; }
     virtual ~AudioNode() {}
+    virtual void reset() {}
     void linkToPrev(AudioNode* prev) { mPrev = prev; }
     AudioNode* prev() const { return mPrev; }
-    enum StreamError: int8_t {
-        kNoError = 0,
-        kTimeout,
-        kStreamStopped,
-        kStreamChanged,
-        kCodecChanged,
-        kTitleChanged,
-        kNeedMoreData,
-        kStreamFlush,
-        kErrNoCodec,
-        kErrDecode,
-        kErrStreamFmt,
-        kErrBuffer
-    };
+    typedef uint8_t StreamId;
     struct DataPullReq
     {
         char* buf = nullptr;
         int size;
         union {
             StreamFormat fmt;
-            union {
-                uint32_t streamId: 24;
-                CodecType codec;
-            };
+            CodecType codec;
         };
+        StreamId streamId;
         DataPullReq(size_t aSize): size(aSize) {}
         void reset(size_t aSize)
         {
             size = aSize;
             buf = nullptr;
+            streamId = 0;
             fmt.clear();
             myassert(codec == kCodecUnknown);
         }
+        void clear() { reset(0); }
     };
 
     // Upon return, buf is set to the internal buffer containing the data, and size is updated to the available data
@@ -176,6 +171,7 @@ public:
     // confirmRead() with the actual amount read.
     virtual StreamError pullData(DataPullReq& dpr) = 0;
     virtual void confirmRead(int amount) = 0;
+    static const char* streamEventToStr(StreamError evt);
     static StreamError threeStateStreamError(int ret) {
         if (ret > 0) {
             return kNoError;
@@ -192,25 +188,23 @@ public:
 class AudioNodeWithState: public AudioNode
 {
 protected:
-    State mState = kStateStopped;
-    volatile bool mTerminate = false;
     EventGroup mEvents;
-    enum { kEvtStopRequest = kStateLast << 1, kEvtLast = kEvtStopRequest };
+    volatile State mState = kStateTerminated; // state is a backing store for the state in mEvents
+    enum { kStateMask = (kStateLast << 1) - 1, kEvtStopRequest = kStateLast << 1, kEvtLast = kEvtStopRequest };
+    /** Called internally when the state has been reached */
     void setState(State newState);
-    virtual void doStop() { setState(kStateStopped); } // node-specific stop code goes here. Guaranteed to be called with mState != kStateStopped
-    virtual void doPause() { setState(kStatePaused); }
-    virtual bool doRun() { setState(kStateRunning); return true; }
+    virtual void onStopped() {}
 public:
-    AudioNodeWithState(IAudioPipeline& parent, const char* tag): AudioNode(parent, tag), mEvents(kEvtStopRequest)
-    {
-        mEvents.setBits(kStateStopped);
-    }
+    AudioNodeWithState(IAudioPipeline& parent, const char* tag)
+    : AudioNode(parent, tag), mEvents(kEvtStopRequest | kStateTerminated) {}
     State state() const { return mState; }
-    State waitForState(unsigned state);
-    void pause(bool wait=true);
-    void stop(bool wait=true);
-    bool run();
-    void waitForStop();
+    State waitForState(unsigned state, int timeout=-1) { return (State)mEvents.waitForOneNoReset(state, timeout); }
+    void waitForStop() { waitForState(kStateStopped); }
+    void waitForTerminate() { waitForState(kStateTerminated); }
+    virtual bool run();
+    virtual void stop(bool wait=true);
+    virtual void terminate(bool wait=true);
+    static const char* stateToStr(State state);
 };
 
 class AudioNodeWithTask: public AudioNodeWithState
@@ -224,29 +218,33 @@ protected:
         Command(uint8_t aCmd, void* aArg=nullptr): opcode(aCmd), arg(aArg){}
         Command(){} //no init, used for retrieving commands
     };
-    enum: uint8_t { kCommandPause = 1, kCommandRun, kCommandLast = kCommandRun };
+    enum: uint8_t { kCommandStop = 1, kCommandRun, kCommandLast = kCommandRun };
     enum { kDefaultPrio = 4 };
     TaskHandle_t mTaskId = NULL;
     uint32_t mStackSize;
     Queue<Command, 4> mCmdQueue;
+    bool mTerminate = false;
     uint8_t mTaskPrio;
     int8_t mCpuCore;
     static void sTaskFunc(void* ctx);
     bool createAndStartTask();
+    void processMessages();
     // This is the node's task function.
     // It is executed within a MutexLocker scope, and the node's state is set to
     // kStatePaused before it is called. After it returns, the node's state
     // is set to kStateStopped
     virtual void nodeThreadFunc() = 0;
-    void processMessages();
     virtual bool dispatchCommand(Command& cmd);
-    virtual void doPause() override { mCmdQueue.post(kCommandPause); }
-    virtual bool doRun() override;
+    virtual void onStopRequest() {}
+    virtual void onStopped() {}
 public:
     AudioNodeWithTask(IAudioPipeline& parent, const char* tag, uint32_t stackSize, uint8_t prio=kDefaultPrio, int8_t core=-1)
     :AudioNodeWithState(parent, tag), mStackSize(stackSize), mTaskPrio(prio), mCpuCore(core)
     {}
     void setPriority(uint8_t prio) { mTaskPrio = prio; }
+    virtual bool run() override;
+    virtual void stop(bool wait=true) override;
+    virtual void terminate(bool wait=true) override;
 };
 
 inline void AudioNode::plSendEvent(uint32_t type, uintptr_t arg, int bufSize)

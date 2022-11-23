@@ -18,7 +18,7 @@ class A2dpInputNode: public AudioNodeWithState
 public:
     enum { kBufferSize = 8 * 1024 };
     enum: uint16_t {
-        kEventDisconnect = kEventLastGeneric +1,
+        kEventDisconnect = 1,
         kEventConnect,
 
     };

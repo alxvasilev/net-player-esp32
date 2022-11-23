@@ -13,7 +13,9 @@ protected:
 
     int16_t* mOutputBuf;
     int mOutputLen;
+    AudioNode::DataPullReq* mDprPtr = nullptr;
     FLAC__StreamDecoder* mDecoder = nullptr;
+    AudioNode::StreamError mLastStreamEvent;
     void init();
     void freeBuffers();
     static FLAC__StreamDecoderReadStatus readCb(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void *client_data);

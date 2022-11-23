@@ -77,6 +77,7 @@ protected:
     esp_http_client_handle_t mClient = nullptr;
     CodecType mInCodec = kCodecUnknown;
     CodecType mOutCodec = kCodecUnknown;
+    uint32_t mOutStreamId = 0;
     Playlist mPlaylist; /* media playlist */
     RingBuf mRingBuf;
     StaticQueue<QueuedStreamEvent, 6> mStreamEventQueue;
@@ -110,19 +111,20 @@ protected:
     int delayFromRetryCnt(int tries);
     void nodeThreadFunc();
     virtual bool dispatchCommand(Command &cmd);
-    virtual void doStop();
+    virtual void onStopRequest() override;
+    virtual void onStopped() override;
 // recording stuff
     bool recordingMaybeEnable();
     void recordingStop();
     void recordingCancelCurrent();
 public:
     enum: uint32_t {
-        kEventConnecting = kEventLastGeneric << 1,
-        kEventConnected = kEventLastGeneric << 2,
-        kEventNextTrack = kEventLastGeneric << 3,
-        kEventNoMoreTracks = kEventLastGeneric << 4,
-        kEventTrackInfo = kEventLastGeneric << 5,
-        kEventRecording = kEventLastGeneric << 6
+        kEventConnecting = 1,
+        kEventConnected,
+        kEventNextTrack,
+        kEventNoMoreTracks,
+        kEventTrackInfo,
+        kEventRecording
     };
     mutable Mutex mMutex;
     IcyInfo& icyInfo() { return mIcyParser; }
@@ -131,7 +133,6 @@ public:
     virtual Type type() const { return kTypeHttpIn; }
     virtual StreamError pullData(DataPullReq &dp);
     virtual void confirmRead(int size);
-    virtual void pause(bool wait);
     void setUrl(UrlInfo* urlInfo);
     bool isConnected() const;
     const char* trackName() const;

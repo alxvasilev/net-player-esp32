@@ -52,53 +52,74 @@ void AudioPlayer::createOutputA2dp()
     */
 }
 
-AudioPlayer::AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, ST7735Display& lcd, HttpServerInfo& httpServer, bool useEq)
+AudioPlayer::AudioPlayer(PlayerMode playerMode, AudioNode::Type outType, ST7735Display& lcd, HttpServerInfo& httpServer, bool useEq)
 : mFlags(useEq ? kFlagUseEqualizer : (Flags)0), mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd),
   mEvents(kEventTerminating), mHttpServer(httpServer), mVuDisplay(mLcd)
 {
-    init(inType, outType);
+    init(playerMode, outType);
 }
 
 AudioPlayer::AudioPlayer(ST7735Display& lcd, HttpServerInfo& httpServer)
 : mFlags((Flags)0), mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd),
   mHttpServer(httpServer), mVuDisplay(mLcd)
 {
-    init(AudioNode::kTypeUnknown, AudioNode::kTypeUnknown);
+    init(kModeInvalid, AudioNode::kTypeUnknown);
 }
 
-void AudioPlayer::init(AudioNode::Type inType, AudioNode::Type outType)
+void AudioPlayer::init(PlayerMode mode, AudioNode::Type outType)
 {
     lcdInit();
     mNvsHandle.enableAutoCommit(20000);
-    if (inType == AudioNode::kTypeUnknown)
+    if (mode == kModeInvalid)
     {
-        initFromNvs();
+        mode = initFromNvs();
     }
     else
     {
-        createPipeline(inType, outType);
+        if (!playerModeIsValid(mode)) {
+            ESP_LOGW(TAG, "init: Specfied player mode %d is invalid, defaulting to %s",
+                mode, playerModeToStr(kModeDefault));
+            mode = kModeDefault;
+        }
+        createPipeline((AudioNode::Type)(mode & ~kModeFlagHttp), outType);
     }
-    initTimedDrawTask();
-    if (inputType() == AudioNode::kTypeHttpIn) {
+    auto inType = inputType();
+    if (inType == AudioNode::kTypeHttpIn) {
         stationList.reset(new StationList(mutex));
+    }
+    lcdDrawGui();
+    setPlayerMode(mode);
+    initTimedDrawTask();
+    registerUrlHanlers();
+    if (inType == AudioNode::kTypeHttpIn) {
         createDlnaHandler();
         mDlna->start();
     }
-    registerUrlHanlers();
 }
-void AudioPlayer::initFromNvs()
+AudioPlayer::PlayerMode AudioPlayer::initFromNvs()
 {
     uint8_t useEq = mNvsHandle.readDefault<uint8_t>("useEq", 1);
     if (useEq) {
         mFlags = (Flags)(mFlags | kFlagUseEqualizer);
     }
-    AudioNode::Type inType = (AudioNode::Type)mNvsHandle.readDefault<uint8_t>("inType", AudioNode::kTypeHttpIn);
+    auto playerMode = (PlayerMode)mNvsHandle.readDefault<uint8_t>("playerMode", kModeRadio);
+    if (!playerModeIsValid(playerMode)) {
+        playerMode = kModeRadio;
+    }
+    AudioNode::Type inType = (playerMode & kModeFlagHttp) ? AudioNode::kTypeHttpIn : (AudioNode::Type)playerMode;
     bool ok = createPipeline(inType, AudioNode::kTypeI2sOut);
     if (!ok) {
         ESP_LOGE(TAG, "Failed to create audio pipeline");
         myassert(false);
     }
+    return playerMode;
 }
+bool AudioPlayer::playerModeIsValid(PlayerMode mode)
+{
+    return mode == kModeRadio || mode == kModeDlna || mode == kModeUrl ||
+           mode == kModeBluetoothSink || mode == kModeSpdifIn;
+}
+
 void AudioPlayer::createDlnaHandler()
 {
     tcpip_adapter_ip_info_t ipInfo;
@@ -186,7 +207,6 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
     detectVolumeNode();
     ESP_LOGI(TAG, "Audio pipeline:\n%s", printPipeline().c_str());
     loadSettings();
-    lcdDrawGui();
     return true;
 }
 
@@ -194,33 +214,40 @@ void AudioPlayer::lcdDrawGui()
 {
     mLcd.setBgColor(0, 0, 128);
     mLcd.clear();
+    mLcd.setFgColor(0, 128, 128);
     mLcd.setFont(font_Camingo22);
-    mLcd.setFgColor(255, 255, 128);
-    mLcd.gotoXY(0, 0);
-    auto type = mStreamIn->type();
-    if (type == AudioNode::kTypeHttpIn) {
-        mLcd.puts("Radio");
+    mLcd.hLine(0, mLcd.width()-1, mLcd.fontHeight() + 3);
+}
+void AudioPlayer::setPlayerMode(PlayerMode mode)
+{
+    if (mPlayerMode != mode) {
+        mPlayerMode = mode;
+        mLcd.setFont(font_Camingo22);
+        mLcd.setBgColor(0, 0, 128);
+        mLcd.clear(0, 0, mLcd.width(), mLcd.fontHeight() + 2);
+        mLcd.setFgColor(255, 255, 128);
+        mLcd.gotoXY(0, 0);
+        mLcd.puts(playerModeToStr(mPlayerMode));
+    }
+    if (mPlayerMode == kModeRadio) {
         if (stationList) {
             lcdUpdateStationInfo();
         }
-    } else if (type == AudioNode::kTypeA2dpIn) {
-        mLcd.puts("Bluetooth");
     } else {
-        mLcd.puts("?");
+        lcdUpdateArtistName(mTrackInfo ? mTrackInfo->artistName : nullptr);
+        lcdUpdateTrackTitle(mTrackInfo ? mTrackInfo->trackName : nullptr);
     }
-    mLcd.setFgColor(0, 128, 128);
-    mLcd.hLine(0, mLcd.width()-1, mLcd.fontHeight() + 3);
 }
 void AudioPlayer::lcdUpdateStationInfo()
 {
-    assert(mStreamIn && mStreamIn->type() == AudioNode::kTypeHttpIn);
+    assert(mPlayerMode == kModeRadio);
     auto& station = stationList->currStation;
     if (!station.isValid()) {
         return;
     }
-    lcdDisplayStationName(station.name());
+    lcdUpdateArtistName(station.name());
 // station flags
-    mLcd.setFont(font_Icons22); //TODO: Use pictogram font
+    mLcd.setFont(font_Icons22);
     mLcd.cursorY = 0;
     mLcd.cursorX = (mLcd.width() - mLcd.charWidth(kSymFavorite)) / 2;
     if (station.flags() & Station::kFlagFavorite) {
@@ -232,13 +259,15 @@ void AudioPlayer::lcdUpdateStationInfo()
 
     lcdUpdateRecIcon();
 }
-void AudioPlayer::lcdDisplayStationName(const char* name)
+void AudioPlayer::lcdUpdateArtistName(const char* name)
 {
     mLcd.setFont(font_Camingo32);
-    mLcd.setFgColor(255, 255, 128);
     mLcd.clear(0, mLcd.fontHeight() + 6, mLcd.width(), mLcd.fontHeight());
-    mLcd.gotoXY(0, mLcd.fontHeight() + 6);
-    mLcd.putsCentered(name);
+    if (name) {
+        mLcd.gotoXY(0, mLcd.fontHeight() + 6);
+        mLcd.setFgColor(255, 255, 128);
+        mLcd.putsCentered(name);
+    }
 }
 void AudioPlayer::lcdUpdateRecIcon()
 {
@@ -297,15 +326,18 @@ std::string AudioPlayer::printPipeline()
     return result;
 }
 
-void AudioPlayer::changeInput(AudioNode::Type inType)
+void AudioPlayer::changeInput(PlayerMode playerMode)
 {
-    mNvsHandle.write("inType", (uint8_t)inType);
-    if (mStreamIn && inType == mStreamIn->type()) {
-        ESP_LOGW(TAG, "AudioPlayer::changeInput: Input type is already %d", inType);
+    if (mPlayerMode == playerMode) {
+        return;
+    }
+    mNvsHandle.write("playerMode", (uint8_t)playerMode);
+    auto oldType = (AudioNode::Type)(mPlayerMode & kModeFlagHttp);
+    mPlayerMode = playerMode;
+    if (mStreamIn && oldType == mStreamIn->type()) {
         return;
     }
     destroyPipeline();
-    mNvsHandle.write("inType", (uint8_t)inType);
     initFromNvs();
 }
 
@@ -356,19 +388,30 @@ void AudioPlayer::destroyPipeline()
     mStreamOut.reset();
 }
 
-bool AudioPlayer::playUrl(const char* url, const char* record)
+bool AudioPlayer::playUrl(const char* url, PlayerMode playerMode, const char* record)
 {
-    if (!mStreamIn || mStreamIn->type() != AudioNode::kTypeHttpIn) {
+    if (!(playerMode & kModeFlagHttp) || !mStreamIn) {
+        mTrackInfo.reset();
         return false;
     }
-    lcdUpdateTrackTitle(nullptr);
+    printf("===================trackInfo: name: %s\n", mTrackInfo.get() ? mTrackInfo->trackName : "null");
+    setPlayerMode(playerMode);
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
     auto urlInfo = HttpNode::UrlInfo::Create(url, ++mStreamSeqNo, record);
+    // setUrl will start the http node, if it's stopped. However, this may take a while.
+    // If we meanwhile start the i2s out node, it will start to pull data from the not-yet-started http node,
+    // whose state may not be set up correctly for the new stream (i.e. waitingPrefill not set)
     http.setUrl(urlInfo);
-    if (!isPlaying()) {
-        play();
+    if (http.waitForState(AudioNode::kStateRunning) != AudioNode::kStateRunning) {
+        return false;
     }
+    mStreamOut->run();
     return true;
+}
+bool AudioPlayer::playUrl(TrackInfo* trackInfo, PlayerMode playerMode, const char* record)
+{
+    mTrackInfo.reset(trackInfo);
+    return playUrl(trackInfo->url, playerMode, record);
 }
 esp_err_t AudioPlayer::playStation(const char* id)
 {
@@ -391,10 +434,9 @@ esp_err_t AudioPlayer::playStation(const char* id)
 
     auto& station = this->stationList->currStation;
     assert(station.isValid());
-    if (!playUrl(station.url(), (station.flags() & station.kFlagRecord) ? station.id() : nullptr)) {
+    if (!playUrl(station.url(), kModeRadio, (station.flags() & station.kFlagRecord) ? station.id() : nullptr)) {
         return ESP_ERR_NOT_SUPPORTED; // stream source node is not http client
     }
-    lcdUpdateStationInfo();
     return ESP_OK;
 }
 
@@ -423,31 +465,33 @@ void AudioPlayer::play()
     lcdUpdatePlayState(kSymPlaying);
 }
 
-void AudioPlayer::pause()
-{
-    mStreamIn->pause();
-    mStreamOut->pause();
-    mStreamIn->waitForState(AudioNodeWithTask::kStatePaused);
-    mStreamOut->waitForState(AudioNodeWithTask::kStatePaused);
-    lcdUpdatePlayState(kSymPaused);
-}
-
 void AudioPlayer::resume()
 {
     play();
 }
-
+void AudioPlayer::pipelineStop()
+{
+    printf("before pipelineStop - new\n");
+    mStreamIn->stop(false);
+    mStreamOut->stop(false);
+    mStreamIn->waitForStop();
+    mStreamOut->waitForStop();
+    mDecoder->reset();
+    printf("after pipelineStop\n");
+}
+void AudioPlayer::pause()
+{
+    pipelineStop();
+    lcdUpdatePlayState(kSymPaused);
+}
 void AudioPlayer::stop()
 {
-   mStreamIn->stop(false);
-   mStreamOut->stop(false);
-   mStreamIn->waitForStop();
-   mStreamOut->waitForStop();
-   mTitleScrollEnabled = false;
-   if (mVolumeInterface) {
-       mVolumeInterface->clearAudioLevels();
-   }
-   lcdUpdatePlayState(kSymStopped);
+    pipelineStop();
+    mTitleScrollEnabled = false;
+    if (mVolumeInterface) {
+        mVolumeInterface->clearAudioLevels();
+    }
+    lcdUpdatePlayState(kSymStopped);
 }
 uint32_t AudioPlayer::positionTenthSec() const
 {
@@ -584,10 +628,8 @@ esp_err_t AudioPlayer::playUrlHandler(httpd_req_t *req)
     DynBuffer buf(128);
     auto param = params.strVal("url");
     if (param) {
-        self->lcdDisplayStationName("User link");
-        self->playUrl(param.str);
+        self->playUrl(param.str, kModeUrl, nullptr);
         buf.printf("Playing url '%s'", param.str);
-        self->lcdUpdateTrackTitle(param.str);
     }
     else {
         auto err = self->playStation(params.strVal("sta").str);
@@ -867,18 +909,18 @@ esp_err_t AudioPlayer::changeInputUrlHandler(httpd_req_t *req)
     }
     switch(type.str[0]) {
         case 'b':
-            self->changeInput(AudioNode::kTypeA2dpIn);
+            self->changeInput(kModeBluetoothSink);
             httpd_resp_sendstr(req, "Switched to Bluetooth A2DP sink");
             break;
         case 'h':
-            self->changeInput(AudioNode::kTypeHttpIn);
-            httpd_resp_sendstr(req, "Switched to HTTP client");
+            self->changeInput(kModeRadio);
+            httpd_resp_sendstr(req, "Switched to HTTP client (net radio)");
             break;
         default:
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid mode param");
             return ESP_OK;
     }
-    ESP_LOGI(TAG, "Changed input node to type %d", self->nvs().readDefault<uint8_t>("inType", AudioNode::kTypeHttpIn));
+    ESP_LOGI(TAG, "Changed input node to type %d", self->nvs().readDefault<uint8_t>("playerMode", kModeDefault));
     return ESP_OK;
 }
 
@@ -908,30 +950,43 @@ void AudioPlayer::onNodeError(AudioNode& node, int error)
     });
 }
 
-void AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t buf, size_t bufSize)
+void AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t arg, size_t numArg)
 {
-    if (node.type() != AudioNode::kTypeHttpIn) {
-        return;
+    if (node.type() == AudioNode::kTypeHttpIn) {
+        // We are in the http node's thread, must not do any locking from here, so we call
+        // into the player via async messages
+        if (event == HttpNode::kEventTrackInfo) {
+            ESP_LOGI(TAG, "Received title event: %s", (const char*)arg);
+            asyncCall([this, title = std::string((const char*)arg)]() {
+                LOCK_PLAYER();
+                lcdUpdateTrackTitle(title.c_str());
+            });
+        }
+        else {
+            asyncCall([this, event]() {
+                LOCK_PLAYER();
+                if (event == HttpNode::kEventConnected) {
+                    lcdUpdatePlayState(kSymPlaying);
+                } else if (event == HttpNode::kEventConnecting) {
+                    lcdUpdatePlayState(kSymConnecting);
+                } else if (event == HttpNode::kEventRecording) {
+                    lcdUpdateRecIcon();
+                }
+            });
+        }
     }
-    // We are in the http node's thread, must not do any locking from here, so we call
-    // into the player via async messages
-    if (event == HttpNode::kEventTrackInfo) {
-        asyncCall([this, title = std::string((const char*)buf)]() {
-            LOCK_PLAYER();
-            lcdUpdateTrackTitle(title.c_str());
-        });
-    }
-    else {
-        asyncCall([this, event]() {
-            LOCK_PLAYER();
-            if (event == HttpNode::kEventConnected) {
-                lcdUpdatePlayState(kSymPlaying);
-            } else if (event == HttpNode::kEventConnecting) {
-                lcdUpdatePlayState(kSymConnecting);
-            } else if (event == HttpNode::kEventRecording) {
-                lcdUpdateRecIcon();
-            }
-        });
+    else if (&node == mStreamOut.get()) {
+        if (event == AudioNode::kPipeEventStreamError) {
+            asyncCall([this, arg, numArg]() {
+                const char* errName = AudioNode::streamEventToStr((AudioNode::StreamError)numArg);
+                if (arg != mStreamSeqNo) {
+                    ESP_LOGW(TAG, "Discarding stream error %s from output node, streamId is old", errName);
+                } else {
+                    ESP_LOGW(TAG, "Received stream error %s from output node, stopping playback", errName);
+                    stop();
+                }
+            });
+        }
     }
 }
 
@@ -1046,3 +1101,14 @@ void AudioPlayer::audioLevelCb(void* ctx)
     self.mEvents.setBits(kEventVolLevel);
 }
 
+const char* AudioPlayer::playerModeToStr(PlayerMode mode) {
+    switch(mode) {
+        case kModeRadio: return "Radio";
+        case kModeDlna: return "DLNA";
+        case kModeUrl: return "User URL";
+        case kModeBluetoothSink: return "Bluetooth";
+        case kModeSpdifIn: return "SPDIF";
+//      case kModeAuxIn: return "AUX";
+        default: return "";
+    }
+}

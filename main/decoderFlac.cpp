@@ -26,46 +26,78 @@ DecoderFlac::~DecoderFlac()
 }
 void DecoderFlac::reset()
 {
+    printf("============== FLAC reset\n");
     outputFormat.clear();
     FLAC__stream_decoder_reset(mDecoder);
 }
 FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void* userp)
 {
+    printf("readCb called\n");
     auto& self = *static_cast<DecoderFlac*>(userp);
-    AudioNode::DataPullReq dpr(*bytes);
-    auto event = self.mSrcNode.pullData(dpr);
+    assert(self.mDprPtr);
+    auto& dpr = *self.mDprPtr;
+    dpr.size = *bytes;
+    auto event = self.mLastStreamEvent = self.mSrcNode.pullData(dpr);
     if (!event) {
         *bytes = dpr.size;
         memcpy(buffer, dpr.buf, dpr.size);
         self.mSrcNode.confirmRead(dpr.size);
+        char fourcc[5];
+        auto fcclen = std::min(4, dpr.size);
+        memcpy(fourcc, dpr.buf, fcclen);
+        fourcc[fcclen] = 0;
+        printf("FLAC: readcb: returning %d bytes(fourcc: %s)\n", dpr.size, fourcc);
         return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
     }
+    printf("FLAC: readcb: returning event %s\n",  AudioNode::streamEventToStr(event));
     if (event == AudioNode::kStreamChanged) {
-        return FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
+        return FLAC__STREAM_DECODER_READ_STATUS_ABORT; //FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
     } else {
         return FLAC__STREAM_DECODER_READ_STATUS_ABORT;
     }
 }
 void DecoderFlac::errorCb(const FLAC__StreamDecoder *decoder, FLAC__StreamDecoderErrorStatus status, void *client_data)
 {
-    ESP_LOGE(TAG, "FLAC decoder notified about error: %d", status);
+    ESP_LOGE(TAG, "FLAC decode error: %d", status);
 }
 void DecoderFlac::metadataCb(const FLAC__StreamDecoder *decoder, const FLAC__StreamMetadata *metadata, void *client_data)
 {
 }
-
-AudioNode::StreamError DecoderFlac::pullData(AudioNode::DataPullReq& output)
+static const char* kMsgManyFramesZeroOutput = "Many frames decoded without generating any output";
+AudioNode::StreamError DecoderFlac::pullData(AudioNode::DataPullReq& dpr)
 {
-    do {
-        mOutputLen = 0;
-        if (!FLAC__stream_decoder_process_single(mDecoder)) {
-            auto err = FLAC__stream_decoder_get_state(mDecoder);
-            return (err == FLAC__STREAM_DECODER_END_OF_STREAM) ? AudioNode::kStreamChanged : AudioNode::kErrDecode;
+    mDprPtr = &dpr;
+    mOutputLen = 0;
+    for (int i = 0; i < 2; i++) {
+        for (int i = 0; !mOutputLen && (i < 6); i++) {
+            auto ok = FLAC__stream_decoder_process_single(mDecoder);
+            printf("flac decode frame: ok = %d(outLen: %d)\n", ok, mOutputLen);
+            if (!ok) {
+                dpr.clear();
+                auto err = FLAC__stream_decoder_get_state(mDecoder);
+                printf("flac state after error: %d, free internal RAM: %d\n", err, heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+                return (err == FLAC__STREAM_DECODER_END_OF_STREAM || err == FLAC__STREAM_DECODER_ABORTED)
+                        ? mLastStreamEvent
+                        : AudioNode::kErrDecode;
+            }
         }
-    } while(!mOutputLen);
-    output.fmt = outputFormat;
-    output.size = mOutputLen;
-    output.buf = (char*)mOutputBuf;
+        if (!mOutputLen) {
+            ESP_LOGW(TAG, "%s, resetting decoder...", kMsgManyFramesZeroOutput);
+            reset();
+        } else {
+            break;
+        }
+    }
+    if (!mOutputLen) {
+        ESP_LOGW(TAG, "%s, codec reset didn't help, returning error", kMsgManyFramesZeroOutput);
+        dpr.size = 0;
+        dpr.buf = nullptr;
+        return AudioNode::kErrDecode;
+    }
+    dpr.fmt = outputFormat;
+    dpr.size = mOutputLen;
+    dpr.buf = (char*)mOutputBuf;
+    mDprPtr = nullptr; // we don't want a dangling invalid pointer, even if it's not used
     return AudioNode::kNoError;
 }
 FLAC__StreamDecoderWriteStatus DecoderFlac::writeCb(const FLAC__StreamDecoder *decoder, const FLAC__Frame *frame, const FLAC__int32 * const buffer[], void *userp)
@@ -74,7 +106,11 @@ FLAC__StreamDecoderWriteStatus DecoderFlac::writeCb(const FLAC__StreamDecoder *d
     auto header = frame->header;
     auto nChans = header.channels;
     auto nSamples = header.blocksize;
-    assert(nChans && nSamples);
+    if (!nChans || !nSamples) {
+        printf("FLAC assert: nChans=%d, nSamples=%d\n", nChans, nSamples);
+        return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
+    }
+    assert(nSamples);
     int outBytes = nChans * nSamples * 2;
     if (outBytes > kOutputBufSize) {
         ESP_LOGE(TAG, "Output of FLAC codec is too large to fit into output buffer, aborting decode");

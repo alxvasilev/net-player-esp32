@@ -49,9 +49,9 @@ void A2dpInputNode::eventCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *
             if (state == ESP_A2D_AUDIO_STATE_STARTED) {
                 gSelf->setState(kStateRunning);
             } else if (state == ESP_A2D_AUDIO_STATE_REMOTE_SUSPEND) {
-                gSelf->setState(kStatePaused);
+                gSelf->setState(kStateStopped);
             } else if (state == ESP_A2D_AUDIO_STATE_STOPPED) {
-                gSelf->setState(kStatePaused);
+                gSelf->setState(kStateStopped);
             }
             break;
         }

@@ -10,7 +10,7 @@ class I2sOutputNode: public AudioNodeWithTask, public DefaultVolumeImpl
 {
 public:
     Mutex mutex;
-    uint32_t mStreamId = 0;
+    StreamId mStreamId = 0;
 protected:
     i2s_port_t mPort;
     StreamFormat mFormat;

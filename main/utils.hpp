@@ -26,6 +26,24 @@ struct utils {
 protected:
     static bool sHaveSpiRam;
 public:
+    class Endian
+    {
+        static constexpr uint32_t mU32 = 0x01020304;
+        static constexpr uint8_t mView = (const uint8_t&)mU32;
+        Endian() = delete;
+    public:
+        static constexpr bool little = (mView == 0x04);
+        static constexpr bool big = (mView == 0x01);
+        static_assert(little || big, "Cannot determine endianness!");
+    };
+    static constexpr uint32_t ip4Addr(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
+    {
+        if (Endian::little) {
+            return a | (b << 8) | (c << 16) | (d << 24);
+        } else {
+            return (a << 24) | (b << 16) | (c << 8) | d;
+        }
+    }
     static bool haveSpiRam() { return sHaveSpiRam; }
     static bool detectSpiRam();
     static void* mallocTrySpiram(size_t internalSize, size_t spiramSize)
@@ -38,6 +56,8 @@ public:
         return sHaveSpiRam
             ? heap_caps_malloc(size, MALLOC_CAP_SPIRAM) : malloc(size);
     }
+    static constexpr const uint32_t kSpiRamStartAddr = 0x3F800000;
+    static bool isInSpiRam(void* addr) { return (uint32_t)addr >= kSpiRamStartAddr && (uint32_t)addr < (kSpiRamStartAddr + 4 * 1024 * 1024); }
     constexpr uint32_t static log2(uint32_t n) noexcept
     {
         return (n > 1) ? 1 + log2(n >> 1) : 0;
@@ -138,5 +158,10 @@ template<>
         void operator()(FILE* file) const { fclose(file); }
     };
 }
+struct MallocFreeDeleter {
+    void operator()(void* ptr) const { ::free(ptr); }
+};
+template <typename T>
+using unique_ptr_mfree = std::unique_ptr<T, MallocFreeDeleter>;
 
 #endif

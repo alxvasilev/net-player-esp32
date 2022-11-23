@@ -74,11 +74,11 @@ float EqualizerNode::bandGain(uint8_t band)
 }
 AudioNode::StreamError EqualizerNode::pullData(DataPullReq &dpr)
 {
-    MutexLocker locker(mMutex);
     auto event = mPrev->pullData(dpr);
     if (event) {
         return event;
     }
+    MutexLocker locker(mMutex);
     if (dpr.fmt != mFormat) {
         if (dpr.fmt.bitsPerSample() != 16) {
             ESP_LOGE(mTag, "Only 16 bits per sample supported, but stream is %d-bit", dpr.fmt.bitsPerSample());

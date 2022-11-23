@@ -41,7 +41,7 @@ void DecoderAac::reset()
     outputFormat.clear();
 }
 
-AudioNode::StreamError DecoderAac::pullData(AudioNode::DataPullReq& output)
+AudioNode::StreamError DecoderAac::pullData(AudioNode::DataPullReq& dpr)
 {
     bool needMoreData = (mInputLen == 0);
     for(;;) {
@@ -54,18 +54,20 @@ AudioNode::StreamError DecoderAac::pullData(AudioNode::DataPullReq& output)
             int reqSize = kInputBufSize - mInputLen;
             if (reqSize <= 0) {
                 ESP_LOGE(TAG, "Can't decode a frame, even though input buffer is full");
+                mInputLen = 0;
+                mNextFramePtr = mInputBuf;
                 return AudioNode::kErrDecode;
             }
-            AudioNode::DataPullReq idpr(reqSize);
-            auto event = mSrcNode.pullData(idpr);
+            dpr.size = reqSize;
+            auto event = mSrcNode.pullData(dpr);
             if (event) {
                 return event;
             }
             // Existing data starts at mInputBuf
-            myassert(idpr.size && idpr.size <= reqSize);
-            memcpy(mInputBuf + mInputLen, idpr.buf, idpr.size);
-            mSrcNode.confirmRead(idpr.size);
-            mInputLen += idpr.size;
+            myassert(dpr.size && dpr.size <= reqSize);
+            memcpy(mInputBuf + mInputLen, dpr.buf, dpr.size);
+            mSrcNode.confirmRead(dpr.size);
+            mInputLen += dpr.size;
         }
         // printf("AACDecode: inLen=%d, offs=%d\n", mInputLen, mNextFramePtr - mInputBuf);
         auto err = AACDecode(mDecoder, &mNextFramePtr, &mInputLen, mOutputBuf);
@@ -78,9 +80,9 @@ AudioNode::StreamError DecoderAac::pullData(AudioNode::DataPullReq& output)
             if (!mOutputLen) { // we haven't yet initialized output format info
                 getStreamFormat();
             }
-            output.buf = (char*)mOutputBuf;
-            output.size = mOutputLen;
-            output.fmt = outputFormat;
+            dpr.buf = (char*)mOutputBuf;
+            dpr.size = mOutputLen;
+            dpr.fmt = outputFormat;
             return AudioNode::kNoError;
         }
         else { //err < 0 - error, try to re-sync

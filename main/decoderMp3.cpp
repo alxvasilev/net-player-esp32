@@ -12,7 +12,6 @@ DecoderMp3::DecoderMp3(AudioNode& src): Decoder(src, kCodecMp3)
     }
     mOutputBuf = mInputBuf + kInputBufSize;
     initMadState();
-    ESP_LOGI(TAG, "Mp3 decoder uses approx %zu bytes of RAM", sizeof(DecoderMp3) + kInputBufSize + kOutputBufSize);
 }
 DecoderMp3::~DecoderMp3()
 {
@@ -40,7 +39,7 @@ void DecoderMp3::reset()
     outputFormat.clear();
 }
 
-AudioNode::StreamError DecoderMp3::pullData(AudioNode::DataPullReq &odpr)
+AudioNode::StreamError DecoderMp3::pullData(AudioNode::DataPullReq &dpr)
 {
     bool needMoreData = !mMadStream.buffer;
     for (;;) {
@@ -55,15 +54,15 @@ AudioNode::StreamError DecoderMp3::pullData(AudioNode::DataPullReq &odpr)
                 ESP_LOGE(TAG, "Input buffer full, but can't decode frame");
                 return AudioNode::kErrDecode;
             }
-            AudioNode::DataPullReq idpr(reqSize);
-            auto event = mSrcNode.pullData(idpr);
+            dpr.size = reqSize;
+            auto event = mSrcNode.pullData(dpr);
             if (event) {
                 return event;
             }
-            myassert(idpr.size && idpr.size <= reqSize);
-            mSrcNode.confirmRead(idpr.size);
-            memcpy(mInputBuf + currLen, idpr.buf, idpr.size);
-            mad_stream_buffer(&mMadStream, mInputBuf, currLen + idpr.size);
+            myassert(dpr.size && dpr.size <= reqSize);
+            mSrcNode.confirmRead(dpr.size);
+            memcpy(mInputBuf + currLen, dpr.buf, dpr.size);
+            mad_stream_buffer(&mMadStream, mInputBuf, currLen + dpr.size);
         }
         auto ret = mad_frame_decode(&mMadFrame, &mMadStream);
         if (ret) { // returns 0 on success, -1 on error
@@ -85,9 +84,9 @@ AudioNode::StreamError DecoderMp3::pullData(AudioNode::DataPullReq &odpr)
             if (slen <= 0) {
                 return AudioNode::kErrDecode;
             }
-            odpr.buf = (char*)mOutputBuf;
-            odpr.size = slen;
-            odpr.fmt = outputFormat;
+            dpr.buf = (char*)mOutputBuf;
+            dpr.size = slen;
+            dpr.fmt = outputFormat;
             return AudioNode::kNoError;
         }
     }
@@ -102,8 +101,8 @@ void DecoderMp3::logEncodingInfo()
         case MAD_MODE_STEREO: stmode = "stereo"; break;
         default: stmode = "unknown"; break;
     }
-    ESP_LOGW(TAG, "MPEG1 Layer %d, 16-bit %s, %dkHz, %lukbps",
-        mMadFrame.header.layer, stmode, mMadFrame.header.samplerate / 1000,
+    ESP_LOGW(TAG, "MPEG1 Layer %d, 16-bit %s, %.1fkHz, %lukbps",
+        mMadFrame.header.layer, stmode, (float)mMadFrame.header.samplerate / 1000,
         mMadFrame.header.bitrate / 1000);
 }
 

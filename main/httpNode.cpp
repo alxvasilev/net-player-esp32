@@ -18,7 +18,10 @@
 #define LOCK() MutexLocker locker(mMutex)
 
 static const char *TAG = "node-http";
-
+struct CodecMimeTypes { CodecType type; const char** mimeTypes; };
+/*CodecMimeTypes kCodecMimeMap[] = {
+    { kCodecMp3, (char **){ "mp3", "audio/mp3", "audio/mpeg"}}
+};*/
 CodecType HttpNode::codecFromContentType(const char* content_type)
 {
     if (strcasecmp(content_type, "mp3") == 0 ||
@@ -30,12 +33,12 @@ CodecType HttpNode::codecFromContentType(const char* content_type)
     }
     else if (strcasecmp(content_type, "audio/aac") == 0 ||
         strcasecmp(content_type, "audio/x-aac") == 0 ||
-        strcasecmp(content_type, "audio/mp4") == 0 ||
-        strcasecmp(content_type, "audio/aacp") == 0 ||
-        strcasecmp(content_type, "video/MP2T") == 0) {
+//      strcasecmp(content_type, "audio/mp4") == 0 ||
+        strcasecmp(content_type, "audio/aacp") == 0) {
         return kCodecAac;
     }
-    else if (strcasecmp(content_type, "audio/flac") == 0) {
+    else if (strcasecmp(content_type, "audio/flac") == 0 ||
+             strcasecmp(content_type, "audio/x-flac") == 0) {
         return kCodecFlac;
     }
     else if (strcasecmp(content_type, "audio/ogg") == 0 ||
@@ -76,6 +79,9 @@ void HttpNode::doSetUrl(UrlInfo* urlInfo)
     }
     free(mUrlInfo);
     mUrlInfo = urlInfo;
+    mStreamEventQueue.clear();
+    mRingBuf.clear();
+    setWaitingPrefill(true);
 }
 void HttpNode::updateUrl(const char* url)
 {
@@ -208,6 +214,7 @@ bool HttpNode::connect(bool isReconnect)
         }
         plSendEvent(kEventConnected, isReconnect);
         if (!isReconnect) {
+            ESP_LOGD(TAG, "Posting kStreamChange with codec %s and streamId %d\n", codecTypeToStr(mInCodec), mUrlInfo->streamId);
             postStreamEvent_Lock(mStreamStartPos, kStreamChanged, mInCodec, mUrlInfo->streamId);
         }
         return true;
@@ -330,7 +337,7 @@ bool HttpNode::recv()
         }
         return true;
     }
-    setState(kStatePaused);
+    setState(kStateStopped);
     return false;
 }
 
@@ -338,21 +345,23 @@ void HttpNode::setUrl(UrlInfo* urlInfo)
 {
     if (!mTaskId) {
         doSetUrl(urlInfo);
+        run();
     } else {
         ESP_LOGI(mTag, "Posting setUrl command");
         mCmdQueue.post(kCommandSetUrl, urlInfo);
     }
 }
-void HttpNode::pause(bool wait)
+
+void HttpNode::onStopRequest()
 {
-    // The ring buffer may be full and the thread waiting for space to be freed. If nobody consumes the
-    // data, this will result in the thread hanging and not accepting commands. That's why we clear the
-    // ringbuffer as well
-    AudioNodeWithTask::pause(false);
+    mRingBuf.setStopSignal();
+}
+void HttpNode::onStopped()
+{
+    ESP_LOGI(TAG, "Clearing ring buffer and event queue");
+    mStreamEventQueue.clear();
     mRingBuf.clear();
-    if (wait) {
-        waitForState(AudioNode::kStatePaused);
-    }
+    setWaitingPrefill(true);
 }
 bool HttpNode::dispatchCommand(Command &cmd)
 {
@@ -364,9 +373,6 @@ bool HttpNode::dispatchCommand(Command &cmd)
         destroyClient();
         doSetUrl((UrlInfo*)cmd.arg);
         cmd.arg = nullptr;
-        mRingBuf.clear();
-
-        setWaitingPrefill(true);
         setState(kStateRunning);
         break;
     }
@@ -388,7 +394,7 @@ void HttpNode::nodeThreadFunc()
         myassert(mState == kStateRunning);
         if (!isConnected()) {
             if (!connect()) {
-                setState(kStatePaused);
+                setState(kStateStopped);
                 continue;
             }
         }
@@ -398,14 +404,9 @@ void HttpNode::nodeThreadFunc()
     }
 }
 
-void HttpNode::doStop()
-{
-    mRingBuf.setStopSignal();
-}
-
 HttpNode::~HttpNode()
 {
-    stop();
+    terminate(true);
     destroyClient();
     free(mUrlInfo);
 }
@@ -418,9 +419,14 @@ HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize, size_t prefillAmount)
 
 AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
 {
+    if (state() != kStateRunning && (waitForState(kStateRunning, 4000) != kStateRunning)) {
+        dp.clear();
+        return kStreamStopped;
+    }
     while (mWaitingPrefill) {
         ESP_LOGI(TAG, "Waiting ringbuf prefill...");
         if (!waitPrefillChange()) {
+            dp.clear();
             return kStreamStopped;
         }
     }
@@ -434,13 +440,12 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
             if (eventPos <= readPos) {
                 decltype(mStreamEventQueue)::Popper popper(mStreamEventQueue);
                 if (event.type == kStreamChanged) {
-                    this->mOutCodec = event.codec;
-                    dp.codec = event.codec;
+                    dp.codec = mOutCodec = event.codec;
                     dp.streamId = event.streamId;
                     dp.size = 0;
+                    ESP_LOGI(TAG, "Returning kStreamChanged: codec %s, streamId: %u", codecTypeToStr(event.codec), dp.streamId);
                     return kStreamChanged;
                 } else if (event.type == kTitleChanged) {
-                    ESP_LOGI(TAG, "Sending title event '%s'", (const char*)event.data);
                     plSendEvent(kEventTrackInfo, (uintptr_t)event.data);
                     continue;
                 }
@@ -454,9 +459,8 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
             }
         }
     }
+    dp.codec = mOutCodec;
     if (dp.size == 0) { // there was no due stream change event, and this is a codec probe
-        assert(mOutCodec); // waiting for prefill guarantees we already have a stream
-        dp.codec = mOutCodec;
         return kNoError;
     }
     auto ret = mRingBuf.contigRead(dp.buf, dp.size, -1);

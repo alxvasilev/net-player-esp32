@@ -27,15 +27,17 @@ class DecoderNode: public AudioNode
 protected:
     Decoder* mDecoder = nullptr;
     // odp in case there is a stream event that needs to be propagated
-    AudioNode::StreamError detectCodecCreateDecoder(CodecType type, DataPullReq& odp);
+    AudioNode::StreamError detectCodecCreateDecoder(DataPullReq& odp);
     bool createDecoder(CodecType type);
     static int32_t heapFreeTotal(); // used to  calculate memory usage for codecs
+    void deleteDecoder();
 public:
     DecoderNode(IAudioPipeline& parent): AudioNode(parent, "decoder"){}
     virtual Type type() const { return kTypeDecoder; }
     virtual StreamError pullData(DataPullReq& dpr);
     virtual void confirmRead(int size) {}
-    virtual ~DecoderNode() {}
+    virtual ~DecoderNode() { deleteDecoder(); }
+    virtual void reset() override { deleteDecoder(); }
     friend class Decoder;
 };
 

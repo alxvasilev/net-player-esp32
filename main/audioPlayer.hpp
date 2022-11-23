@@ -18,7 +18,7 @@ class ST7735Display;
 namespace nvs {
     class NVSHandle;
 }
-
+struct TrackInfo;
 class AudioPlayer: public IAudioPipeline
 {
 public:
@@ -30,27 +30,18 @@ public:
         uint16_t port = 0;
         bool isSsl = false;
     };
-    struct TrackInfo {
-        const char* url;
-        const char* trackName;
-        const char* artistName;
-        uint32_t durationMs;
-        static TrackInfo* Create(const char* aUrl, const char* trkName, const char* artName, uint32_t durMs)
-        {
-            auto urlLen = strlen(aUrl) + 1;
-            auto tnLen = strlen(trkName) + 1;
-            auto anLen = strlen(artName) + 1;
-            auto inst = (TrackInfo*)malloc(sizeof(TrackInfo) + urlLen + tnLen + anLen);
-            inst->durationMs = durMs;
-            inst->url = (char*)inst + sizeof(TrackInfo);
-            memcpy((char*)inst->url, aUrl, urlLen);
-            inst->trackName = inst->url + urlLen;
-            memcpy((char*)inst->trackName, trkName, tnLen);
-            inst->artistName = inst->trackName + tnLen;
-            memcpy((char*)inst->artistName, artName, anLen);
-            return inst;
-        }
+    enum PlayerMode: uint8_t {
+        kModeInvalid = 0,
+        kModeFlagHttp = 0x80,
+        kModeRadio = kModeFlagHttp,
+        kModeDlna = kModeFlagHttp | 1,
+        kModeUrl = kModeFlagHttp | 2,
+        kModeBluetoothSink = AudioNode::kTypeA2dpIn,
+        kModeSpdifIn = AudioNode::kTypeI2sIn,
+        //====
+        kModeDefault = kModeRadio
     };
+    static const char* playerModeToStr(PlayerMode mode);
 protected:
     enum Flags: uint8_t
     { kFlagUseEqualizer = 1, kFlagListenerHooked = 2, kFlagNoWaitPrefill = 4 };
@@ -84,8 +75,9 @@ protected:
     EventGroup mEvents;
     HttpServerInfo& mHttpServer;
     std::unique_ptr<DlnaHandler> mDlna;
-    std::unique_ptr<TrackInfo> mTrackInfo;
+    unique_ptr_mfree<TrackInfo> mTrackInfo;
     uint32_t mStreamSeqNo = 0;
+    PlayerMode mPlayerMode;
 // general display stuff
     ST7735Display::Color mFontColor = ST7735Display::rgb(255, 255, 128);
     VuDisplay mVuDisplay;
@@ -107,11 +99,13 @@ protected:
     void detectVolumeNode();
     std::string printPipeline();
     void loadSettings();
-    void init(AudioNode::Type inType, AudioNode::Type outType);
-    void initFromNvs();
+    void init(PlayerMode mode, AudioNode::Type outType);
+    PlayerMode initFromNvs();
     float equalizerDoSetBandGain(int band, float dbGain);
     void equalizerSaveGains();
     void createDlnaHandler();
+    void setPlayerMode(PlayerMode mode);
+    void pipelineStop();
     void lcdInit();
     void lcdDrawGui();
     void initTimedDrawTask();
@@ -119,7 +113,7 @@ protected:
     void lcdSetupForTrackTitle();
     void lcdUpdateTrackTitle(const char* buf);
     void lcdScrollTrackTitle(int step=1);
-    void lcdDisplayStationName(const char* name);
+    void lcdUpdateArtistName(const char* name);
     void lcdUpdateStationInfo();
     void lcdUpdateRecIcon();
     // web URL handlers
@@ -136,17 +130,19 @@ protected:
     void registerHttpGetHandler(const char* path, esp_err_t(*handler)(httpd_req_t*));
 public:
     Mutex mutex;
+    PlayerMode mode() const { return mPlayerMode; }
     std::unique_ptr<StationList> stationList;
     const TrackInfo* trackInfo() const { return mTrackInfo.get(); }
     void setLogLevel(esp_log_level_t level);
-    AudioPlayer(AudioNode::Type inType, AudioNode::Type outType, ST7735Display& lcd, HttpServerInfo& httpServer, bool useEq=true);
+    AudioPlayer(PlayerMode mode, AudioNode::Type outType, ST7735Display& lcd, HttpServerInfo& httpServer, bool useEq=true);
     AudioPlayer(ST7735Display& lcd, HttpServerInfo& httpServer);
     ~AudioPlayer();
     AudioNode::Type inputType() const { return mStreamIn->type(); }
     AudioNode::Type outputType() const { return mStreamOut->type(); }
     NvsHandle& nvs() { return mNvsHandle; }
-    void changeInput(AudioNode::Type inType);
-    bool playUrl(const char* url, const char* record=nullptr);
+    void changeInput(PlayerMode playerMode);
+    bool playUrl(const char* url, PlayerMode playerMode, const char* record=nullptr);
+    bool playUrl(TrackInfo* trackInfo, PlayerMode playerMode, const char* record=nullptr);
     esp_err_t playStation(const char* id);
     bool isStopped() const;
     bool isPaused() const;
@@ -156,6 +152,7 @@ public:
     void resume();
     void stop();
     uint32_t positionTenthSec() const;
+    static bool playerModeIsValid(PlayerMode mode);
     int volumeGet();
     bool volumeSet(uint16_t vol);
     uint16_t volumeChange(int step);
@@ -165,8 +162,45 @@ public:
     bool equalizerSetGainsBulk(char* str, size_t len);
     void registerUrlHanlers();
     // AudioNode::EventHandler interface
-    virtual void onNodeEvent(AudioNode& node, uint32_t type, uintptr_t arg, size_t bufSize) override;
+    virtual void onNodeEvent(AudioNode& node, uint32_t type, uintptr_t arg, size_t numArg) override;
     virtual void onNodeError(AudioNode& node, int error) override;
+};
+
+struct TrackInfo {
+    const char* url;
+    const char* trackName;
+    const char* artistName;
+    uint32_t durationMs;
+    static TrackInfo* Create(const char* aUrl, const char* trkName, int tnLen, const char* artName, int anLen, uint32_t durMs)
+    {
+        auto urlLen = strlen(aUrl) + 1;
+        auto inst = (TrackInfo*)malloc(sizeof(TrackInfo) + urlLen + tnLen + anLen + 3);
+        inst->durationMs = durMs;
+        inst->url = (char*)inst + sizeof(TrackInfo);
+        memcpy((char*)inst->url, aUrl, urlLen);
+        auto next = inst->url + urlLen;
+        if (trkName) {
+            inst->trackName = next;
+            next += tnLen + 1;
+            memcpy((char*)inst->trackName, trkName, tnLen);
+            (char&)inst->trackName[tnLen] = 0;
+        } else {
+            inst->trackName = nullptr;
+        }
+        if (artName) {
+            inst->artistName = next;
+            //next += anLen + 1;
+            memcpy((char*)inst->artistName, artName, anLen);
+            (char&)inst->artistName[anLen] = 0;
+        } else {
+            inst->artistName = nullptr;
+        }
+        return inst;
+    }
+    static TrackInfo* Create(const char *aUrl, const char *trkName, const char *artName, uint32_t durMs)
+    {
+        return Create(aUrl, trkName, trkName ? strlen(trkName) : 0, artName, artName ? strlen(artName) : 0, durMs);
+    }
 };
 
 #endif

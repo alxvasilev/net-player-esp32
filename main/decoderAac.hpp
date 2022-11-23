@@ -7,7 +7,7 @@
 class DecoderAac: public Decoder
 {
 protected:
-    enum { kInputBufSize = 1024, kMinAllowedAacInputSize = 400, kOutputBufSize = 2 * 2 *
+    enum { kInputBufSize = 2048, kMinAllowedAacInputSize = 1024, kOutputBufSize = 2 * 2 *
 #ifdef HELIX_FEATURE_AUDIO_CODEC_AAC_SBR
            2048
 #else

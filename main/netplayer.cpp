@@ -25,6 +25,7 @@
 #include <st7735.hpp>
 #include "sdcard.hpp"
 #include "bluetooth.hpp"
+#include <new>
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
@@ -151,6 +152,12 @@ static constexpr ST7735Display::PinCfg lcdPins = {
     .rst = GPIO_NUM_4
 };
 
+void* operator new(size_t size)
+{
+    auto mem = utils::mallocTrySpiram(size);
+    printf("operator new(%zu): isSpi: %d\n", size, utils::isInSpiRam(mem));
+    return mem;
+}
 extern "C" void app_main(void)
 {
 //  esp_log_level_set("*", ESP_LOG_DEBUG);
