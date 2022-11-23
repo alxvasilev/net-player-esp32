@@ -132,7 +132,10 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
 
 bool HttpNode::connect(bool isReconnect)
 {
-    myassert(mState != kStateStopped);
+    if (state() != kStateRunning) {
+        ESP_LOGW(TAG, "connect: soft assert: not in kStateRunning, but in state %s", stateToStr(state()));
+        return false;
+    }
     if (!url()) {
         ESP_LOGE(mTag, "connect: URL has not been set");
         return false;
@@ -356,6 +359,7 @@ void HttpNode::onStopRequest()
 {
     mRingBuf.setStopSignal();
 }
+/*
 void HttpNode::onStopped()
 {
     ESP_LOGI(TAG, "Clearing ring buffer and event queue");
@@ -363,6 +367,7 @@ void HttpNode::onStopped()
     mRingBuf.clear();
     setWaitingPrefill(true);
 }
+*/
 bool HttpNode::dispatchCommand(Command &cmd)
 {
     if (AudioNodeWithTask::dispatchCommand(cmd)) {

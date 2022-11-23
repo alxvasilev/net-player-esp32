@@ -145,7 +145,7 @@ esp_err_t DlnaHandler::httpDlnaCommandHandler(httpd_req_t* req)
 {
     // Handle control commands
     auto url = req->uri;
-    ESP_LOGI(TAG, "DLNA command request: %s", url);
+    //ESP_LOGI(TAG, "\e[95mDLNA command request: %s", url);
     if (strncmp(url, "/dlna/", 6)) {
         ESP_LOGW(TAG, "DLNA ctrl http handler received URL not starting with '/dlna/'");
         httpd_resp_send_404(req);
@@ -169,7 +169,6 @@ esp_err_t DlnaHandler::httpDlnaCommandHandler(httpd_req_t* req)
         return ESP_FAIL;
     }
     unique_ptr_mfree<char> strXml((char*)utils::mallocTrySpiram(contentLen + 1));
-    printf("============= buf %p is in SPI RAM: %d\n", strXml.get(), utils::isInSpiRam(strXml.get()));
     auto recvLen = httpd_req_recv(req, strXml.get(), contentLen);
     if (recvLen != contentLen) {
         ESP_LOGW(TAG, "Ctrl command: error receiving postdata: %s",
@@ -207,6 +206,8 @@ esp_err_t DlnaHandler::httpDlnaCommandHandler(httpd_req_t* req)
         return ESP_FAIL;
     }
 
+    ESP_LOGI(TAG, "Received command '\e[95m%s\e[0m' (for service %s)\n", cmd, url);
+
     auto self = static_cast<DlnaHandler*>(req->user_ctx);
     std::string result =
         "<?xml version=\"1.0\"?>"
@@ -226,10 +227,9 @@ esp_err_t DlnaHandler::httpDlnaCommandHandler(httpd_req_t* req)
     httpd_resp_send(req, result.c_str(), result.size());
     return ESP_OK;
 }
-
+const char* kHmsZeroTime = "0:00:00.000";
 bool DlnaHandler::handleAvTransportCommand(httpd_req_t* req, const char* cmd, const XMLElement& cmdNode, std::string& result)
 {
-    printf("handleAvTransportCommand: %s\n", cmd);
     MutexLocker locker(mPlayer.mutex);
     if (strcasecmp(cmd, "Stop") == 0 || (strcasecmp(cmd, "Pause") == 0)) {
         mPlayer.pause();
@@ -266,11 +266,7 @@ bool DlnaHandler::handleAvTransportCommand(httpd_req_t* req, const char* cmd, co
             }
             auto trkInfo = TrackInfo::Create(url, xmlGetChildText(*item, "dc:title"),
                 xmlGetChildText(*item, "upnp:artist"), parseHmsTime(xmlGetChildAttr(*item, "res", "duration")));
-            printf("========= title: '%s', artist: '%s', dur: %u\n",
-                   trkInfo->trackName?trkInfo->trackName:"null",
-                   trkInfo->artistName?trkInfo->artistName:"null", trkInfo->durationMs);
             mQueuedTrack.reset(trkInfo);
-            printf("=========== internal heap free: %zu, min: %zu\n", esp_get_free_heap_size(), esp_get_minimum_free_heap_size());//heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
             return true;
         } while(false);
         mQueuedTrack.reset(TrackInfo::Create(url, nullptr, nullptr, 0));
@@ -284,12 +280,19 @@ bool DlnaHandler::handleAvTransportCommand(httpd_req_t* req, const char* cmd, co
         return true;
     }
     else if (strcasecmp(cmd, "GetPositionInfo") == 0) {
+        result.append("<Track>1</Track><TrackMetaData></TrackMetaData><TrackDuration>");
         auto trkInfo = mPlayer.trackInfo();
-        result.append("<Track>1</Track><TrackDuration>")
-              .append(trkInfo ? msToHmsString(trkInfo->durationMs) : kZeroHmsTime)
-              .append("</TrackDuration><TrackURI>").append(trkInfo ? trkInfo->url : "")
-              .append("</TrackURI><RelTime>").append(trkInfo ? msToHmsString(mPlayer.positionTenthSec() * 100) : kZeroHmsTime)
-              .append("</RelTime><AbsTime>0:00:00.000</AbsTime><RelCount>0</RelCount><AbsCount>0</AbsCount>");
+        if (trkInfo) {
+            auto posHms = msToHmsString(mPlayer.positionTenthSec() * 100);
+            result.append(msToHmsString(trkInfo->durationMs))
+                  .append("</TrackDuration><TrackURI>").append(trkInfo->url)
+                  .append("</TrackURI><RelTime>").append(posHms)
+                  .append("</RelTime><AbsTime>").append(posHms);
+        } else {
+            result.append(kHmsZeroTime).append("</TrackDuration><TrackURI></TrackURI><RelTime>")
+                  .append(kHmsZeroTime).append("</RelTime><AbsTime>").append(kHmsZeroTime);
+        }
+        result.append("</AbsTime><RelCount>0</RelCount><AbsCount>0</AbsCount>");
         return true;
     } else {
         return false;
@@ -297,12 +300,10 @@ bool DlnaHandler::handleAvTransportCommand(httpd_req_t* req, const char* cmd, co
 }
 bool DlnaHandler::handleConnMgrCommand(httpd_req_t* req, const char* cmd, const XMLElement& cmdNode, std::string& result)
 {
-    printf("handleConnMgrCommand: %s\n", cmd);
-    return ESP_OK;
+    return false;
 }
 bool DlnaHandler::handleRenderCtlCommand(httpd_req_t* req, const char* cmd, const XMLElement& cmdNode, std::string& result)
 {
-    printf("handleRenderCtlCommand: %s\n", cmd);
     MutexLocker locker(mPlayer.mutex);
     if (strcasecmp(cmd, "SetVolume") == 0) {
         const char* strVol = xmlGetChildText(cmdNode, "DesiredVolume");

@@ -148,7 +148,7 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         HttpNode* http;
         if (utils::haveSpiRam()) {
             ESP_LOGI(TAG, "Allocating %d bytes in SPIRAM for http buffer", kHttpBufSizeSpiRam);
-            http = new HttpNode(*this, kHttpBufSizeSpiRam, 32768);
+            http = new HttpNode(*this, kHttpBufSizeSpiRam, kHttpBufPrefillSpiRam);
         } else {
             ESP_LOGI(TAG, "Allocating %d bytes internal RAM for http buffer", kHttpBufSizeSpiRam);
             http = new HttpNode(*this, kHttpBufSizeInternal, kHttpBufSizeInternal * 3 / 4);

@@ -1,11 +1,10 @@
 #include "decoderFlac.hpp"
-#include <flac.h>
 
 static const char* TAG = "flac";
 
 DecoderFlac::DecoderFlac(AudioNode& src): Decoder(src, kCodecFlac)
 {
-    mOutputBuf = (int16_t*)utils::mallocTrySpiram(kOutputBufSize);
+    mOutputBuf = (uint8_t*)utils::mallocTrySpiram(kOutputBufSize);
     if (!mOutputBuf) {
         ESP_LOGE(TAG, "Out of memory allocating %zu bytes for output buffer", kOutputBufSize);
         abort();
@@ -26,13 +25,12 @@ DecoderFlac::~DecoderFlac()
 }
 void DecoderFlac::reset()
 {
-    printf("============== FLAC reset\n");
+    ESP_LOGI(TAG, "Resetting decoder");
     outputFormat.clear();
     FLAC__stream_decoder_reset(mDecoder);
 }
 FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void* userp)
 {
-    printf("readCb called\n");
     auto& self = *static_cast<DecoderFlac*>(userp);
     assert(self.mDprPtr);
     auto& dpr = *self.mDprPtr;
@@ -42,14 +40,8 @@ FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *dec
         *bytes = dpr.size;
         memcpy(buffer, dpr.buf, dpr.size);
         self.mSrcNode.confirmRead(dpr.size);
-        char fourcc[5];
-        auto fcclen = std::min(4, dpr.size);
-        memcpy(fourcc, dpr.buf, fcclen);
-        fourcc[fcclen] = 0;
-        printf("FLAC: readcb: returning %d bytes(fourcc: %s)\n", dpr.size, fourcc);
         return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
     }
-    printf("FLAC: readcb: returning event %s\n",  AudioNode::streamEventToStr(event));
     if (event == AudioNode::kStreamChanged) {
         return FLAC__STREAM_DECODER_READ_STATUS_ABORT; //FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
     } else {
@@ -63,35 +55,23 @@ void DecoderFlac::errorCb(const FLAC__StreamDecoder *decoder, FLAC__StreamDecode
 void DecoderFlac::metadataCb(const FLAC__StreamDecoder *decoder, const FLAC__StreamMetadata *metadata, void *client_data)
 {
 }
-static const char* kMsgManyFramesZeroOutput = "Many frames decoded without generating any output";
 AudioNode::StreamError DecoderFlac::pullData(AudioNode::DataPullReq& dpr)
 {
     mDprPtr = &dpr;
     mOutputLen = 0;
-    for (int i = 0; i < 2; i++) {
-        for (int i = 0; !mOutputLen && (i < 6); i++) {
-            auto ok = FLAC__stream_decoder_process_single(mDecoder);
-            printf("flac decode frame: ok = %d(outLen: %d)\n", ok, mOutputLen);
-            if (!ok) {
-                dpr.clear();
-                auto err = FLAC__stream_decoder_get_state(mDecoder);
-                printf("flac state after error: %d, free internal RAM: %d\n", err, heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-                return (err == FLAC__STREAM_DECODER_END_OF_STREAM || err == FLAC__STREAM_DECODER_ABORTED)
-                        ? mLastStreamEvent
-                        : AudioNode::kErrDecode;
-            }
-        }
-        if (!mOutputLen) {
-            ESP_LOGW(TAG, "%s, resetting decoder...", kMsgManyFramesZeroOutput);
-            reset();
-        } else {
-            break;
+    for (int i = 0; !mOutputLen && (i < 6); i++) {
+        auto ok = FLAC__stream_decoder_process_single(mDecoder);
+        if (!ok) {
+            dpr.clear();
+            auto err = FLAC__stream_decoder_get_state(mDecoder);
+            const char* errStr = (err >= 0) ? FLAC__StreamDecoderStateString[err] : "(invalid code)";
+            ESP_LOGW(TAG, "Decoder returned error %s(%d)", errStr, err);
+            return mLastStreamEvent ? mLastStreamEvent : AudioNode::kErrDecode;
         }
     }
     if (!mOutputLen) {
-        ESP_LOGW(TAG, "%s, codec reset didn't help, returning error", kMsgManyFramesZeroOutput);
-        dpr.size = 0;
-        dpr.buf = nullptr;
+        ESP_LOGW(TAG, "Many frames decoded without generating any output, returning error");
+        dpr.clear();
         return AudioNode::kErrDecode;
     }
     dpr.fmt = outputFormat;
@@ -100,7 +80,41 @@ AudioNode::StreamError DecoderFlac::pullData(AudioNode::DataPullReq& dpr)
     mDprPtr = nullptr; // we don't want a dangling invalid pointer, even if it's not used
     return AudioNode::kNoError;
 }
-FLAC__StreamDecoderWriteStatus DecoderFlac::writeCb(const FLAC__StreamDecoder *decoder, const FLAC__Frame *frame, const FLAC__int32 * const buffer[], void *userp)
+
+template <typename T, int Shift = 0>
+bool DecoderFlac::outputStereoSamples(int nSamples, const FLAC__int32* const channels[])
+{
+    int outBytes = 2 * nSamples * sizeof(T);
+    if (outBytes > kOutputBufSize) {
+        return false;
+    }
+    auto ch0 = channels[0];
+    auto ch1 = channels[1];
+    T* wptr = (T*)mOutputBuf;
+    for (int i = 0; i < nSamples; i++) {
+        *(wptr++) = ch0[i] << Shift;
+        *(wptr++) = ch1[i] << Shift;
+    }
+    mOutputLen = outBytes;
+    return true;
+}
+template <typename T, int Shift=0>
+bool DecoderFlac::outputMonoSamples(int nSamples, const FLAC__int32* const samples[])
+{
+    int outBytes = nSamples * sizeof(T);
+    if (outBytes > kOutputBufSize) {
+        return false;
+    }
+    T* wptr = (T*)mOutputBuf;
+    auto end = samples[0] + nSamples;
+    for (auto sample = samples[0]; sample < end;) {
+        *(wptr++) = *(sample++) << Shift;
+    }
+    mOutputLen = outBytes;
+    return true;
+}
+FLAC__StreamDecoderWriteStatus DecoderFlac::writeCb(const FLAC__StreamDecoder *decoder,
+    const FLAC__Frame* frame, const FLAC__int32* const buffer[], void *userp)
 {
     auto& self = *static_cast<DecoderFlac*>(userp);
     auto header = frame->header;
@@ -110,35 +124,50 @@ FLAC__StreamDecoderWriteStatus DecoderFlac::writeCb(const FLAC__StreamDecoder *d
         printf("FLAC assert: nChans=%d, nSamples=%d\n", nChans, nSamples);
         return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
     }
-    assert(nSamples);
-    int outBytes = nChans * nSamples * 2;
-    if (outBytes > kOutputBufSize) {
+    auto bps = header.bits_per_sample;
+    auto oldFmt = self.outputFormat;
+    auto& fmt = self.outputFormat;
+    fmt.setNumChannels(nChans);
+    fmt.setBitsPerSample(bps);
+    fmt.setSampleRate(header.sample_rate);
+    if (fmt != oldFmt) {
+        ESP_LOGI(TAG, "Output format is %d-bit, %.1fkHz %s", bps, (float)fmt.sampleRate() / 1000, (nChans == 2) ? "stereo" : "mono");
+        if (nChans == 2) {
+            if (bps == 16) {
+                self.mOutputFunc = &DecoderFlac::outputStereoSamples<int16_t>;
+            } else if (bps == 24) {
+                self.mOutputFunc = &DecoderFlac::outputStereoSamples<int32_t, 8>;
+            } else if (bps == 32) {
+                self.mOutputFunc = &DecoderFlac::outputStereoSamples<int32_t>;
+            }else if (bps == 8) {
+                self.mOutputFunc = &DecoderFlac::outputStereoSamples<int16_t, 8>;
+            } else {
+                ESP_LOGE(TAG, "Unsupported bits per sample: %d", header.bits_per_sample);
+                return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
+            }
+        }
+        else if (nChans == 1) {
+            if (bps == 16) {
+                self.mOutputFunc = &DecoderFlac::outputMonoSamples<int16_t>;
+            } else if (bps == 24) {
+                self.mOutputFunc = &DecoderFlac::outputMonoSamples<int32_t, 8>;
+            } else if (bps == 32) {
+                self.mOutputFunc = &DecoderFlac::outputMonoSamples<int32_t>;
+            } else if (bps == 8) {
+                self.mOutputFunc = &DecoderFlac::outputMonoSamples<int8_t, 8>;
+            } else {
+                ESP_LOGE(TAG, "Unsupported bits per sample: %d", header.bits_per_sample);
+                return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
+            }
+        } else {
+            ESP_LOGE(TAG, "Unsupported number of channels: %d", nChans);
+            return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
+        }
+    }
+    if ((self.*self.mOutputFunc)(nSamples, buffer) == false) {
         ESP_LOGE(TAG, "Output of FLAC codec is too large to fit into output buffer, aborting decode");
         return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
     }
-    auto& fmt = self.outputFormat;
-    if (!fmt.sampleRate()) {
-        fmt.setNumChannels(nChans);
-        auto bps = header.bits_per_sample;
-        assert(bps == 16);
-        fmt.setBitsPerSample(header.bits_per_sample);
-        fmt.setSampleRate(header.sample_rate);
-    }
-    if (nChans == 2) {
-        auto ch0 = buffer[0];
-        auto ch1 = buffer[1];
-        auto wptr = self.mOutputBuf;
-        for (int i = 0; i < nSamples; i++) {
-            *(wptr++) = ch0[i];
-            *(wptr++) = ch1[i];
-        }
-    } else if (nChans == 1) {
-        memcpy(self.mOutputBuf, buffer, outBytes);
-    } else {
-        ESP_LOGE(TAG, "Unsupported number of channels: %d", nChans);
-        return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
-    }
-    self.mOutputLen = outBytes;
     return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
 }
 

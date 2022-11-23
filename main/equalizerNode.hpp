@@ -17,7 +17,9 @@ protected:
     void* mEqualizer = nullptr;
     float mGains[kBandCount];
     bool mGetAudioLevelBeforeEq = false;
+    bool mBypass = false;
     void equalizerReinit(StreamFormat fmt);
+    void setFormat(StreamFormat fmt);
     void updateBandGain(uint8_t band);
 public:
     EqualizerNode(IAudioPipeline& parent, const float* gains=nullptr);

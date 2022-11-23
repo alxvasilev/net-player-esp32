@@ -59,6 +59,10 @@ protected:
     enum: uint8_t { kVolumeDiv = 64 };
     uint8_t mVolume = kVolumeDiv;
 private:
+    typedef void (DefaultVolumeImpl::*ProcessFunc)(AudioNode::DataPullReq& dpr);
+    ProcessFunc mProcessVolumeFunc = nullptr;
+    ProcessFunc mGetLevelFunc = nullptr;
+    StreamFormat mFormat;
 template <typename T, bool ChangeVol, bool GetLevel>
 void processVolumeStereo(AudioNode::DataPullReq& dpr)
 {
@@ -114,53 +118,70 @@ void processVolumeMono(AudioNode::DataPullReq& dpr)
         mAudioLevels.left = mAudioLevels.right = level;
     }
 }
-protected:
-void processVolumeAndLevel(AudioNode::DataPullReq& dpr)
+template<typename T>
+void updateProcessFuncsStereo()
 {
-    if (mVolume != kVolumeDiv) {
-        if (dpr.fmt.isStereo()) {
-            processVolumeStereo<int16_t, true, true>(dpr);
-        } else {
-            processVolumeMono<int16_t, true, true>(dpr);
-        }
-        if (mAudioLevelCb) {
-            mAudioLevelCb(mAudioLevelCbArg);
-        }
-    } else if (mAudioLevelCb) { // only find peak amplitude
-        if (dpr.fmt.isStereo()) {
-            processVolumeStereo<int16_t, false, true>(dpr);
-        } else {
-            processVolumeMono<int16_t, false, true>(dpr);
-        }
-        mAudioLevelCb(mAudioLevelCbArg);
-    }
+    mProcessVolumeFunc = &DefaultVolumeImpl::processVolumeStereo<T, true, false>;
+    mGetLevelFunc = &DefaultVolumeImpl::processVolumeStereo<T, false, true>;
 }
-
-void processVolume(AudioNode::DataPullReq& dpr)
+template<typename T>
+void updateProcessFuncsMono()
+{
+    mProcessVolumeFunc = &DefaultVolumeImpl::processVolumeMono<T, true, false>;
+    mGetLevelFunc = &DefaultVolumeImpl::processVolumeMono<T, false, true>;
+}
+bool updateVolumeFormat(StreamFormat fmt)
+{
+    auto bps = fmt.bitsPerSample();
+    auto nChans = fmt.numChannels();
+    if (nChans == 2) {
+        if (bps == 16) {
+            updateProcessFuncsStereo<int16_t>();
+        } else if (bps == 24 || bps == 32) {
+            updateProcessFuncsStereo<int32_t>();
+        } else if (bps == 8) {
+            updateProcessFuncsStereo<int8_t>();
+        } else {
+            return false;
+        }
+    } else if (nChans == 1) {
+        if (bps == 16) {
+            updateProcessFuncsMono<int16_t>();
+        } else if (bps == 24 || bps == 32) {
+            updateProcessFuncsMono<int32_t>();
+        } else if (bps == 8) {
+            updateProcessFuncsMono<int8_t>();
+        } else {
+            return false;
+        }
+    } else {
+        return false;
+    }
+    return true;
+}
+protected:
+void volumeProcess(AudioNode::DataPullReq& dpr)
 {
     if (mVolume == kVolumeDiv) {
         return;
     }
-    if (dpr.fmt.isStereo()) {
-        processVolumeStereo<int16_t, true, false>(dpr);
-    } else {
-        processVolumeMono<int16_t, true, false>(dpr);
+    if (dpr.fmt != mFormat) {
+        updateVolumeFormat(dpr.fmt);
     }
+    (this->*mProcessVolumeFunc)(dpr);
 }
-
-void getAudioLevel(AudioNode::DataPullReq& dpr)
+void volumeGetLevel(AudioNode::DataPullReq& dpr)
 {
     if (!mAudioLevelCb) { // only find peak amplitude
         return;
     }
-    if (dpr.fmt.isStereo()) {
-        processVolumeStereo<int16_t, false, true>(dpr);
-    } else {
-        processVolumeMono<int16_t, false, true>(dpr);
+    if (dpr.fmt != mFormat) {
+        updateVolumeFormat(dpr.fmt);
     }
+    (this->*mGetLevelFunc)(dpr);
     mAudioLevelCb(mAudioLevelCbArg);
 }
-
+public:
 uint16_t getVolume() const
 {
     return (mVolume * 100 + kVolumeDiv/2) / kVolumeDiv;

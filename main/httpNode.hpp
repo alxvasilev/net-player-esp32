@@ -112,7 +112,6 @@ protected:
     void nodeThreadFunc();
     virtual bool dispatchCommand(Command &cmd);
     virtual void onStopRequest() override;
-    virtual void onStopped() override;
 // recording stuff
     bool recordingMaybeEnable();
     void recordingStop();

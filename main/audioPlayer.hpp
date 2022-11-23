@@ -22,9 +22,12 @@ struct TrackInfo;
 class AudioPlayer: public IAudioPipeline
 {
 public:
-    static constexpr int kHttpBufSizeInternal = 35 * 1024;
-    static constexpr int kHttpBufSizeSpiRam = 350 * 1024;
-    static constexpr int kDefTitleScrollFps = 15;
+    enum: uint32_t {
+        kHttpBufSizeInternal = 35 * 1024,
+        kHttpBufSizeSpiRam = 350 * 1024,
+        kHttpBufPrefillSpiRam = 65536,
+        kDefTitleScrollFps = 15
+    };
     struct HttpServerInfo {
         httpd_handle_t server = nullptr;
         uint16_t port = 0;

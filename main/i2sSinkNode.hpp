@@ -20,9 +20,7 @@ protected:
     bool mUseVolumeInterface = false;
     enum {
         kDmaBufLen = 1023,
-        kDmaBufCntInternalRam = 2, kDmaBufCntSpiRam = 6, // in samples, multiply by 4 for bytes
-        kDataPullSize = kDmaBufLen * 4, // one dma buffer
-        kPipelineReadTimeout = 1000, // in milliseconds
+        kDmaBufCntInternalRam = 2, kDmaBufCntSpiRam = 8, // in samples, multiply by 4 for bytes
         kDefaultSamplerate = 44100
     };
     virtual void nodeThreadFunc();

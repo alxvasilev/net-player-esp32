@@ -72,6 +72,24 @@ float EqualizerNode::bandGain(uint8_t band)
     MutexLocker locker(mMutex);
     return mGains[band];
 }
+void EqualizerNode::setFormat(StreamFormat fmt)
+{
+    mFormat = fmt; // so that we can detect the next change
+    auto sr = fmt.sampleRate();
+    if (fmt.bitsPerSample() != 16) {
+        ESP_LOGE(mTag, "Only 16 bits per sample supported, but stream is %d-bit", fmt.bitsPerSample());
+        mBypass = true;
+    }
+    else if (sr != 44100 && sr != 48000 && sr != 22050 && sr != 11025) {
+        ESP_LOGE(mTag, "Unsupported samplerate of %d Hz", sr);
+        mBypass = true;
+    } else {
+        mBypass = false;
+        equalizerReinit(fmt);
+    }
+    //return kErrStreamFmt;
+}
+
 AudioNode::StreamError EqualizerNode::pullData(DataPullReq &dpr)
 {
     auto event = mPrev->pullData(dpr);
@@ -80,20 +98,20 @@ AudioNode::StreamError EqualizerNode::pullData(DataPullReq &dpr)
     }
     MutexLocker locker(mMutex);
     if (dpr.fmt != mFormat) {
-        if (dpr.fmt.bitsPerSample() != 16) {
-            ESP_LOGE(mTag, "Only 16 bits per sample supported, but stream is %d-bit", dpr.fmt.bitsPerSample());
-            return kErrStreamFmt;
-        }
-        equalizerReinit(dpr.fmt);
+        setFormat(dpr.fmt);
     }
     if (mGetAudioLevelBeforeEq) {
-        getAudioLevel(dpr);
-        processVolume(dpr);
-        esp_equalizer_process(mEqualizer, (unsigned char*)dpr.buf, dpr.size, mSampleRate, mChanCount);
+        volumeGetLevel(dpr);
+        volumeProcess(dpr);
+        if (!mBypass) {
+            esp_equalizer_process(mEqualizer, (unsigned char*)dpr.buf, dpr.size, mSampleRate, mChanCount);
+        }
     } else {
-        processVolume(dpr);
-        esp_equalizer_process(mEqualizer, (unsigned char*)dpr.buf, dpr.size, mSampleRate, mChanCount);
-        getAudioLevel(dpr);
+        volumeProcess(dpr);
+        if (!mBypass) {
+            esp_equalizer_process(mEqualizer, (unsigned char*)dpr.buf, dpr.size, mSampleRate, mChanCount);
+        }
+        volumeGetLevel(dpr);
     }
     return kNoError;
 }

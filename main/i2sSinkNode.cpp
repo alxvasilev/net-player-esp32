@@ -33,7 +33,7 @@ void I2sOutputNode::nodeThreadFunc()
         }
         myassert(mState == kStateRunning);
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
-            DataPullReq dpr(kDataPullSize); // read all available data
+            DataPullReq dpr(0xffff); // read all available data
             auto err = mPrev->pullData(dpr);
             if (err) {
                 if (err == kStreamChanged) {
@@ -58,7 +58,8 @@ void I2sOutputNode::nodeThreadFunc()
                 mSampleCtr += dpr.size >> mBytesPerSampleShiftDiv;
             }
             if (mUseVolumeInterface) {
-                processVolumeAndLevel(dpr);
+                volumeProcess(dpr);
+                volumeGetLevel(dpr);
             }
 
             if (mUseInternalDac) {
@@ -95,10 +96,6 @@ void I2sOutputNode::dmaFillWithSilence()
 bool I2sOutputNode::setFormat(StreamFormat fmt)
 {
     auto bps = fmt.bitsPerSample();
-    if (bps != 16) {
-        ESP_LOGE(mTag, "Only 16bit sample width is supported, but %d provided", bps);
-        return false;
-    }
     auto samplerate = fmt.sampleRate();
     ESP_LOGW(mTag, "Setting output mode to %d-bit %s, %d Hz", bps,
         fmt.isStereo() ? "stereo" : "mono", samplerate);
