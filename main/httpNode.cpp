@@ -417,7 +417,7 @@ HttpNode::~HttpNode()
 }
 
 HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize, size_t prefillAmount)
-    : AudioNodeWithTask(parent, "node-http", kStackSize), mRingBuf(bufSize, utils::haveSpiRam()),
+    : AudioNodeWithTask(parent, "node-http", kStackSize, 5, 1), mRingBuf(bufSize, utils::haveSpiRam()),
   mPrefillAmount(prefillAmount), mIcyParser(mMutex)
 {
 }
