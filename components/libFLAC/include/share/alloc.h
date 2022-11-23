@@ -80,7 +80,6 @@ static inline int alloc_check() {
 /* avoid malloc()ing 0 bytes, see:
  * https://www.securecoding.cert.org/confluence/display/seccode/MEM04-A.+Do+not+make+assumptions+about+the+result+of+allocating+0+bytes?focusedCommentId=5407003
 */
-
 static inline void *safe_malloc_(size_t size)
 {
 #ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION

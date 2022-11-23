@@ -51,9 +51,26 @@ FLAC__bool FLAC__memory_alloc_aligned_uint32_array(size_t elements, FLAC__uint32
 FLAC__bool FLAC__memory_alloc_aligned_int64_array(size_t elements, FLAC__int64 **unaligned_pointer, FLAC__int64 **aligned_pointer);
 FLAC__bool FLAC__memory_alloc_aligned_uint64_array(size_t elements, FLAC__uint64 **unaligned_pointer, FLAC__uint64 **aligned_pointer);
 FLAC__bool FLAC__memory_alloc_aligned_unsigned_array(size_t elements, uint32_t **unaligned_pointer, uint32_t **aligned_pointer);
+
+void* my_malloc(size_t);
+
+static inline FLAC__bool my__memory_alloc_aligned_int32_array(size_t elements, FLAC__int32 **unaligned_pointer, FLAC__int32 **aligned_pointer)
+{
+    if(*unaligned_pointer != 0) {
+			free(*unaligned_pointer);
+    }
+    FLAC__int32* mem = (FLAC__int32*)my_malloc(elements * sizeof(FLAC__int32));
+    *unaligned_pointer = *aligned_pointer = mem;
+    return (mem != NULL);
+}
+
 #ifndef FLAC__INTEGER_ONLY_LIBRARY
 FLAC__bool FLAC__memory_alloc_aligned_real_array(size_t elements, FLAC__real **unaligned_pointer, FLAC__real **aligned_pointer);
 #endif
 void *safe_malloc_mul_2op_p(size_t size1, size_t size2);
+static inline void *my_safe_malloc_mul_2op_p(size_t size1, size_t size2)
+{
+    return my_malloc(size1 * size2);
+}
 
 #endif

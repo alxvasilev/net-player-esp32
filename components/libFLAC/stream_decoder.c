@@ -1277,14 +1277,14 @@ FLAC__bool allocate_output_(FLAC__StreamDecoder *decoder, uint32_t size, uint32_
 		memset(tmp, 0, sizeof(FLAC__int32)*4);
 		decoder->private_->output[i] = tmp + 4;
 
-		if(!FLAC__memory_alloc_aligned_int32_array(size, &decoder->private_->residual_unaligned[i], &decoder->private_->residual[i])) {
+		if(!my__memory_alloc_aligned_int32_array(size, &decoder->private_->residual_unaligned[i], &decoder->private_->residual[i])) {
 			decoder->protected_->state = FLAC__STREAM_DECODER_MEMORY_ALLOCATION_ERROR;
 			return false;
 		}
 	}
 
 	if(bps == 32) {
-		decoder->private_->side_subframe = safe_malloc_mul_2op_p(sizeof(FLAC__int64), /*times (*/size);
+		decoder->private_->side_subframe = my_safe_malloc_mul_2op_p(sizeof(FLAC__int64), /*times (*/size);
 		if(decoder->private_->side_subframe == NULL) {
 			decoder->protected_->state = FLAC__STREAM_DECODER_MEMORY_ALLOCATION_ERROR;
 			return false;

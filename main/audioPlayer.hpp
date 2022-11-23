@@ -24,8 +24,8 @@ class AudioPlayer: public IAudioPipeline
 public:
     enum: uint32_t {
         kHttpBufSizeInternal = 35 * 1024,
-        kHttpBufSizeSpiRam = 350 * 1024,
-        kHttpBufPrefillSpiRam = 65536,
+        kHttpBufSizeSpiRam = 700 * 1024,
+        kHttpBufPrefillSpiRam = 600000,
         kDefTitleScrollFps = 15
     };
     struct HttpServerInfo {
