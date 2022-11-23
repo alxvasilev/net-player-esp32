@@ -77,7 +77,7 @@ void EqualizerNode::setFormat(StreamFormat fmt)
     mFormat = fmt; // so that we can detect the next change
     auto sr = fmt.sampleRate();
     if (fmt.bitsPerSample() != 16) {
-        ESP_LOGE(mTag, "Only 16 bits per sample supported, but stream is %d-bit", fmt.bitsPerSample());
+        ESP_LOGW(mTag, "Only 16 bits per sample supported, but stream is %d-bit. Disabling equalizer", fmt.bitsPerSample());
         mBypass = true;
     }
     else if (sr != 44100 && sr != 48000 && sr != 22050 && sr != 11025) {
