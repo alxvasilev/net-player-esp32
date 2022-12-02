@@ -274,20 +274,25 @@ bool HttpNode::isConnected() const
     return mClient != nullptr;
 }
 
+//static char tmpBuf[1024];
 bool HttpNode::recv()
 {
+    static char* tmpBuf = (char*)heap_caps_malloc(1024, MALLOC_CAP_SPIRAM);
+    static ElapsedTimer timer;
+    static int rxTotal = 0;
     for (int retries = 0; retries < 26; retries++) { // retry net errors
-        char* buf;
-        auto bufSize = mRingBuf.getWriteBuf(buf, kReadSize, -1);
-        if (bufSize < 0) { // stop flag was set
-            return false;
-        }
-        if (bufSize > kReadSize) { // ringbuf will return max possible value, which may be more than the requested
-            bufSize = kReadSize;
-        }
-        int rlen = esp_http_client_read(mClient, buf, bufSize);
+//        char* buf;
+//        ElapsedTimer et;
+//        int wsize = mRingBuf.getWriteBuf(buf, 1024, -1);
+//        printf("getWriteBuf: %dms\n", et.msElapsed());
+//        et.reset();
+        int rlen = esp_http_client_read(mClient, tmpBuf, 1024);
+//        printf("recv: %dms\n", et.msElapsed());
+//        et.reset();
+//        mRingBuf.abortWrite();
+//        printf("abort: %dms\n", et.msElapsed());
+
         if (rlen <= 0) {
-            mRingBuf.abortWrite();
             if (errno == ETIMEDOUT) {
                 return false;
             }
@@ -305,38 +310,18 @@ bool HttpNode::recv()
             connect(true);
             continue;
         }
-        LOCK();
-        if (mIcyParser.icyInterval()) {
-            bool isFirst = !mIcyParser.trackName();
-            bool gotTitle = mIcyParser.processRecvData(buf, rlen);
-            if (gotTitle) {
-                ESP_LOGW(TAG, "Track title changed to: '%s'", mIcyParser.trackName());
-                postStreamEvent_NoLock(
-                    isFirst ? mStreamStartPos : (mRxByteCtr + rlen - mIcyParser.bytesSinceLastMeta()),
-                    kTitleChanged, strdup(mIcyParser.trackName())
-                );
-
-                if (mRecorder && !isFirst) { // start recording only on second icy track event - first track may be incomplete
-                    bool ok = mRecorder->onNewTrack(mIcyParser.trackName(), mInCodec);
-                    plSendEvent(kEventRecording, ok);
-                }
+        rxTotal += rlen;
+        static float avgSpeed = 0;
+        if (rxTotal > 24000) {
+            auto elapsed = timer.msElapsed();
+            timer.reset();
+            if (!elapsed) {
+                elapsed++;
             }
-        }
-        mRingBuf.commitWrite(rlen);
-        mRxByteCtr += rlen;
-
-        // First commit the write, only after that record to SD card,
-        // to avoid blocking the stream consumer
-        // Note: The buffer is still valid, even if it has been consumed
-        // before we reach the next line - ringbuf consumers are read-only
-        if (mRecorder) {
-            mRecorder->onData(buf, rlen);
-        }
-        auto ringBufDataSize = mRingBuf.dataSize();
-        ESP_LOGD(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, ringBufDataSize);
-        if (mWaitingPrefill && (ringBufDataSize >= mPrefillAmount)) {
-            ESP_LOGI(mTag, "Buffer prefilled >= %d bytes, allowing read", mPrefillAmount);
-            setWaitingPrefill(false);
+            float speed = (float)rxTotal / ((1024 * elapsed)/1000);
+            rxTotal = 0;
+            avgSpeed = (avgSpeed * 31 + speed) / 32;
+            printf("rx KBytes/s: %.1f (%.1f mom)\n", avgSpeed, speed);
         }
         return true;
     }
@@ -417,7 +402,7 @@ HttpNode::~HttpNode()
 }
 
 HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize, size_t prefillAmount)
-    : AudioNodeWithTask(parent, "node-http", kStackSize, 5, 1), mRingBuf(bufSize, utils::haveSpiRam()),
+    : AudioNodeWithTask(parent, "node-http", kStackSize, 16, 1), mRingBuf(bufSize, utils::haveSpiRam()),
   mPrefillAmount(prefillAmount), mIcyParser(mMutex)
 {
 }
@@ -438,6 +423,7 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
     {
         // First, process stream events that are due
         LOCK();
+        printf("ringbuf: %d\n", mRingBuf.dataSize());
         while (!mStreamEventQueue.empty()) {
             auto& event = *mStreamEventQueue.front();
             auto eventPos = event.streamPos;

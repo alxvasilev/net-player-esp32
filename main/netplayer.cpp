@@ -207,9 +207,10 @@ extern "C" void app_main(void)
  //====
     lcd.puts("Starting webserver...\n");
     startWebserver();    
+    ESP_LOGW(TAG, "Free RAM: %zu of %zu\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_total_size(MALLOC_CAP_INTERNAL));
 //===
-
     lcd.puts("Waiting log conn...\n");
+    ESP_LOGI(TAG, "Waiting log conn (%d)...", portTICK_PERIOD_MS);
     auto ret = netLogger.waitForLogConnection(4);
     if (gOtaInProgress) {
         lcd.puts("OTA Update in progress...\n");
@@ -217,8 +218,7 @@ extern "C" void app_main(void)
     } else {
         lcd.puts("OTA NOT in progress\n");
     }
-
-    ESP_LOGI(TAG, "%s, continuing", ret ? "Log connection accepted" : "Timeout, continuing");
+    ESP_LOGI(TAG, "%s, continuing", ret ? "Log connection accepted" : "Timeout");
 //===
     lcd.puts("Mounting SDCard...\n");
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };

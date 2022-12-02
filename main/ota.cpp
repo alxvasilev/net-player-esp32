@@ -4,6 +4,7 @@
 #include <esp_ota_ops.h>
 #include "ota.hpp"
 #include "utils.hpp"
+#include <sys/socket.h>
 
 enum { kOtaBufSize = 512 };
 static constexpr const char* TAG = "OTA";
@@ -37,6 +38,15 @@ static esp_err_t OTA_update_post_handler(httpd_req_t *req)
 {
     OtaInProgressSetter inProgress;
     otaNotifyCallback();
+    /*
+    auto fd = httpd_req_to_sockfd(req);
+    int size = 2048;
+    auto soerr = setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
+    if (soerr) {
+        printf("Error calling setsockopt(): %s\n", strerror(errno));
+    } else {
+        printf("SUCCESS calling setsockopt\n");
+    */
     int contentLen = req->content_len;
     ESP_LOGW(TAG, "OTA request received, image size: %d",contentLen);
     char* otaBuf = new char[kOtaBufSize]; // no need to free it, we will reboot

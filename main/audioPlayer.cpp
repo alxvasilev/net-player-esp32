@@ -998,6 +998,7 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
         MutexLocker locker(self.mutex);
         fps = self.mNvsHandle.readDefault<uint8_t>("tscrollFps", kDefTitleScrollFps);
     }
+    fps = 1;
     int64_t scrollTickPeriodUs = (1000000 + fps / 2) / fps;
     int64_t now = esp_timer_get_time();
     int64_t tsLastTitleScroll = now - scrollTickPeriodUs - 1;
