@@ -48,6 +48,7 @@ public:
     void init(NvsHandle& nvs);
     void update(const IAudioVolume::StereoLevels& levels);
     void reset(NvsHandle& nvs);
+    int16_t yTop() const { return mLeftCtx.barY; }
 };
 
 #endif

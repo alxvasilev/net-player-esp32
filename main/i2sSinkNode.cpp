@@ -13,6 +13,7 @@
 #include "i2sSinkNode.hpp"
 #include <type_traits>
 #include <limits>
+#include <math.h> // for roundf
 
 void I2sOutputNode::adjustSamplesForInternalDac(char* sBuff, int len)
 {
@@ -32,6 +33,7 @@ void I2sOutputNode::nodeThreadFunc()
             return;
         }
         myassert(mState == kStateRunning);
+        plSendEvent(kEventAudioFormatChange, 0, mFormat.asCode());
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
             DataPullReq dpr(0xffff); // read all available data
             auto err = mPrev->pullData(dpr);
@@ -44,7 +46,7 @@ void I2sOutputNode::nodeThreadFunc()
                     ESP_LOGI(mTag, "streamId set to %u", mStreamId);
                     continue;
                 } else {
-                    plSendEvent(kPipeEventStreamError, mStreamId, err);
+                    plSendEvent(kEventStreamError, mStreamId, err);
                     break;
                 }
             }
@@ -78,29 +80,19 @@ void I2sOutputNode::nodeThreadFunc()
         }
     }
 }
-void I2sOutputNode::dmaFillWithSilence()
-{
-    enum { kSampleCnt = 64 };
-    uint16_t buf[kSampleCnt];
-    auto end = buf + kSampleCnt;
-    uint16_t val = mUseInternalDac ? 0x8000 : 0x0000;
-    for (uint16_t* ptr = buf; ptr < end; ptr++) {
-        *ptr = val;
-    }
-    size_t written = 0;
-    do {
-        i2s_write(mPort, buf, 128, &written, 0);
-    } while (written == 128);
-}
 
 bool I2sOutputNode::setFormat(StreamFormat fmt)
 {
-    auto bps = fmt.bitsPerSample();
+    uint32_t bps = fmt.bitsPerSample();
     auto samplerate = fmt.sampleRate();
+    if (bps == 24) {
+        samplerate -= roundf(samplerate * 27.0f / 440);
+    }
+
     ESP_LOGW(mTag, "Setting output mode to %d-bit %s, %d Hz", bps,
         fmt.isStereo() ? "stereo" : "mono", samplerate);
     auto err = i2s_set_clk(mPort, samplerate,
-        (i2s_bits_per_sample_t)bps, (i2s_channel_t)fmt.numChannels());
+        bps, (i2s_channel_t)fmt.numChannels());
     if (err == ESP_FAIL) {
         ESP_LOGE(mTag, "i2s_set_clk failed: rate: %d, bits: %d, ch: %d. Error: %s",
             samplerate, bps, fmt.numChannels(), esp_err_to_name(err));
@@ -109,6 +101,7 @@ bool I2sOutputNode::setFormat(StreamFormat fmt)
     mFormat = fmt;
     uint bytesPerSample = fmt.numChannels() * (bps / 8);
     for (mBytesPerSampleShiftDiv = 0; bytesPerSample; bytesPerSample >>= 1, mBytesPerSampleShiftDiv++);
+    plSendEvent(kEventAudioFormatChange, 0, fmt.asCode());
     return true;
 }
 
@@ -127,7 +120,7 @@ I2sOutputNode::I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t*
     cfg.sample_rate = kDefaultSamplerate;
     cfg.bits_per_sample = (i2s_bits_per_sample_t) 16;
     cfg.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
-    cfg.communication_format = I2S_COMM_FORMAT_I2S_MSB;
+    cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
     cfg.dma_buf_count = utils::haveSpiRam() ? kDmaBufCntSpiRam : kDmaBufCntInternalRam;
     cfg.dma_buf_len = kDmaBufLen;
     cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL3|ESP_INTR_FLAG_IRAM;

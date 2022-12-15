@@ -32,6 +32,7 @@ protected:
     static int32_t heapFreeTotal(); // used to  calculate memory usage for codecs
     void deleteDecoder();
 public:
+    enum { kEventCodecChange = AudioNode::kEventLast + 1 };
     DecoderNode(IAudioPipeline& parent): AudioNode(parent, "decoder"){}
     virtual Type type() const { return kTypeDecoder; }
     virtual StreamError pullData(DataPullReq& dpr);

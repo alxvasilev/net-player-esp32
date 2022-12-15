@@ -25,27 +25,7 @@
 class HttpNode: public AudioNodeWithTask
 {
 public:
-    struct UrlInfo {
-        uint32_t streamId;
-        const char* url;
-        const char* recStaName;
-        static UrlInfo* Create(const char* aUrl, uint32_t streamId, const char* aRecStaName) noexcept
-        {
-            auto urlLen = strlen(aUrl) + 1;
-            auto staLen = aRecStaName ? strlen(aRecStaName) : 0;
-            auto inst = (UrlInfo*)malloc(sizeof(UrlInfo) + urlLen + staLen);
-            inst->streamId = streamId;
-            inst->url = (char*)inst + sizeof(UrlInfo);
-            memcpy((char*)inst->url, aUrl, urlLen);
-            if (aRecStaName) {
-                inst->recStaName = inst->url + urlLen;
-                memcpy((char*)inst->recStaName, aRecStaName, staLen);
-            } else {
-                inst->recStaName = nullptr;
-            }
-            return inst;
-        }
-    };
+    class UrlInfo;
 protected:
     enum { kHttpRecvTimeoutMs = 2000, kHttpClientBufSize = 512, kReadSize = 4096, kStackSize = 3600 };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1, kCommandNotifyFlushed };
@@ -88,8 +68,6 @@ protected:
     int mContentLen;
     IcyParser mIcyParser;
     std::unique_ptr<TrackRecorder> mRecorder;
-    const char* url() const { return mUrlInfo ? mUrlInfo->url : nullptr; }
-    const char* recStaName() const { return mUrlInfo ? mUrlInfo->recStaName : nullptr; }
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     static CodecType codecFromContentType(const char* content_type);
     bool isPlaylist();
@@ -137,6 +115,52 @@ public:
     const char* trackName() const;
     bool recordingIsActive() const;
     bool recordingIsEnabled() const;
+    uint32_t pollSpeed() const;
+    struct UrlInfo {
+        uint32_t streamId;
+        const char* url;
+        const char* recStaName;
+        static UrlInfo* Create(const char* aUrl, uint32_t streamId, const char* aRecStaName) noexcept
+        {
+            auto urlLen = strlen(aUrl) + 1;
+            auto staLen = aRecStaName ? strlen(aRecStaName) : 0;
+            auto inst = (UrlInfo*)malloc(sizeof(UrlInfo) + urlLen + staLen);
+            inst->streamId = streamId;
+            inst->url = (char*)inst + sizeof(UrlInfo);
+            memcpy((char*)inst->url, aUrl, urlLen);
+            if (aRecStaName) {
+                inst->recStaName = inst->url + urlLen;
+                memcpy((char*)inst->recStaName, aRecStaName, staLen);
+            } else {
+                inst->recStaName = nullptr;
+            }
+            return inst;
+        }
+    };
+protected:
+    class LinkSpeedProbe {
+        ElapsedTimer mTimer;
+        uint32_t mBytes = 0;
+        uint32_t mAvgSpeed = 0;
+    public:
+        uint32_t average() const { return mAvgSpeed; }
+        void onTraffic(uint32_t nBytes) { mBytes += nBytes; }
+        void reset() { mBytes = 0; mAvgSpeed = 0; mTimer.reset(); }
+        uint32_t poll() {
+            int64_t elapsed = mTimer.usElapsed();
+            mTimer.reset();
+            if (elapsed == 0) {
+                elapsed = 1;
+            }
+            uint32_t speed = ((int64_t)mBytes * 1000000 + (elapsed >> 1)) / elapsed; //rounded int division
+            mBytes = 0;
+            mAvgSpeed = (mAvgSpeed * 3 + speed + 2) >> 2; // rounded int division by 32
+            return speed;
+        }
+    };
+    mutable LinkSpeedProbe mSpeedProbe;
+    const char* url() const { return mUrlInfo ? mUrlInfo->url : nullptr; }
+    const char* recStaName() const { return mUrlInfo ? mUrlInfo->recStaName : nullptr; }
 };
 template <typename... Args>
 bool HttpNode::postStreamEvent_Lock(int64_t streamPos, StreamError event, Args... args) {

@@ -11,11 +11,17 @@
 #include <stdfonts.hpp>
 #include <string>
 #include <esp_netif.h> // for createDlnaHandler()
+#include "tostring.hpp"
 
 extern Font font_CamingoBold43;
 extern Font font_Camingo22;
 extern Font font_Camingo32;
 extern Font font_Icons22;
+
+#define kStreamInfoFont font_Camingo22
+#define kLcdColorCaption 255, 255, 128
+#define kLcdColorGrid 0, 128, 128
+#define kLcdColorStreamInfo 128, 255, 255
 
 #define LOCK_PLAYER() MutexLocker locker(mutex)
 
@@ -214,9 +220,11 @@ void AudioPlayer::lcdDrawGui()
 {
     mLcd.setBgColor(0, 0, 128);
     mLcd.clear();
-    mLcd.setFgColor(0, 128, 128);
+    mLcd.setFgColor(kLcdColorGrid);
     mLcd.setFont(font_Camingo22);
     mLcd.hLine(0, mLcd.width()-1, mLcd.fontHeight() + 3);
+    mLcd.hLine(0, mLcd.width()-1, mVuDisplay.yTop() - kStreamInfoFont.height - 4);
+    mLcd.hLine(0, mLcd.width()-1, mVuDisplay.yTop() - 2);
 }
 void AudioPlayer::setPlayerMode(PlayerMode mode)
 {
@@ -225,8 +233,8 @@ void AudioPlayer::setPlayerMode(PlayerMode mode)
         mLcd.setFont(font_Camingo22);
         mLcd.setBgColor(0, 0, 128);
         mLcd.clear(0, 0, mLcd.width(), mLcd.fontHeight() + 2);
-        mLcd.setFgColor(255, 255, 128);
-        mLcd.gotoXY(0, 0);
+        mLcd.setFgColor(kLcdColorCaption);
+        mLcd.gotoXY(1, 1);
         mLcd.puts(playerModeToStr(mPlayerMode));
     }
     if (mPlayerMode == kModeRadio) {
@@ -265,7 +273,7 @@ void AudioPlayer::lcdUpdateArtistName(const char* name)
     mLcd.clear(0, mLcd.fontHeight() + 6, mLcd.width(), mLcd.fontHeight());
     if (name) {
         mLcd.gotoXY(0, mLcd.fontHeight() + 6);
-        mLcd.setFgColor(255, 255, 128);
+        mLcd.setFgColor(kLcdColorCaption);
         mLcd.putsCentered(name);
     }
 }
@@ -299,7 +307,7 @@ void AudioPlayer::lcdUpdateRecIcon()
 void AudioPlayer::lcdUpdatePlayState(char sym)
 {
     mLcd.setFont(font_Icons22);
-    mLcd.setFgColor(255, 255, 128);
+    mLcd.setFgColor(kLcdColorCaption);
     mLcd.gotoXY(mLcd.width() - mLcd.charWidth(sym) - 1, 0);
     mLcd.putc(sym);
 }
@@ -975,8 +983,22 @@ void AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t arg, si
             });
         }
     }
+    else if (&node == mDecoder.get()) {
+        if (event == DecoderNode::kEventCodecChange) {
+            asyncCall([this, numArg]() {
+                LOCK_PLAYER();
+                lcdUpdateCodec((CodecType)numArg);
+            });
+        }
+    }
     else if (&node == mStreamOut.get()) {
-        if (event == AudioNode::kPipeEventStreamError) {
+        if (event == AudioNode::kEventAudioFormatChange) {
+            asyncCall([this, numArg]() {
+                LOCK_PLAYER();
+                lcdUpdateAudioFormat(StreamFormat(numArg));
+            });
+        }
+        else if (event == AudioNode::kEventStreamError) {
             asyncCall([this, arg, numArg]() {
                 const char* errName = AudioNode::streamEventToStr((AudioNode::StreamError)numArg);
                 if (arg != mStreamSeqNo) {
@@ -1002,13 +1024,13 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
     int64_t now = esp_timer_get_time();
     int64_t tsLastTitleScroll = now - scrollTickPeriodUs - 1;
     int64_t tsLastVolEvent = now;
+    int64_t tsLastSpeedUpdate = now - kLcdNetSpeedUpdateIntervalUs;
     for (;;) {
-        EventBits_t events;
         now = esp_timer_get_time();
-        int64_t timeout = scrollTickPeriodUs - (now - tsLastTitleScroll);
+        int64_t usTillScroll = scrollTickPeriodUs - (now - tsLastTitleScroll);
         //ESP_LOGW(TAG, "timeout: %lld\n", timeout);
-        events = (timeout > 0)
-            ? self.mEvents.waitForOneAndReset(kEventTerminating|kEventVolLevel, (timeout + 500) / 1000)
+        EventBits_t events = (usTillScroll > 0)
+            ? self.mEvents.waitForOneAndReset(kEventTerminating|kEventVolLevel, (usTillScroll + 500) / 1000)
             : (EventBits_t)0; // events = 0 -> scroll title
         if (events & kEventTerminating) {
             break;
@@ -1019,7 +1041,7 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
                 tsLastVolEvent = now;
                 self.mVuDisplay.update(self.mVolumeInterface->audioLevels());
             }
-            else if (events == 0) { // timeout or due time to scroll title
+            else if (events == 0) { // timeout, due time to scroll title
                 tsLastTitleScroll = now;
                 if (self.mTitleScrollEnabled) {
                     self.lcdScrollTrackTitle();
@@ -1028,6 +1050,10 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
                     ESP_LOGD(TAG, "No sound output, clearing VU levels");
                     self.mVolumeInterface->clearAudioLevelsNoEvent();
                     self.mVuDisplay.update(self.mVolumeInterface->audioLevels());
+                }
+                if (now - tsLastSpeedUpdate > kLcdNetSpeedUpdateIntervalUs) {
+                    tsLastSpeedUpdate = now;
+                    self.lcdUpdateNetSpeed();
                 }
             }
         }
@@ -1055,7 +1081,7 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf)
 void AudioPlayer::lcdSetupForTrackTitle()
 {
     mLcd.setFont(font_CamingoBold43);
-    mLcd.setFgColor(255, 255, 128);
+    mLcd.setFgColor(kLcdColorCaption);
     mLcd.gotoXY(0, (mLcd.height() - mLcd.charHeight()) / 2);
 }
 
@@ -1094,7 +1120,41 @@ void AudioPlayer::lcdScrollTrackTitle(int step)
         }
     }
 }
-
+void AudioPlayer::lcdWriteStreamInfo(int8_t charOfs, const char* str)
+{
+    mLcd.setFont(kStreamInfoFont);
+    mLcd.setFgColor(kLcdColorStreamInfo);
+    uint16_t x = (charOfs >= 0) ? mLcd.textWidth(charOfs) : mLcd.width() - mLcd.textWidth(-charOfs);
+    mLcd.gotoXY(x, mVuDisplay.yTop() - kStreamInfoFont.height - 2);
+    mLcd.puts(str);
+}
+void AudioPlayer::lcdUpdateCodec(CodecType codec)
+{
+    lcdWriteStreamInfo(0, codecTypeToStr(codec));
+}
+void AudioPlayer::lcdUpdateAudioFormat(StreamFormat fmt)
+{
+    char buf[] = "    K/  bit";
+    toString<kDontNullTerminate|1>(buf, 4, fmtFp((float)fmt.sampleRate() / 1000));
+//    toString<kDontNullTerminate|1>(buf, 4, fmtInt(fmt.sampleRate() / 1000));
+    toString<kDontNullTerminate>(buf + 6, 2, fmt.bitsPerSample());
+    lcdWriteStreamInfo(5, buf);
+    printf("%s\n", buf);
+}
+void AudioPlayer::lcdUpdateNetSpeed()
+{
+    if (!mStreamIn || mStreamIn->type() != AudioNode::kTypeHttpIn) {
+        return;
+    }
+    auto speed = (static_cast<HttpNode*>(mStreamIn.get())->pollSpeed() + 512) / 1024;
+    if (speed == mLastShownNetSpeed) {
+        return;
+    }
+    mLastShownNetSpeed = speed;
+    char buf[] = "   K/s";
+    toString<kDontNullTerminate>(buf, 3, fmtInt(speed, 0, 3));
+    lcdWriteStreamInfo(-(int)(sizeof(buf) - 1), buf);
+}
 void AudioPlayer::audioLevelCb(void* ctx)
 {
     auto& self = *static_cast<AudioPlayer*>(ctx);

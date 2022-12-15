@@ -63,6 +63,7 @@ public:
     {
         static_assert(sizeof(StreamFormat) == sizeof(uint32_t), "Size of StreamFormat must be 32bit");
     }
+    StreamFormat(uint32_t code): mCode(code) {}
     bool operator==(StreamFormat other) const { return mCode == other.mCode; }
     bool operator!=(StreamFormat other) const { return mCode != other.mCode; }
     uint32_t asCode() const { return mCode; }
@@ -105,8 +106,7 @@ public:
         kErrDecode,
         kErrStreamFmt
     };
-    enum { kPipeEventStreamError = 1 };
-
+    enum { kEventStreamError = 1, kEventAudioFormatChange = 2, kEventLast = kEventAudioFormatChange };
     // we put here the state definitions only because the class name is shorter than AudioNodeWithTask
     enum State: uint8_t {
         kStateTerminated = 1, kStateStopped = 2,

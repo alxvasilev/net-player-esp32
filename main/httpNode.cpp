@@ -81,6 +81,7 @@ void HttpNode::doSetUrl(UrlInfo* urlInfo)
     mUrlInfo = urlInfo;
     mStreamEventQueue.clear();
     mRingBuf.clear();
+    mSpeedProbe.reset();
     setWaitingPrefill(true);
 }
 void HttpNode::updateUrl(const char* url)
@@ -306,6 +307,7 @@ bool HttpNode::recv()
             continue;
         }
         LOCK();
+        mSpeedProbe.onTraffic(rlen);
         if (mIcyParser.icyInterval()) {
             bool isFirst = !mIcyParser.trackName();
             bool gotTitle = mIcyParser.processRecvData(buf, rlen);
@@ -342,6 +344,13 @@ bool HttpNode::recv()
     }
     setState(kStateStopped);
     return false;
+}
+
+uint32_t HttpNode::pollSpeed() const
+{
+    LOCK();
+    mSpeedProbe.poll();
+    return mSpeedProbe.average();
 }
 
 void HttpNode::setUrl(UrlInfo* urlInfo)

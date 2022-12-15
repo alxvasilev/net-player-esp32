@@ -29,6 +29,7 @@ bool DecoderNode::createDecoder(CodecType type)
     }
     ESP_LOGI(mTag, "\e[34mCreated %s decoder, approx %d bytes of RAM consumed (%d free internal)",
         codecTypeToStr(mDecoder->codec), freeBefore - heapFreeTotal(), heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    plSendEvent(kEventCodecChange, 0, type);
     return true;
 }
 void DecoderNode::deleteDecoder()

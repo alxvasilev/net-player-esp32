@@ -24,9 +24,10 @@ class AudioPlayer: public IAudioPipeline
 public:
     enum: uint32_t {
         kHttpBufSizeInternal = 35 * 1024,
-        kHttpBufSizeSpiRam = 350 * 1024,
+        kHttpBufSizeSpiRam = 800 * 1024,
         kHttpBufPrefillSpiRam = 65536,
-        kDefTitleScrollFps = 15
+        kDefTitleScrollFps = 15,
+        kLcdNetSpeedUpdateIntervalUs = 1 * 1000000
     };
     struct HttpServerInfo {
         httpd_handle_t server = nullptr;
@@ -52,7 +53,7 @@ protected:
     { kEventTerminating = 1, kEventScroll = 2, kEventVolLevel = 4, kEventTerminated = 8 };
     enum {
         kI2sStackSize = 9000, kI2sCpuCore = 1,
-        kLcdTaskStackSize = 1200, kLcdTaskPrio = 10, kLcdTaskCore = 0
+        kLcdTaskStackSize = 2200, kLcdTaskPrio = 10, kLcdTaskCore = 0
     };
     typedef enum: char {
         kSymBlank = ' ',
@@ -85,11 +86,11 @@ protected:
     ST7735Display::Color mFontColor = ST7735Display::rgb(255, 255, 128);
     VuDisplay mVuDisplay;
 // track name scroll stuff
-    bool mTitleScrollEnabled = false;
     DynBuffer mLcdTrackTitle;
     int16_t mTitleScrollCharOffset = 0;
     int8_t mTitleScrollPixOffset = 0;
-
+    bool mTitleScrollEnabled = false;
+    int16_t mLastShownNetSpeed = -1;
     static void audioLevelCb(void* ctx);
 //====
     static void lcdTimedDrawTask(void* ctx);
@@ -119,6 +120,11 @@ protected:
     void lcdUpdateArtistName(const char* name);
     void lcdUpdateStationInfo();
     void lcdUpdateRecIcon();
+    // stream info line
+    void lcdWriteStreamInfo(int8_t charOfs, const char* str);
+    void lcdUpdateCodec(CodecType codec);
+    void lcdUpdateAudioFormat(StreamFormat fmt);
+    void lcdUpdateNetSpeed();
     // web URL handlers
     static esp_err_t playUrlHandler(httpd_req_t *req);
     static esp_err_t pauseUrlHandler(httpd_req_t *req);
