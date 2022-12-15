@@ -24,11 +24,8 @@ struct CodecMimeTypes { CodecType type; const char** mimeTypes; };
 };*/
 CodecType HttpNode::codecFromContentType(const char* content_type)
 {
-    if (strcasecmp(content_type, "mp3") == 0 ||
-        strcasecmp(content_type, "audio/mp3") == 0 ||
-        strcasecmp(content_type, "audio/mpeg") == 0 ||
-        strcasecmp(content_type, "binary/octet-stream") == 0 ||
-        strcasecmp(content_type, "application/octet-stream") == 0) {
+    if (strcasecmp(content_type, "audio/mp3") == 0 ||
+        strcasecmp(content_type, "audio/mpeg") == 0) {
         return kCodecMp3;
     }
     else if (strcasecmp(content_type, "audio/aac") == 0 ||

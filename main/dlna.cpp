@@ -20,14 +20,20 @@ extern const int xmlAvTrans_size;
 EMBED_TEXTFILE("../../dlna/rendctl.xml", xmlRendCtl);
 extern const char xmlRendCtl[];
 extern const int xmlRendCtl_size;
+EMBED_TEXTFILE("../../dlna/connmgr.xml", xmlConnMgr);
+extern const char xmlConnMgr[];
+extern const int xmlConnMgr_size;
 
-static const char kSchemaPrefix[] = "urn:schemas-upnp-org:service:";
+const char kUpnpServiceSchema[] = "urn:schemas-upnp-org:service:";
+const char kUpnpDeviceSchema[] = "urn:schemas-upnp-org:device:";
+static const char kMediaRenderer[] = "MediaRenderer:1";
 static const char kAvTransport[] = "AVTransport:1";
 static const char kConnMgr[] = "ConnectionManager:1";
 static const char kRendCtl[] = "RenderingControl:1";
 static const char kSsdpRootDev[] = "ssdp:rootdevice";
+static const char kUpnpRootdevice[] = "upnp:rootdevice";
 static const char kServerHeader[] = "FreeRTOS/x UPnP/1.0 NetPlayer/x";
-
+#define kUuidPrefix "12345678-abcd-ef12-cafe-"
 
 static constexpr uint32_t kSsdpMulticastAddr = utils::ip4Addr(239,255,255,250);
 
@@ -78,7 +84,6 @@ bool DlnaHandler::start()
     }
     struct ip_mreq mreq;
     mreq.imr_multiaddr.s_addr = kSsdpMulticastAddr; // remote addr
-    printf("verify ip4Addr: %s\n", inet_ntoa(mreq.imr_multiaddr.s_addr));
     mreq.imr_interface.s_addr = htonl(INADDR_ANY); // local addr
     if (setsockopt(mSsdpSocket, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char*)&mreq, sizeof(mreq)) < 0) {
         ESP_LOGI(TAG, "setsockopt(IP_ADD_MEMBERSHIP) failed with error %s", strerror(errno));
@@ -133,6 +138,10 @@ esp_err_t DlnaHandler::httpDlnaDescGetHandler(httpd_req_t *req)
         resp = xmlRendCtl;
         respSize = xmlRendCtl_size;
     }
+    else if (strcmp(url, "connmgr.xml") == 0) {
+        resp = xmlConnMgr;
+        respSize = xmlConnMgr_size;
+    }
     if (!resp) {
         httpd_resp_send_404(req);
         return ESP_FAIL;
@@ -157,7 +166,9 @@ esp_err_t DlnaHandler::httpDlnaCommandHandler(httpd_req_t* req)
         handler = &DlnaHandler::handleAvTransportCommand;
     } else if (strcmp(url, "RenderingControl/ctrl") == 0) {
         handler = &DlnaHandler::handleRenderCtlCommand;
-    } else { // handle request for service description XMLs
+    } else if (strcmp(url, "ConnectionManager/ctrl") == 0) {
+        handler = &DlnaHandler::handleConnMgrCommand;
+    }else { // handle request for service description XMLs
         httpd_resp_send_404(req);
         return ESP_FAIL;
     }
@@ -300,7 +311,18 @@ bool DlnaHandler::handleAvTransportCommand(httpd_req_t* req, const char* cmd, co
 }
 bool DlnaHandler::handleConnMgrCommand(httpd_req_t* req, const char* cmd, const XMLElement& cmdNode, std::string& result)
 {
-    return false;
+    if (strcasecmp(cmd, "GetProtocolInfo") == 0) {
+        result.reserve(512);
+        result.append("<Source></Source><Sink>"
+            "http-get:*:audio/flac:*,http-get:*:audio/x-flac:*,"
+            "http-get:*:audio/mp3:*,http-get:*:audio/mpeg:*,"
+            "http-get:*:audio/aac:*,http-get:*:audio/x-aac:*,http-get:*:audio/aacp:*,"
+            "http-get:*:audio/ogg:*,http-get:*:application/ogg:*"
+            "</Sink>");
+        return true;
+    } else {
+        return false;
+    }
 }
 bool DlnaHandler::handleRenderCtlCommand(httpd_req_t* req, const char* cmd, const XMLElement& cmdNode, std::string& result)
 {
@@ -352,15 +374,15 @@ void DlnaHandler::unregisterHttpHandlers()
 
 void DlnaHandler::ssdpRxTaskFunc()
 {
-    SvcName svcName = {.prefix = nullptr, .name = "upnp:rootdevice"};
+    static constexpr const char* kRootDev = "upnp:rootdevice";
     sendNotifyBye();
     vTaskDelay(portTICK_PERIOD_MS / 10);
     sendNotifyBye();
 
     vTaskDelay(portTICK_PERIOD_MS / 10);
-    sendNotifyAlive(svcName);
+    sendNotifyAlive(kRootDev, kUpnpDeviceSchema);
     vTaskDelay(portTICK_PERIOD_MS / 10);
-    sendNotifyAlive(svcName);
+    sendNotifyAlive(kRootDev, kUpnpDeviceSchema);
 
     while (!mTerminate) {
         socklen_t addrLen = sizeof(mAddr);
@@ -370,42 +392,43 @@ void DlnaHandler::ssdpRxTaskFunc()
             break;
         }
         mMsgBuf[len] = '\0';
-        bool supported = parseSsdpRequest(mMsgBuf, len + 1, svcName);
-        if (!supported) {
-            continue;
-        }
         vTaskDelay(10);
-        auto ip = mAddr.sin_addr.s_addr;
-        if (svcName.name) {
-            sendReply(svcName, ip);
-        } else {
-            // send packets for all services
-            svcName.prefix = kSchemaPrefix;
-            svcName.name = kAvTransport;
-            sendReply(svcName, ip);
-            svcName.name = kRendCtl;
-            sendReply(svcName, ip);
-            svcName.name = kConnMgr;
-            sendReply(svcName, ip);
-        }
+        handleSsdpRequest(mMsgBuf, len + 1, mAddr.sin_addr.s_addr);
     }
 }
 
-void DlnaHandler::sendReply(const SvcName& svcName, uint32_t ip)
+void DlnaHandler::sendReply(const char* name, uint32_t ip, const char* prefix)
 {
-    const char* svcPrefix = svcName.prefix ? svcName.prefix : "";
+    if (!prefix) {
+        prefix = "";
+    }
     int len = snprintf(mMsgBuf, sizeof(mMsgBuf),
        "HTTP/1.1 200 OK\r\n"
        "Location: %s/dlna/main.xml\r\n"
        "Ext:\r\n"
-       "USN: uuid:%s::%s%s\r\n"
-       "Cache-Control: max-age=1800\r\n"
+       "USN: uuid:" kUuidPrefix "%s::%s%s\r\n"
        "ST: %s%s\r\n"
+       "Cache-Control: max-age=1800\r\n"
        "Server: %s\r\n\r\n",
-       mHttpHostPort, mUuid, svcPrefix, svcName.name, svcPrefix, svcName.name, kServerHeader
+       mHttpHostPort, mUuid, prefix, name, prefix, name, kServerHeader
     );
     sendPacket(len, ip);
 }
+void DlnaHandler::sendUuidReply(uint32_t ip)
+{
+    int len = snprintf(mMsgBuf, sizeof(mMsgBuf),
+       "HTTP/1.1 200 OK\r\n"
+       "Location: %s/dlna/main.xml\r\n"
+       "Ext:\r\n"
+       "USN: uuid:" kUuidPrefix "%s\r\n"
+       "ST: uuid:" kUuidPrefix "%s\r\n"
+       "Cache-Control: max-age=1800\r\n"
+       "Server: %s\r\n\r\n",
+       mHttpHostPort, mUuid, mUuid, kServerHeader
+    );
+    sendPacket(len, ip);
+}
+
 void DlnaHandler::sendNotifyBye()
 {
     int len = snprintf(mMsgBuf, sizeof(mMsgBuf),
@@ -418,9 +441,11 @@ void DlnaHandler::sendNotifyBye()
     );
     sendPacket(len, kSsdpMulticastAddr);
 }
-void DlnaHandler::sendNotifyAlive(const SvcName& svcName)
+void DlnaHandler::sendNotifyAlive(const char* svcName, const char* prefix)
 {
-    const char* svcPrefix = svcName.prefix ? svcName.prefix : "";
+    if (!prefix) {
+        prefix = "";
+    }
     int len = snprintf(mMsgBuf, sizeof(mMsgBuf),
         "NOTIFY * HTTP/1.1\r\n"
         "Location: %s/dlna/main.xml\r\n"
@@ -430,7 +455,7 @@ void DlnaHandler::sendNotifyAlive(const SvcName& svcName)
         "NT: %s%s\r\n"
         "USN: uuid:%s::%s%s\r\n"
         "Server: %s\r\n\r\n",
-        mHttpHostPort, svcPrefix, svcName.name, mUuid, svcPrefix, svcName.name, kServerHeader
+        mHttpHostPort, prefix, svcName, mUuid, prefix, svcName, kServerHeader
     );
     sendPacket(len, kSsdpMulticastAddr);
 }
@@ -448,12 +473,11 @@ void DlnaHandler::sendPacket(int len, uint32_t ip)
     }
 }
 
-bool DlnaHandler::parseSsdpRequest(char* str, int len, SvcName& svcName)
+void DlnaHandler::handleSsdpRequest(char* str, int len, uint32_t ip)
 {
-    svcName.prefix = svcName.name = nullptr;
     char msearch[] = "M-SEARCH ";
     if (strncasecmp(str, msearch, sizeof(msearch) - 1)) {
-        return false;
+        return;
     }
     //printf("ssdp M-SEARCH req:\n%s\n", str);
     char* end = str + sizeof(msearch) - 1;
@@ -464,7 +488,7 @@ bool DlnaHandler::parseSsdpRequest(char* str, int len, SvcName& svcName)
     }
     if (*end == 0) {
         ESP_LOGW(TAG, "SSDP request contains no newlines");
-        return false;
+        return;
     }
     end++;
 
@@ -478,29 +502,31 @@ bool DlnaHandler::parseSsdpRequest(char* str, int len, SvcName& svcName)
     }
     auto st = params.strVal("st").str;
     if (!st) {
-        return false;
-    } else if (strcasecmp(st, "ssdp:all") == 0) {
-        return true;
-    } else if (strcasecmp(st, kSsdpRootDev) == 0) {
-        svcName.name = kSsdpRootDev;
-        return true;
-    } else if (strncasecmp(st, kSchemaPrefix, sizeof(kSchemaPrefix) - 1) == 0) {
-        st += sizeof(kSchemaPrefix) - 1;
-        svcName.prefix = kSchemaPrefix;
-        if (strncasecmp(st, kAvTransport, sizeof(kAvTransport)-2) == 0) { // skip the :version part
-            svcName.name = kAvTransport;
-            return true;
+        return;
+    }
+    else if (strcasecmp(st, "ssdp:all") == 0) {
+        sendReply(kUpnpRootdevice, ip, nullptr);
+        sendUuidReply(ip);
+        sendReply(kMediaRenderer, ip, kUpnpDeviceSchema);
+        sendReply(kAvTransport, ip, kUpnpServiceSchema);
+        sendReply(kRendCtl, ip, kUpnpServiceSchema);
+    }
+    else if (strcasecmp(st, kSsdpRootDev) == 0) {
+        sendReply(kSsdpRootDev, ip, nullptr);
+    }
+    else if (strncasecmp(st, kUpnpServiceSchema, sizeof(kUpnpServiceSchema) - 1) == 0) {
+        st += sizeof(kUpnpServiceSchema) - 1;
+        if (strncasecmp(st, kAvTransport, sizeof(kAvTransport) - 2) == 0) { // skip the :version part
+            sendReply(kAvTransport, ip, kUpnpServiceSchema);
         }
-        else if (strncasecmp(st, kConnMgr, sizeof(kConnMgr) - 2) == 0) {
-           svcName.name = kConnMgr;
-           return true;
+        else if (strncasecmp(st, kMediaRenderer, sizeof(kMediaRenderer) - 2) == 0) {
+            sendReply(kMediaRenderer, ip, kUpnpServiceSchema);
         }
         else if (strncasecmp(st, kRendCtl, sizeof (kRendCtl) - 2) == 0) {
-            svcName.name = kRendCtl;
-            return true;
-        } else {
-            return false;
+            sendReply(kRendCtl, ip, kUpnpServiceSchema);
+        }
+        else if (strncasecmp(st, kConnMgr, sizeof(kConnMgr) - 2) == 0) {
+            sendReply(kConnMgr, ip, kUpnpServiceSchema);
         }
     }
-    return false; // should not be reached
 }

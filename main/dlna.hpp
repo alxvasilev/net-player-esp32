@@ -9,13 +9,8 @@ struct TrackInfo;
 namespace tinyxml2 {
     class XMLElement;
 };
-
 class DlnaHandler {
 protected:
-    struct SvcName {
-        const char* prefix;
-        const char* name;
-    };
     static constexpr const char* kSsdpMulticastGroup = "239.255.255.250";
     enum { kSsdpPort = 1900 };
     int mSsdpSocket = -1;
@@ -29,14 +24,15 @@ protected:
     bool mTerminate = false;
     char mMsgBuf[480];
     void sendPacket(int len, uint32_t ip);
-    void sendReply(const SvcName& svcName, uint32_t ip);
-    void sendNotifyAlive(const SvcName& svcName);
+    void sendReply(const char* name, uint32_t ip, const char* prefix);
+    void sendUuidReply(uint32_t ip);
+    void sendNotifyAlive(const char* svcName, const char* prefix);
     void sendNotifyBye();
     void ssdpRxTaskFunc();
     bool registerHttpHandlers();
     void unregisterHttpHandlers();
     void closeSocket();
-    bool parseSsdpRequest(char* str, int len, SvcName& svcName);
+    void handleSsdpRequest(char* str, int len, uint32_t ip);
     static esp_err_t httpDlnaDescGetHandler(httpd_req_t* req);
     static esp_err_t httpDlnaCommandHandler(httpd_req_t* req);
     bool handleAvTransportCommand(httpd_req_t* req, const char* cmd, const tinyxml2::XMLElement& cmdNode, std::string& result);
