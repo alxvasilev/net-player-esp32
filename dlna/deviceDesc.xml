@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:dlna="urn:schemas-dlna-org:device-1-0" xmlns:pnpx="http://schemas.microsoft.com/windows/pnpx/2005/11" xmlns:df="http://schemas.microsoft.com/windows/2008/09/devicefoundation">
+  <specVersion>
+    <major>1</major>
+    <minor>0</minor>
+  </specVersion>
+  <device>
+    <deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>
+    <friendlyName>NetPlayer audio system</friendlyName>
+    <manufacturer>Alexander Vassilev</manufacturer>
+    <manufacturerURL>http://github.com/alxvasilev</manufacturerURL>
+    <modelDescription>NetPlayer audio system</modelDescription>
+    <modelName>NetPlayer</modelName>
+    <modelURL></modelURL>
+    <modelNumber>1.0</modelNumber>
+    <serialNumber></serialNumber>
+    <UDN>uuid:netplayer</UDN>
+    <pnpx:X_compatibleId>MS_DigitalMediaDeviceClass_DMR_V001</pnpx:X_compatibleId>
+    <pnpx:X_deviceCategory>MediaDevices</pnpx:X_deviceCategory>
+    <df:X_deviceCategory>Multimedia.DMR</df:X_deviceCategory>
+    <df:X_modelId>NetPlayer Audio Renderer</df:X_modelId>
+    <dlna:X_DLNADOC xmlns:dlna="urn:schemas-dlna-org:device-1-0">DMR-1.50</dlna:X_DLNADOC>
+    <iconList>
+    </iconList>
+    <serviceList>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
+        <serviceId>urn:upnp-org:serviceId:AVTransport</serviceId>
+        <SCPDURL>/dlna/avtrans.xml</SCPDURL>
+        <controlURL>/dlna/AVTransport/ctrl</controlURL>
+        <eventSubURL>/dlna/AVTransport/event</eventSubURL>
+      </service>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType>
+        <serviceId>urn:upnp-org:serviceId:RenderingControl</serviceId>
+        <SCPDURL>/dlna/rendctl.xml</SCPDURL>
+        <controlURL>/dlna/RenderingControl/ctrl</controlURL>
+        <eventSubURL>/dlna/RenderingControl/event</eventSubURL>
+      </service>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>
+        <serviceId>urn:upnp-org:serviceId:ConnectionManager</serviceId>
+        <SCPDURL>/dlna/connmgr.xml</SCPDURL>
+        <controlURL>/dlna/ConnectionManager/ctrl</controlURL>
+        <eventSubURL>/dlna/ConnectionManager/event</eventSubURL>
+      </service>
+    </serviceList>
+  </device>
+</root>
