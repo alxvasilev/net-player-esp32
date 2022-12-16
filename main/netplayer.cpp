@@ -160,9 +160,13 @@ void* operator new(size_t size)
 }
 extern "C" void* my_malloc(size_t size)
 {
-    auto mem = utils::mallocTrySpiram(size);
-    printf("my_malloc(%zu): isSpi: %d\n", size, utils::isInSpiRam(mem));
-    return mem;
+    printf("my_malloc(%zu)\n", size);
+    return utils::mallocTrySpiram(size);
+}
+extern "C" void* my_realloc(void* ptr, size_t size)
+{
+    printf("my_realloc(%zu): isSpi: %d\n", size, utils::isInSpiRam(ptr));
+    return utils::reallocTrySpiram(ptr, size);
 }
 
 extern "C" void app_main(void)

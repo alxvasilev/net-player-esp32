@@ -25,7 +25,7 @@ protected:
     void reset();
 public:
     virtual CodecType type() const { return kCodecMp3; }
-    DecoderMp3(AudioNode& src);
+    DecoderMp3(DecoderNode& parent, AudioNode& src);
     virtual ~DecoderMp3();
     virtual AudioNode::StreamError pullData(AudioNode::DataPullReq& dpr);
 };

@@ -25,7 +25,7 @@
 /* #undef FLAC__HAS_DOCBOOK_TO_MAN */
 
 /* define if you have the ogg library */
-#define OGG_FOUND 0
+#define OGG_FOUND 1
 #define FLAC__HAS_OGG OGG_FOUND
 
 /* define if compiler has __attribute__((target("cpu=power8"))) support */

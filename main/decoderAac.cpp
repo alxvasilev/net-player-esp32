@@ -2,7 +2,7 @@
 
 static const char* TAG = "aacdec";
 
-DecoderAac::DecoderAac(AudioNode& src): Decoder(src, kCodecAac)
+DecoderAac::DecoderAac(DecoderNode& parent, AudioNode& src): Decoder(parent, src, kCodecAac)
 {
     mInputBuf = (unsigned char*)utils::mallocTrySpiram(kInputBufSize + kOutputBufSize);
     if (!mInputBuf) {

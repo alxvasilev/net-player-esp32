@@ -2,7 +2,8 @@
 
 static const char* TAG = "flac";
 
-DecoderFlac::DecoderFlac(AudioNode& src): Decoder(src, kCodecFlac)
+DecoderFlac::DecoderFlac(DecoderNode& parent, AudioNode& src, bool oggMode)
+: Decoder(parent, src, kCodecFlac)
 {
     mOutputBuf = (uint8_t*)utils::mallocTrySpiram(kOutputBufSize);
     if (!mOutputBuf) {
@@ -14,9 +15,14 @@ DecoderFlac::DecoderFlac(AudioNode& src): Decoder(src, kCodecFlac)
         ESP_LOGE(TAG, "Out of memory allocating FLAC decoder");
         abort();
     }
-    auto ret = FLAC__stream_decoder_init_stream(mDecoder, readCb, nullptr, nullptr, nullptr, nullptr,
-         writeCb, metadataCb, errorCb, this);
-    assert(ret == FLAC__STREAM_DECODER_INIT_STATUS_OK);
+    auto ret = oggMode
+         ? FLAC__stream_decoder_init_ogg_stream(mDecoder, readCb, nullptr, nullptr, nullptr, nullptr,
+             writeCb, metadataCb, errorCb, this)
+         : FLAC__stream_decoder_init_stream(mDecoder, readCb, nullptr, nullptr, nullptr, nullptr,
+             writeCb, metadataCb, errorCb, this);
+    if (ret != FLAC__STREAM_DECODER_INIT_STATUS_OK) {
+        ESP_LOGE(TAG, "Error %s initializing FLAC decoder", FLAC__StreamDecoderInitStatusString[ret]);
+    }
 }
 DecoderFlac::~DecoderFlac()
 {
@@ -34,15 +40,19 @@ FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *dec
     auto& self = *static_cast<DecoderFlac*>(userp);
     assert(self.mDprPtr);
     auto& dpr = *self.mDprPtr;
+    if (self.mParent.hasPrefetchedData()) {
+        self.mParent.pullPrefetchedData((char*)buffer, *bytes);
+        return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
+    }
     dpr.size = *bytes;
     auto event = self.mLastStreamEvent = self.mSrcNode.pullData(dpr);
-    if (!event) {
+    if (event == AudioNode::kNoError) {
         *bytes = dpr.size;
         memcpy(buffer, dpr.buf, dpr.size);
         self.mSrcNode.confirmRead(dpr.size);
         return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
     }
-    if (event == AudioNode::kStreamChanged) {
+    else if (event == AudioNode::kStreamChanged) {
         return FLAC__STREAM_DECODER_READ_STATUS_ABORT; //FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
     } else {
         return FLAC__STREAM_DECODER_READ_STATUS_ABORT;
@@ -69,6 +79,7 @@ AudioNode::StreamError DecoderFlac::pullData(AudioNode::DataPullReq& dpr)
             return mLastStreamEvent ? mLastStreamEvent : AudioNode::kErrDecode;
         }
     }
+    mDprPtr = nullptr; // we don't want a dangling invalid pointer, even if it's not used
     if (!mOutputLen) {
         ESP_LOGW(TAG, "Many frames decoded without generating any output, returning error");
         dpr.clear();
@@ -77,7 +88,6 @@ AudioNode::StreamError DecoderFlac::pullData(AudioNode::DataPullReq& dpr)
     dpr.fmt = outputFormat;
     dpr.size = mOutputLen;
     dpr.buf = (char*)mOutputBuf;
-    mDprPtr = nullptr; // we don't want a dangling invalid pointer, even if it's not used
     return AudioNode::kNoError;
 }
 
@@ -121,7 +131,7 @@ FLAC__StreamDecoderWriteStatus DecoderFlac::writeCb(const FLAC__StreamDecoder *d
     auto nChans = header.channels;
     auto nSamples = header.blocksize;
     if (!nChans || !nSamples) {
-        printf("FLAC assert: nChans=%d, nSamples=%d\n", nChans, nSamples);
+        ESP_LOGE(TAG, "No channels or samples on output");
         return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
     }
     auto bps = header.bits_per_sample;

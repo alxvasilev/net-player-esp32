@@ -18,7 +18,6 @@ protected:
     OutputFunc mOutputFunc = nullptr;
     AudioNode::StreamError mLastStreamEvent;
     void init();
-    void freeBuffers();
     static FLAC__StreamDecoderReadStatus readCb(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void *client_data);
     static void errorCb(const FLAC__StreamDecoder *decoder, FLAC__StreamDecoderErrorStatus status, void *client_data);
     static FLAC__StreamDecoderWriteStatus writeCb(const FLAC__StreamDecoder *decoder, const FLAC__Frame *frame, const FLAC__int32 * const buffer[], void *userp);
@@ -29,7 +28,7 @@ protected:
     bool outputMonoSamples(int nSamples, const FLAC__int32* const samples[]);
 public:
     virtual CodecType type() const { return kCodecFlac; }
-    DecoderFlac(AudioNode& src);
+    DecoderFlac(DecoderNode& parent, AudioNode& src, bool oggMode);
     ~DecoderFlac();
     virtual AudioNode::StreamError pullData(AudioNode::DataPullReq& dpr);
     virtual void reset();

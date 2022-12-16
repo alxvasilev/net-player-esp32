@@ -48,16 +48,20 @@ public:
     static bool detectSpiRam();
     static void* mallocTrySpiram(size_t internalSize, size_t spiramSize)
     {
-        return sHaveSpiRam
-            ? heap_caps_malloc(spiramSize, MALLOC_CAP_SPIRAM) : malloc(internalSize);
+        return sHaveSpiRam ? heap_caps_malloc(spiramSize, MALLOC_CAP_SPIRAM) : malloc(internalSize);
     }
     static void* mallocTrySpiram(size_t size)
     {
-        return sHaveSpiRam
-            ? heap_caps_malloc(size, MALLOC_CAP_SPIRAM) : malloc(size);
+        return sHaveSpiRam ? heap_caps_malloc(size, MALLOC_CAP_SPIRAM) : malloc(size);
+    }
+    static void* reallocTrySpiram(void* ptr, size_t size)
+    {
+        return isInSpiRam(ptr) ? heap_caps_realloc(ptr, size, MALLOC_CAP_SPIRAM) : realloc(ptr, size);
     }
     static constexpr const uint32_t kSpiRamStartAddr = 0x3F800000;
-    static bool isInSpiRam(void* addr) { return (uint32_t)addr >= kSpiRamStartAddr && (uint32_t)addr < (kSpiRamStartAddr + 4 * 1024 * 1024); }
+    static bool isInSpiRam(void* addr) {
+        return (uint32_t)addr >= kSpiRamStartAddr && (uint32_t)addr < (kSpiRamStartAddr + 4 * 1024 * 1024);
+    }
     constexpr uint32_t static log2(uint32_t n) noexcept
     {
         return (n > 1) ? 1 + log2(n >> 1) : 0;

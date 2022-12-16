@@ -25,7 +25,7 @@ protected:
     void getStreamFormat();
 public:
     virtual CodecType type() const { return kCodecAac; }
-    DecoderAac(AudioNode& src);
+    DecoderAac(DecoderNode& parent, AudioNode& src);
     ~DecoderAac();
     virtual AudioNode::StreamError pullData(AudioNode::DataPullReq& output);
     virtual void reset() override;
