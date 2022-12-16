@@ -322,34 +322,6 @@
       <defaultValue>NETWORK</defaultValue>
       <allowedValueList>
         <allowedValue>UNKNOWN</allowedValue>
-        <allowedValue>DV</allowedValue>
-        <allowedValue>MINI-DV</allowedValue>
-        <allowedValue>VHS</allowedValue>
-        <allowedValue>W-VHS</allowedValue>
-        <allowedValue>S-VHS</allowedValue>
-        <allowedValue>D-VHS</allowedValue>
-        <allowedValue>VHSC</allowedValue>
-        <allowedValue>VIDEO8</allowedValue>
-        <allowedValue>HI8</allowedValue>
-        <allowedValue>CD-ROM</allowedValue>
-        <allowedValue>CD-DA</allowedValue>
-        <allowedValue>CD-R</allowedValue>
-        <allowedValue>CD-RW</allowedValue>
-        <allowedValue>VIDEO-CD</allowedValue>
-        <allowedValue>SACD</allowedValue>
-        <allowedValue>MD-AUDIO</allowedValue>
-        <allowedValue>MD-PICTURE</allowedValue>
-        <allowedValue>DVD-ROM</allowedValue>
-        <allowedValue>DVD-VIDEO</allowedValue>
-        <allowedValue>DVD-R</allowedValue>
-        <allowedValue>DVD+RW</allowedValue>
-        <allowedValue>DVD-RW</allowedValue>
-        <allowedValue>DVD-RAM</allowedValue>
-        <allowedValue>DVD-AUDIO</allowedValue>
-        <allowedValue>DAT</allowedValue>
-        <allowedValue>LD</allowedValue>
-        <allowedValue>HDD</allowedValue>
-        <allowedValue>MICRO-MV</allowedValue>
         <allowedValue>NETWORK</allowedValue>
         <allowedValue>NONE</allowedValue>
         <allowedValue>NOT_IMPLEMENTED</allowedValue>
@@ -361,34 +333,6 @@
       <defaultValue>NOT_IMPLEMENTED</defaultValue>
       <allowedValueList>
         <allowedValue>UNKNOWN</allowedValue>
-        <allowedValue>DV</allowedValue>
-        <allowedValue>MINI-DV</allowedValue>
-        <allowedValue>VHS</allowedValue>
-        <allowedValue>W-VHS</allowedValue>
-        <allowedValue>S-VHS</allowedValue>
-        <allowedValue>D-VHS</allowedValue>
-        <allowedValue>VHSC</allowedValue>
-        <allowedValue>VIDEO8</allowedValue>
-        <allowedValue>HI8</allowedValue>
-        <allowedValue>CD-ROM</allowedValue>
-        <allowedValue>CD-DA</allowedValue>
-        <allowedValue>CD-R</allowedValue>
-        <allowedValue>CD-RW</allowedValue>
-        <allowedValue>VIDEO-CD</allowedValue>
-        <allowedValue>SACD</allowedValue>
-        <allowedValue>MD-AUDIO</allowedValue>
-        <allowedValue>MD-PICTURE</allowedValue>
-        <allowedValue>DVD-ROM</allowedValue>
-        <allowedValue>DVD-VIDEO</allowedValue>
-        <allowedValue>DVD-R</allowedValue>
-        <allowedValue>DVD+RW</allowedValue>
-        <allowedValue>DVD-RW</allowedValue>
-        <allowedValue>DVD-RAM</allowedValue>
-        <allowedValue>DVD-AUDIO</allowedValue>
-        <allowedValue>DAT</allowedValue>
-        <allowedValue>LD</allowedValue>
-        <allowedValue>HDD</allowedValue>
-        <allowedValue>MICRO-MV</allowedValue>
         <allowedValue>NETWORK</allowedValue>
         <allowedValue>NONE</allowedValue>
         <allowedValue>NOT_IMPLEMENTED</allowedValue>
