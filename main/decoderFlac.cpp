@@ -67,9 +67,21 @@ void DecoderFlac::metadataCb(const FLAC__StreamDecoder *decoder, const FLAC__Str
 }
 AudioNode::StreamError DecoderFlac::pullData(AudioNode::DataPullReq& dpr)
 {
+    if (mOutputReadOfs) {
+        dpr.fmt = outputFormat;
+        auto size = std::min(mOutputLen - mOutputReadOfs, (int)mOutputChunkSize);
+        dpr.size = size;
+        dpr.buf = (char*)mOutputBuf + mOutputReadOfs;
+        mOutputReadOfs += size;
+        if (mOutputReadOfs >= mOutputLen) {
+            mOutputReadOfs = 0;
+        }
+//        printf("send next chunk: %d\n", dpr.size);
+        return AudioNode::kNoError;
+    }
     mDprPtr = &dpr;
     mOutputLen = 0;
-    for (int i = 0; !mOutputLen && (i < 6); i++) {
+    for (int i = 0; !mOutputLen && (i < 10); i++) {
         auto ok = FLAC__stream_decoder_process_single(mDecoder);
         if (!ok) {
             dpr.clear();
@@ -86,8 +98,15 @@ AudioNode::StreamError DecoderFlac::pullData(AudioNode::DataPullReq& dpr)
         return AudioNode::kErrDecode;
     }
     dpr.fmt = outputFormat;
-    dpr.size = mOutputLen;
     dpr.buf = (char*)mOutputBuf;
+    if (mOutputChunkSize) {
+        dpr.size = mOutputChunkSize;
+        mOutputReadOfs = dpr.size;
+//        printf("send first chunk: %d\n", dpr.size);
+    } else {
+        dpr.size = mOutputLen;
+        mOutputReadOfs = 0;
+    }
     return AudioNode::kNoError;
 }
 
@@ -178,6 +197,7 @@ FLAC__StreamDecoderWriteStatus DecoderFlac::writeCb(const FLAC__StreamDecoder *d
         ESP_LOGE(TAG, "Output of FLAC codec is too large to fit into output buffer, aborting decode");
         return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
     }
+    self.mOutputChunkSize = (header.sample_rate / nSamples < 35) ? self.mOutputLen >> 1 : 0;
     return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
 }
 

@@ -36,7 +36,13 @@ void I2sOutputNode::nodeThreadFunc()
         plSendEvent(kEventAudioFormatChange, 0, mFormat.asCode());
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
             DataPullReq dpr(0xffff); // read all available data
+#ifdef DEBUG_TIMING
+            ElapsedTimer t;
+#endif
             auto err = mPrev->pullData(dpr);
+#ifdef DEBUG_TIMING
+            ESP_LOGI(TAG, "pullData took %d ms\n", t.msElapsed());
+#endif
             if (err) {
                 if (err == kStreamChanged) {
                     // dpr does not contain PCM format info, but codec type and streamId
@@ -59,8 +65,13 @@ void I2sOutputNode::nodeThreadFunc()
                 MutexLocker locker(mutex);
                 mSampleCtr += dpr.size >> mBytesPerSampleShiftDiv;
             }
-            if (mUseVolumeInterface) {
+            if (volProcessingEnabled()) { // enabled only when there is no equalizer node
                 volumeProcess(dpr);
+            }
+            if (volLevelEnabled()) {
+                // notify previous levels before finding new ones, thus the delay compensates a bit
+                // for the delay introduced by the DMA buffering
+                volumeNotifyLevelCallback();
                 volumeGetLevel(dpr);
             }
 

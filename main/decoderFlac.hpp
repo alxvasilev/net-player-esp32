@@ -12,7 +12,9 @@ protected:
     };
     typedef bool (DecoderFlac::*OutputFunc)(int nSamples, const FLAC__int32* const samples[]);
     uint8_t* mOutputBuf;
+    uint16_t mOutputChunkSize = 0;
     int mOutputLen;
+    int mOutputReadOfs = 0;
     AudioNode::DataPullReq* mDprPtr = nullptr;
     FLAC__StreamDecoder* mDecoder = nullptr;
     OutputFunc mOutputFunc = nullptr;

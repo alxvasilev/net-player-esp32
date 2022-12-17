@@ -16,7 +16,6 @@ protected:
     uint8_t mChanCount = 0; // cached from mFormat, for performance
     void* mEqualizer = nullptr;
     float mGains[kBandCount];
-    bool mGetAudioLevelBeforeEq = false;
     bool mBypass = false;
     void equalizerReinit(StreamFormat fmt);
     void setFormat(StreamFormat fmt);
@@ -31,7 +30,6 @@ public:
     void zeroAllGains();
     float bandGain(uint8_t band);
     const float* allGains() { return mGains; }
-    void monitorLevelAtInput(bool enable) { mGetAudioLevelBeforeEq = enable; }
     virtual IAudioVolume* volumeInterface() override { return this; }
 };
 

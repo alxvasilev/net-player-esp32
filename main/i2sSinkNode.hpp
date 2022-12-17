@@ -17,10 +17,9 @@ protected:
     uint64_t mSampleCtr;
     bool mUseInternalDac;
     uint8_t mBytesPerSampleShiftDiv;
-    bool mUseVolumeInterface = false;
     enum {
         kDmaBufLen = 1023,
-        kDmaBufCntInternalRam = 2, kDmaBufCntSpiRam = 6, // in samples, multiply by 4 for bytes
+        kDmaBufCntInternalRam = 2, kDmaBufCntSpiRam = 9, // in samples
         kDefaultSamplerate = 44100
     };
     virtual void nodeThreadFunc();
@@ -30,7 +29,6 @@ protected:
 public:
     I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t* pinCfg, uint32_t stackSize, int8_t cpuCore=-1);
     ~I2sOutputNode();
-    void useVolumeInterface(bool enable) { mUseVolumeInterface = enable; }
     virtual Type type() const { return kTypeI2sOut; }
     virtual IAudioVolume* volumeInterface() override { return this; }
     virtual StreamError pullData(DataPullReq& dpr) { return kTimeout; }

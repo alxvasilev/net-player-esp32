@@ -142,7 +142,7 @@ void AudioPlayer::lcdInit()
 void AudioPlayer::initTimedDrawTask()
 {
     xTaskCreatePinnedToCore(&lcdTimedDrawTask, "lcdTask", kLcdTaskStackSize, this, kLcdTaskPrio, nullptr, kLcdTaskCore);
-    mVolumeInterface->setLevelCallback(audioLevelCb, this);
+    mVuLevelInterface->volEnableLevel(audioLevelCb, this);
 }
 
 bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType)
@@ -179,11 +179,6 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         mEqualizer.reset(new EqualizerNode(*this, sDefaultEqGains));
         mEqualizer->linkToPrev(pcmSource);
         pcmSource = mEqualizer.get();
-        auto vuAtInput = mNvsHandle.readDefault<uint8_t>("vuAtEqInput", 0);
-        if (vuAtInput) {
-            mEqualizer->monitorLevelAtInput(true);
-        }
-        ESP_LOGI(TAG, "VU source set %s volume and EQ processing", vuAtInput ? "before" : "after");
     }
     switch(outType) {
     case AudioNode::kTypeI2sOut: {
@@ -195,9 +190,6 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
             .data_in_num = -1,
         };
         mStreamOut.reset(new I2sOutputNode(*this, 0, &cfg, kI2sStackSize, kI2sCpuCore));
-        if ((mFlags & kFlagUseEqualizer) == 0) {
-            static_cast<I2sOutputNode*>(mStreamOut.get())->useVolumeInterface(true);
-        }
         break;
     }
     /*
@@ -210,7 +202,18 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         return false;
     }
     mStreamOut->linkToPrev(pcmSource);
+
+    // setup VU level probe point
+    auto vuAtInput = mNvsHandle.readDefault<uint8_t>("vuAtEqInput", 0);
+    if (vuAtInput && mEqualizer) {
+        mVuLevelInterface = mEqualizer.get();
+        ESP_LOGI(TAG, "VU source set %s volume and EQ processing", vuAtInput ? "before" : "after");
+    } else {
+        mVuLevelInterface = mStreamOut->volumeInterface();
+    }
+    // setup volume change point
     detectVolumeNode();
+    // ====
     ESP_LOGI(TAG, "Audio pipeline:\n%s", printPipeline().c_str());
     loadSettings();
     return true;
@@ -377,7 +380,8 @@ void AudioPlayer::detectVolumeNode() {
     for (auto it = nodes.rbegin(); it != nodes.rend(); it++) {
         mVolumeInterface = (*it)->volumeInterface();
         if (mVolumeInterface) {
-            ESP_LOGW(TAG, "Volume node found: '%s'", (*it)->tag());
+            mVolumeInterface->volEnableProcessing(true);
+            ESP_LOGW(TAG, "Volume node found and enabled: '%s'", (*it)->tag());
             return;
         }
     }

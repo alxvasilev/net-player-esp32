@@ -87,7 +87,6 @@ void EqualizerNode::setFormat(StreamFormat fmt)
         mBypass = false;
         equalizerReinit(fmt);
     }
-    //return kErrStreamFmt;
 }
 
 AudioNode::StreamError EqualizerNode::pullData(DataPullReq &dpr)
@@ -100,18 +99,15 @@ AudioNode::StreamError EqualizerNode::pullData(DataPullReq &dpr)
     if (dpr.fmt != mFormat) {
         setFormat(dpr.fmt);
     }
-    if (mGetAudioLevelBeforeEq) {
+    if (volLevelEnabled()) {
+        volumeNotifyLevelCallback(); // notify previous levels to compensate output buffering delay
         volumeGetLevel(dpr);
+    }
+    if (volProcessingEnabled()) {
         volumeProcess(dpr);
-        if (!mBypass) {
-            esp_equalizer_process(mEqualizer, (unsigned char*)dpr.buf, dpr.size, mSampleRate, mChanCount);
-        }
-    } else {
-        volumeProcess(dpr);
-        if (!mBypass) {
-            esp_equalizer_process(mEqualizer, (unsigned char*)dpr.buf, dpr.size, mSampleRate, mChanCount);
-        }
-        volumeGetLevel(dpr);
+    }
+    if (!mBypass) {
+        esp_equalizer_process(mEqualizer, (unsigned char*)dpr.buf, dpr.size, mSampleRate, mChanCount);
     }
     return kNoError;
 }

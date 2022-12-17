@@ -474,6 +474,7 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
     if (dp.size == 0) { // there was no due stream change event, and this is a codec probe
         return kNoError;
     }
+    printf("ringbuf: %d\n", mRingBuf.dataSize());
     auto ret = mRingBuf.contigRead(dp.buf, dp.size, -1);
     if (ret < 0) {
         dp.size = 0;

@@ -29,13 +29,16 @@ public:
         int16_t right;
     };
     typedef void(*AudioLevelCallbck)(void* arg);
-    void setLevelCallback(AudioLevelCallbck cb, void* arg)
+    void volEnableLevel(AudioLevelCallbck cb, void* arg)
     {
         mAudioLevelCb = cb;
         mAudioLevelCbArg = arg;
     }
+    bool volLevelEnabled() const { return mAudioLevelCb != nullptr; }
+    void volEnableProcessing(bool ena) { mVolProcessingEnabled = ena; }
+    bool volProcessingEnabled() const { return mVolProcessingEnabled; }
     // volume is in percent of original.
-    // 0-99% attenuates, 101-400% amplifies
+    // 0-99% attenuates, 101-400% amplifies  
     virtual uint16_t getVolume() const = 0;
     virtual void setVolume(uint16_t vol) = 0;
     const StereoLevels& audioLevels() const { return mAudioLevels; }
@@ -51,6 +54,7 @@ protected:
     StereoLevels mAudioLevels;
     AudioLevelCallbck mAudioLevelCb = nullptr;
     void* mAudioLevelCbArg = nullptr;
+    bool mVolProcessingEnabled = false;
 };
 
 class DefaultVolumeImpl: public IAudioVolume
@@ -63,72 +67,68 @@ private:
     ProcessFunc mProcessVolumeFunc = nullptr;
     ProcessFunc mGetLevelFunc = nullptr;
     StreamFormat mFormat;
-template <typename T, bool ChangeVol, bool GetLevel>
-void processVolumeStereo(AudioNode::DataPullReq& dpr)
+template <typename T>
+void processVolume(AudioNode::DataPullReq& dpr)
+{
+    T* end = (T*)(dpr.buf + dpr.size);
+    for(T* pSample = (T*)dpr.buf; pSample < end; pSample++) {
+        *pSample = (static_cast<int64_t>(*pSample) * mVolume + kVolumeDiv / 2) / kVolumeDiv;
+    }
+}
+template <typename T>
+void getPeakLevelMono(AudioNode::DataPullReq& dpr)
+{
+    T level = 0;
+    T* end = (T*)(dpr.buf + dpr.size);
+    for(T* pSample = (T*)dpr.buf; pSample < end; pSample++) {
+        if (*pSample > level) {
+            level = *pSample;
+        }
+    }
+    // sample is always left-aligned. I.e. for 24 bit, we have a left-aligned 32bit int
+    enum { kShift = std::max((int)sizeof(T) * 8 - 16, 0) };
+    if (kShift != 0) {
+        mAudioLevels.left = mAudioLevels.right = level >> kShift;
+    } else {
+        mAudioLevels.left = mAudioLevels.right = level;
+    }
+}
+template <typename T>
+void getPeakLevelStereo(AudioNode::DataPullReq& dpr)
 {
     T left = 0;
     T right = 0;
-    T* pSample = (T*)dpr.buf;
-    T* end = pSample + dpr.size / sizeof(T);
-    while(pSample < end) {
-        if (GetLevel) {
-            if (*pSample > left) {
-                left = *pSample;
-            }
-        }
-        if (ChangeVol) {
-            *pSample = (static_cast<int64_t>(*pSample) * mVolume + kVolumeDiv / 2) / kVolumeDiv;
+    T* end = (T*)(dpr.buf + dpr.size);
+    for(T* pSample = (T*)dpr.buf; pSample < end; pSample++) {
+        if (*pSample > right) {
+            right = *pSample;
         }
         pSample++;
-
-        if (GetLevel) {
-            if (*pSample > right) {
-                right = *pSample;
-            }
+        if (*pSample > left) {
+            left = *pSample;
         }
-        if (ChangeVol) {
-            *pSample = (static_cast<int64_t>(*pSample) * mVolume + kVolumeDiv / 2) / kVolumeDiv;
-        }
-        pSample++;
     }
-    if (GetLevel) {
+    enum { kShift = std::max((int)sizeof(T) * 8 - 16, 0) };
+    if (kShift != 0) {
+        mAudioLevels.left = left >> kShift;
+        mAudioLevels.right = right >> kShift;
+    } else {
         mAudioLevels.left = left;
         mAudioLevels.right = right;
     }
 }
 
-template <typename T, bool ChangeVol, bool GetLevel>
-void processVolumeMono(AudioNode::DataPullReq& dpr)
-{
-    T level = 0;
-    T* pSample = (T*)dpr.buf;
-    T* end = pSample + dpr.size / sizeof(T);
-    for(; pSample < end; pSample++) {
-        if (GetLevel) {
-            if (*pSample > level) {
-                level = *pSample;
-            }
-        }
-
-        if (ChangeVol) {
-            *pSample = (static_cast<int64_t>(*pSample) * mVolume + kVolumeDiv / 2) / kVolumeDiv;
-        }
-    }
-    if (GetLevel) {
-        mAudioLevels.left = mAudioLevels.right = level;
-    }
-}
 template<typename T>
 void updateProcessFuncsStereo()
 {
-    mProcessVolumeFunc = &DefaultVolumeImpl::processVolumeStereo<T, true, false>;
-    mGetLevelFunc = &DefaultVolumeImpl::processVolumeStereo<T, false, true>;
+    mProcessVolumeFunc = &DefaultVolumeImpl::processVolume<T>;
+    mGetLevelFunc = &DefaultVolumeImpl::getPeakLevelStereo<T>;
 }
 template<typename T>
 void updateProcessFuncsMono()
 {
-    mProcessVolumeFunc = &DefaultVolumeImpl::processVolumeMono<T, true, false>;
-    mGetLevelFunc = &DefaultVolumeImpl::processVolumeMono<T, false, true>;
+    mProcessVolumeFunc = &DefaultVolumeImpl::processVolume<T>;
+    mGetLevelFunc = &DefaultVolumeImpl::getPeakLevelMono<T>;
 }
 bool updateVolumeFormat(StreamFormat fmt)
 {
@@ -137,7 +137,9 @@ bool updateVolumeFormat(StreamFormat fmt)
     if (nChans == 2) {
         if (bps == 16) {
             updateProcessFuncsStereo<int16_t>();
-        } else if (bps == 24 || bps == 32) {
+        } else if (bps == 24) {
+            updateProcessFuncsStereo<int32_t>();
+        } else if (bps == 32) {
             updateProcessFuncsStereo<int32_t>();
         } else if (bps == 8) {
             updateProcessFuncsStereo<int8_t>();
@@ -147,7 +149,9 @@ bool updateVolumeFormat(StreamFormat fmt)
     } else if (nChans == 1) {
         if (bps == 16) {
             updateProcessFuncsMono<int16_t>();
-        } else if (bps == 24 || bps == 32) {
+        } else if (bps == 24) {
+            updateProcessFuncsMono<int32_t>();
+        } else if (bps == 32) {
             updateProcessFuncsMono<int32_t>();
         } else if (bps == 8) {
             updateProcessFuncsMono<int8_t>();
@@ -172,13 +176,13 @@ void volumeProcess(AudioNode::DataPullReq& dpr)
 }
 void volumeGetLevel(AudioNode::DataPullReq& dpr)
 {
-    if (!mAudioLevelCb) { // only find peak amplitude
-        return;
-    }
     if (dpr.fmt != mFormat) {
         updateVolumeFormat(dpr.fmt);
     }
     (this->*mGetLevelFunc)(dpr);
+}
+void volumeNotifyLevelCallback()
+{
     mAudioLevelCb(mAudioLevelCbArg);
 }
 public:

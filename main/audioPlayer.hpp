@@ -74,6 +74,7 @@ protected:
     std::unique_ptr<EqualizerNode> mEqualizer;
     std::unique_ptr<AudioNodeWithTask> mStreamOut;
     IAudioVolume* mVolumeInterface = nullptr;
+    IAudioVolume* mVuLevelInterface = nullptr;
     NvsHandle mNvsHandle;
     ST7735Display& mLcd;
     EventGroup mEvents;
