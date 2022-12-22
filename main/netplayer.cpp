@@ -25,6 +25,7 @@
 #include <st7735.hpp>
 #include "sdcard.hpp"
 #include "bluetooth.hpp"
+#include <httpServer.hpp>
 #include <new>
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
@@ -33,7 +34,7 @@ static constexpr gpio_num_t kPinLed = GPIO_NUM_2;
 
 static const char *TAG = "netplay";
 
-AudioPlayer::HttpServerInfo gHttpServer;
+http::Server gHttpServer;
 std::unique_ptr<AudioPlayer> player;
 std::unique_ptr<WifiBase> wifi;
 TaskList taskList;
@@ -304,45 +305,18 @@ static esp_err_t indexUrlHandler(httpd_req_t *req)
     return ESP_OK;
 }
 
-static const httpd_uri_t indexUrl = {
-    .uri       = "/",
-    .method    = HTTP_GET,
-    .handler   = indexUrlHandler,
-    /* Let's pass response string in user
-     * context to demonstrate it's usage */
-    .user_ctx  = nullptr
-};
-
-
-void stopWebserver() {
-    /* Stop the web server */
-    if (!gHttpServer.server) {
-        return;
-    }
-    netLogger.unregisterWithHttpServer("/log");
-    httpd_stop(gHttpServer.server);
-    gHttpServer.server = nullptr;
-}
-
 void startWebserver(bool isAp)
 {
-    if (gHttpServer.server) {
-        stopWebserver();
-    }
-
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.stack_size = 4096;
-    config.max_uri_handlers = 24;
-    config.uri_match_fn = httpd_uri_match_wildcard;
-    ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
-    if (httpd_start(&gHttpServer.server, &config) != ESP_OK) {
-        ESP_LOGI(TAG, "Error starting server!");
+    ESP_LOGI(TAG, "Starting server on port 80...");
+    auto err = gHttpServer.start(80, nullptr, 24, 4096);
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "Error %s starting server", esp_err_to_name(err));
         return;
     }
     // Set URI handlers
     ESP_LOGI(TAG, "Registering URI handlers");
-    netLogger.registerWithHttpServer(gHttpServer.server, "/log");
-    httpd_register_uri_handler(gHttpServer.server, &otaUrlHandler);
-    httpd_register_uri_handler(gHttpServer.server, &indexUrl);
-    httpFsRegisterHandlers(gHttpServer.server);
+    netLogger.registerWithHttpServer(gHttpServer.handle(), "/log");
+    gHttpServer.on("/ota", HTTP_POST, otaHttpRequestHandler, nullptr);
+    gHttpServer.on("/", HTTP_GET, indexUrlHandler, nullptr);
+    httpFsRegisterHandlers(gHttpServer.handle());
 }

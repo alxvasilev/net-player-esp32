@@ -1,0 +1,3 @@
+[submodule "esp32-mylibs"]
+	path = esp32-mylibs
+	url = git@github.com:alxvasilev/esp32-mylibs.git

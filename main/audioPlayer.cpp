@@ -11,6 +11,7 @@
 #include <stdfonts.hpp>
 #include <string>
 #include <esp_netif.h> // for createDlnaHandler()
+#include <httpServer.hpp>
 #include "tostring.hpp"
 
 extern Font font_CamingoBold43;
@@ -58,14 +59,14 @@ void AudioPlayer::createOutputA2dp()
     */
 }
 
-AudioPlayer::AudioPlayer(PlayerMode playerMode, AudioNode::Type outType, ST7735Display& lcd, HttpServerInfo& httpServer, bool useEq)
+AudioPlayer::AudioPlayer(PlayerMode playerMode, AudioNode::Type outType, ST7735Display& lcd, http::Server& httpServer, bool useEq)
 : mFlags(useEq ? kFlagUseEqualizer : (Flags)0), mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd),
   mEvents(kEventTerminating), mHttpServer(httpServer), mVuDisplay(mLcd)
 {
     init(playerMode, outType);
 }
 
-AudioPlayer::AudioPlayer(ST7735Display& lcd, HttpServerInfo& httpServer)
+AudioPlayer::AudioPlayer(ST7735Display& lcd, http::Server& httpServer)
 : mFlags((Flags)0), mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd),
   mHttpServer(httpServer), mVuDisplay(mLcd)
 {
@@ -131,8 +132,9 @@ void AudioPlayer::createDlnaHandler()
     tcpip_adapter_ip_info_t ipInfo;
     char url[48];
     tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ipInfo);
-    snprintf(url, sizeof(url), "http%s://" IPSTR ":%d", mHttpServer.isSsl ? "s":"", IP2STR(&ipInfo.ip), 80);
-    mDlna.reset(new DlnaHandler(mHttpServer.server, url, *this));
+    snprintf(url, sizeof(url), "http%s://" IPSTR ":%d", mHttpServer.isSsl() ? "s":"",
+             IP2STR(&ipInfo.ip), 80);
+    mDlna.reset(new DlnaHandler(mHttpServer.handle(), url, *this));
 }
 void AudioPlayer::lcdInit()
 {
@@ -690,7 +692,7 @@ void AudioPlayer::registerHttpGetHandler(const char* path, esp_err_t(*handler)(h
         .handler   = handler,
         .user_ctx  = this
     };
-    httpd_register_uri_handler(mHttpServer.server, &desc);
+    httpd_register_uri_handler(mHttpServer.handle(), &desc);
 }
 
 esp_err_t AudioPlayer::volumeUrlHandler(httpd_req_t *req)
@@ -938,18 +940,18 @@ esp_err_t AudioPlayer::changeInputUrlHandler(httpd_req_t *req)
 
 void AudioPlayer::registerUrlHanlers()
 {
-    registerHttpGetHandler("/play", &playUrlHandler);
-    registerHttpGetHandler("/pause", &pauseUrlHandler);
-    registerHttpGetHandler("/vol", &volumeUrlHandler);
-    registerHttpGetHandler("/eqget", &equalizerDumpUrlHandler);
-    registerHttpGetHandler("/eqset", &equalizerSetUrlHandler);
-    registerHttpGetHandler("/status", &getStatusUrlHandler);
-    registerHttpGetHandler("/nvget", &nvsGetParamUrlHandler);
-    registerHttpGetHandler("/nvset", &nvsSetParamUrlHandler);
-    registerHttpGetHandler("/inmode", &changeInputUrlHandler);
-    registerHttpGetHandler("/reset", &resetSubsystemUrlHandler);
+    mHttpServer.on("/play", HTTP_GET, &playUrlHandler);
+    mHttpServer.on("/pause", HTTP_GET, &pauseUrlHandler);
+    mHttpServer.on("/vol", HTTP_GET, &volumeUrlHandler);
+    mHttpServer.on("/eqget", HTTP_GET, &equalizerDumpUrlHandler);
+    mHttpServer.on("/eqset", HTTP_GET, &equalizerSetUrlHandler);
+    mHttpServer.on("/status", HTTP_GET, &getStatusUrlHandler);
+    mHttpServer.on("/nvget", HTTP_GET, &nvsGetParamUrlHandler);
+    mHttpServer.on("/nvset", HTTP_GET, &nvsSetParamUrlHandler);
+    mHttpServer.on("/inmode", HTTP_GET, &changeInputUrlHandler);
+    mHttpServer.on("/reset", HTTP_GET, &resetSubsystemUrlHandler);
     if (stationList) {
-        stationList->registerHttpHandlers(mHttpServer.server);
+        stationList->registerHttpHandlers(mHttpServer.handle());
     }
 }
 

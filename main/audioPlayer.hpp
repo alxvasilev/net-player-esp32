@@ -14,11 +14,10 @@
 class DecoderNode;
 class EqualizerNode;
 class ST7735Display;
-
-namespace nvs {
-    class NVSHandle;
-}
+namespace http { class Server; }
+namespace nvs { class NVSHandle; }
 struct TrackInfo;
+
 class AudioPlayer: public IAudioPipeline
 {
 public:
@@ -28,11 +27,6 @@ public:
         kHttpBufPrefillSpiRam = 65536,
         kDefTitleScrollFps = 15,
         kLcdNetSpeedUpdateIntervalUs = 1 * 1000000
-    };
-    struct HttpServerInfo {
-        httpd_handle_t server = nullptr;
-        uint16_t port = 0;
-        bool isSsl = false;
     };
     enum PlayerMode: uint8_t {
         kModeInvalid = 0,
@@ -78,7 +72,7 @@ protected:
     NvsHandle mNvsHandle;
     ST7735Display& mLcd;
     EventGroup mEvents;
-    HttpServerInfo& mHttpServer;
+    http::Server& mHttpServer;
     std::unique_ptr<DlnaHandler> mDlna;
     unique_ptr_mfree<TrackInfo> mTrackInfo;
     uint32_t mStreamSeqNo = 0;
@@ -144,8 +138,8 @@ public:
     std::unique_ptr<StationList> stationList;
     const TrackInfo* trackInfo() const { return mTrackInfo.get(); }
     void setLogLevel(esp_log_level_t level);
-    AudioPlayer(PlayerMode mode, AudioNode::Type outType, ST7735Display& lcd, HttpServerInfo& httpServer, bool useEq=true);
-    AudioPlayer(ST7735Display& lcd, HttpServerInfo& httpServer);
+    AudioPlayer(PlayerMode mode, AudioNode::Type outType, ST7735Display& lcd, http::Server& httpServer, bool useEq=true);
+    AudioPlayer(ST7735Display& lcd, http::Server& httpServer);
     ~AudioPlayer();
     AudioNode::Type inputType() const { return mStreamIn->type(); }
     AudioNode::Type outputType() const { return mStreamOut->type(); }
