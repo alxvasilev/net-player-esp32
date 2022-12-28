@@ -896,9 +896,8 @@ esp_err_t AudioPlayer::resetSubsystemUrlHandler(httpd_req_t* req)
     UrlParams params(req);
     auto key = params.strVal("what");
     if (!key.str) {
-        ESP_LOGW(TAG, "Restarting on user request...");
-        esp_restart();
-        return ESP_OK;
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No 'what' parameter");
+        return ESP_FAIL;
     }
     MutexLocker locker(self->mutex);
     if (strcmp(key.str, "vu") == 0) {
@@ -940,16 +939,16 @@ esp_err_t AudioPlayer::changeInputUrlHandler(httpd_req_t *req)
 
 void AudioPlayer::registerUrlHanlers()
 {
-    mHttpServer.on("/play", HTTP_GET, &playUrlHandler);
-    mHttpServer.on("/pause", HTTP_GET, &pauseUrlHandler);
-    mHttpServer.on("/vol", HTTP_GET, &volumeUrlHandler);
-    mHttpServer.on("/eqget", HTTP_GET, &equalizerDumpUrlHandler);
-    mHttpServer.on("/eqset", HTTP_GET, &equalizerSetUrlHandler);
-    mHttpServer.on("/status", HTTP_GET, &getStatusUrlHandler);
-    mHttpServer.on("/nvget", HTTP_GET, &nvsGetParamUrlHandler);
-    mHttpServer.on("/nvset", HTTP_GET, &nvsSetParamUrlHandler);
-    mHttpServer.on("/inmode", HTTP_GET, &changeInputUrlHandler);
-    mHttpServer.on("/reset", HTTP_GET, &resetSubsystemUrlHandler);
+    mHttpServer.on("/play", HTTP_GET, &playUrlHandler, this);
+    mHttpServer.on("/pause", HTTP_GET, &pauseUrlHandler, this);
+    mHttpServer.on("/vol", HTTP_GET, &volumeUrlHandler, this);
+    mHttpServer.on("/eqget", HTTP_GET, &equalizerDumpUrlHandler, this);
+    mHttpServer.on("/eqset", HTTP_GET, &equalizerSetUrlHandler, this);
+    mHttpServer.on("/status", HTTP_GET, &getStatusUrlHandler, this);
+    mHttpServer.on("/nvget", HTTP_GET, &nvsGetParamUrlHandler, this);
+    mHttpServer.on("/nvset", HTTP_GET, &nvsSetParamUrlHandler, this);
+    mHttpServer.on("/inmode", HTTP_GET, &changeInputUrlHandler, this);
+    mHttpServer.on("/reset", HTTP_GET, &resetSubsystemUrlHandler, this);
     if (stationList) {
         stationList->registerHttpHandlers(mHttpServer.handle());
     }
@@ -1140,26 +1139,33 @@ void AudioPlayer::lcdUpdateCodec(CodecType codec)
 }
 void AudioPlayer::lcdUpdateAudioFormat(StreamFormat fmt)
 {
-    char buf[] = "    K/  bit";
-    toString<kDontNullTerminate|1>(buf, 4, fmtFp((float)fmt.sampleRate() / 1000));
-//    toString<kDontNullTerminate|1>(buf, 4, fmtInt(fmt.sampleRate() / 1000));
-    toString<kDontNullTerminate>(buf + 6, 2, fmt.bitsPerSample());
-    lcdWriteStreamInfo(5, buf);
-    printf("%s\n", buf);
+    char buf[32];
+    auto end = vtsnprintf(buf, sizeof(buf), fmt.sampleRate() / 1000, '.', (fmt.sampleRate() % 1000 + 50) / 100,
+        "kHz/", fmt.bitsPerSample(), "-bit");
+    lcdWriteStreamInfo(-(end-buf), buf);
 }
 void AudioPlayer::lcdUpdateNetSpeed()
 {
     if (!mStreamIn || mStreamIn->type() != AudioNode::kTypeHttpIn) {
         return;
     }
-    auto speed = (static_cast<HttpNode*>(mStreamIn.get())->pollSpeed() + 512) / 1024;
+    auto speed = static_cast<HttpNode*>(mStreamIn.get())->pollSpeed();
     if (speed == mLastShownNetSpeed) {
         return;
     }
     mLastShownNetSpeed = speed;
-    char buf[] = "   K/s";
-    toString<kDontNullTerminate>(buf, 3, fmtInt(speed, 0, 3));
-    lcdWriteStreamInfo(-(int)(sizeof(buf) - 1), buf);
+    char buf[16];
+    int whole = speed / 1024;
+    int dec = ((speed % 1024) * 10 + 512) / 1024;
+    if (dec >= 10) {
+        dec -= 1;
+        whole++;
+    }
+    auto end = vtsnprintf(buf, sizeof(buf), fmtInt(whole, 0, 4), '.', dec, "K/s");
+    mLcd.setFont(kStreamInfoFont);
+    mLcd.setFgColor(kLcdColorCaption);
+    mLcd.gotoXY(mLcd.width() - mLcd.textWidth(end - buf), 0);
+    mLcd.puts(buf);
 }
 void AudioPlayer::audioLevelCb(void* ctx)
 {

@@ -1,6 +1,5 @@
 #include <string.h>
-//#include <esp32/spiram.h>
-#include "freertos/FreeRTOS.h"
+#include <freertos/FreeRTOS.h>
 #include <esp_log.h>
 #include <driver/gpio.h>
 #include <driver/spi_common.h>
@@ -15,32 +14,46 @@
 #include <string>
 #include <algorithm> // for sorting task list
 #include <memory>
-#include "utils.hpp"
-#include "netLogger.hpp"
-#include "httpFile.hpp"
-#include "ota.hpp"
-#include "audioPlayer.hpp"
-#include "wifi.hpp"
-#include "taskList.hpp"
+#include <utils.hpp>
+#include <netLogger.hpp>
+#include <httpFile.hpp>
+#include <ota.hpp>
+#include <wifi.hpp>
+#include <taskList.hpp>
 #include <st7735.hpp>
-#include "sdcard.hpp"
-#include "bluetooth.hpp"
+#include <sdcard.hpp>
+#include <bluetooth.hpp>
 #include <httpServer.hpp>
+#include <nvsSimple.hpp>
+#include <mdns.hpp>
 #include <new>
+#include "audioPlayer.hpp"
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
 static constexpr gpio_num_t kPinLed = GPIO_NUM_2;
+static constexpr ST7735Display::PinCfg lcdPins = {
+    {
+        .clk = GPIO_NUM_18,
+        .mosi = GPIO_NUM_23,
+        .cs = GPIO_NUM_5,
+    },
+    .dc = GPIO_NUM_33, // data/command
+    .rst = GPIO_NUM_4
+};
 
 static const char *TAG = "netplay";
-
+const char* kDefaultMdnsDomain = "netplayer";
 http::Server gHttpServer;
 std::unique_ptr<AudioPlayer> player;
 std::unique_ptr<WifiBase> wifi;
+bool gIsAp = false;
 TaskList taskList;
 ST7735Display lcd(VSPI_HOST);
+NvsSimple nvsSimple;
 SDCard sdcard;
-
+NetLogger netLogger(false);
+MDns mdns;
 void startWebserver(bool isAp=false);
 
 void configGpios()
@@ -57,7 +70,6 @@ void configGpios()
     gpio_set_direction(kPinLed, GPIO_MODE_OUTPUT);
 }
 
-NetLogger netLogger(false);
 void blinkLed(int dur, int periodMs, uint8_t duty10=5)
 {
     int ticksOn = (periodMs * duty10 / 10) / portTICK_PERIOD_MS;
@@ -68,28 +80,6 @@ void blinkLed(int dur, int periodMs, uint8_t duty10=5)
         gpio_set_level(kPinLed, 0);
         vTaskDelay(ticksOff);
     }
-}
-
-void blinkLedProgress(int dur, int periodMs)
-{
-    int count = dur / periodMs;
-    for(int i = 0; i < count; i++) {
-        gpio_set_level(kPinLed, 1);
-        vTaskDelay((periodMs * i / count) / portTICK_PERIOD_MS);
-        gpio_set_level(kPinLed, 0);
-        vTaskDelay((periodMs * (count - i) / count) / portTICK_PERIOD_MS);
-    }
-}
-
-void initNvs()
-{
-    /* Initialize NVS — it is used to store PHY calibration data */
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(err);
 }
 
 void mountSpiffs()
@@ -126,33 +116,50 @@ void mountSpiffs()
          ESP_LOGW(TAG, "SPIFFS partition size: total: %d, used: %d", total, used);
      }
 }
-bool rollbackCheckUserForced()
+void connectToWifi(bool forceAP = false)
 {
-    if (gpio_get_level(kPinRollbackButton)) {
-        return false;
+    if (forceAP) {
+        goto startAp;
     }
-
-    static constexpr const char* RB = "ROLLBACK";
-    ESP_LOGW("RB", "Rollback button press detected, waiting for 4 second to confirm...");
-    blinkLedProgress(4000, 200);
-    if (gpio_get_level(kPinRollbackButton)) {
-        ESP_LOGW("RB", "Rollback not pressed after 1 second, rollback canceled");
-        return false;
-    }
-    ESP_LOGW(RB, "App rollback requested by user button, rolling back and rebooting...");
-    setOtherPartitionBootableAndRestart();
-    return true;
-}
-static constexpr ST7735Display::PinCfg lcdPins = {
     {
-        .clk = GPIO_NUM_18,
-        .mosi = GPIO_NUM_23,
-        .cs = GPIO_NUM_5,
-    },
-    .dc = GPIO_NUM_33, // data/command
-    .rst = GPIO_NUM_4
-};
-
+        auto ssid = nvsSimple.getString("wifi.ssid");
+        auto pass = nvsSimple.getString("wifi.pass");
+        if (!ssid || !pass) {
+            ESP_LOGW(TAG, "No valid WiFi credentials in NVS, starting access point...");
+            goto startAp;
+        }
+        lcd.puts("Connecting to WiFi...");
+        wifi.reset(new WifiClient);
+        static_cast<WifiClient*>(wifi.get())->start(ssid.ptr(), pass.ptr());
+        if (wifi->waitForConnect(20000)) {
+            gIsAp = false;
+            lcd.puts("success\n");
+            goto connectSuccess;
+        }
+        lcd.puts("timeout\n");
+    }
+startAp:
+    gIsAp = true;
+    lcd.puts("Starting Wifi AP");
+    lcd.puts("ssid: netplayer\n");
+    lcd.puts("key: alexisthebest\n");
+    wifi.reset(new WifiAp);
+    static_cast<WifiAp*>(wifi.get())->start("netplayer", "alexisthebest", 1);
+connectSuccess:
+    char localIp[17];
+    snprintf(localIp, 17, IPSTR, IP2STR(&wifi->localIp()));
+    lcd.puts("Local IP is ");
+    lcd.puts(localIp);
+    lcd.newLine();
+}
+void startMdns()
+{
+    const char* domain = nvsSimple.getString("mdnsDomain").ptr();
+    if (!domain) {
+        domain = kDefaultMdnsDomain;
+    }
+    mdns.start(domain);
+}
 void* operator new(size_t size)
 {
     auto mem = utils::mallocTrySpiram(size);
@@ -176,54 +183,17 @@ extern "C" void app_main(void)
     utils::detectSpiRam();
     configGpios();
 
-    rollbackCheckUserForced();
-    rollbackConfirmAppIsWorking();
-
     lcd.init(320, 240, lcdPins);
     lcd.setFont(Font_7x11);
-    lcd.puts("Mounting storage...\n");
-    initNvs();
+    lcd.puts("Mounting NVS...\n");
+    /* Initialize NVS — it is used to store PHY calibration data */
+    nvsSimple.init("aplayer", true);
+    lcd.puts("Mounting SPIFFS...\n");
     mountSpiffs();
-
-    if (!gpio_get_level(kPinButton)) {
-        ESP_LOGW(TAG, "Started as WiFi access point");
-        wifi.reset(new WifiAp);
-        static_cast<WifiAp*>(wifi.get())->start("netplayer", "alexisthebest", 1);
-        startWebserver(true);
-        return;
-    }
-
-    //== WIFI
-    lcd.puts("Connecting to WiFi...\n");
-    wifi.reset(new WifiClient);
-    static_cast<WifiClient*>(wifi.get())->start(CONFIG_WIFI_SSID, CONFIG_WIFI_PASSWORD);
-    if (!wifi->waitForConnect(20000)) {
-        lcd.puts("...timed out, starting AP\n");
-        lcd.puts("ssid: netplayer\n");
-        lcd.puts("key: alexisthebest\n");
-        wifi.reset(new WifiAp);
-        static_cast<WifiAp*>(wifi.get())->start("netplayer", "alexisthebest", 1);
-    }
-    char localIp[17];
-    snprintf(localIp, 17, IPSTR, IP2STR(&wifi->localIp()));
-    lcd.puts("Local IP is ");
-    lcd.puts(localIp);
-    lcd.newLine();
- //====
+    connectToWifi(!gpio_get_level(kPinButton));
+    startMdns();
     lcd.puts("Starting webserver...\n");
-    startWebserver();    
-//===
-
-    lcd.puts("Waiting log conn...\n");
-    auto ret = netLogger.waitForLogConnection(4);
-    if (gOtaInProgress) {
-        lcd.puts("OTA Update in progress...\n");
-        return;
-    } else {
-        lcd.puts("OTA NOT in progress\n");
-    }
-
-    ESP_LOGI(TAG, "%s, continuing", ret ? "Log connection accepted" : "Timeout, continuing");
+    startWebserver();
 //===
     lcd.puts("Mounting SDCard...\n");
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };
@@ -245,7 +215,6 @@ extern "C" void app_main(void)
     }
     else if (player->inputType() == AudioNode::kTypeA2dpIn) {
         ESP_LOGI(TAG, "Player input set to Bluetooth A2DP sink");
-        //===
         auto before = xPortGetFreeHeapSize();
         BluetoothStack::disableBLE();
         ESP_LOGW(TAG, "Releasing Bluetooth BLE memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
@@ -304,7 +273,36 @@ static esp_err_t indexUrlHandler(httpd_req_t *req)
     httpd_resp_send_chunk(req, nullptr, 0);
     return ESP_OK;
 }
-
+const char* setBootFromRecovery()
+{
+    auto partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_FACTORY, "factory");
+    if (!partition) {
+        return "Could not find recovery partition";
+    }
+    auto err = esp_ota_set_boot_partition(partition);
+    if (err == ESP_OK) {
+        return nullptr;
+    }
+    return esp_err_to_name(err);
+}
+esp_err_t httpReboot(httpd_req_t* req)
+{
+    UrlParams params(req);
+    auto toRecovery = params.intVal("recovery", 0);
+    if (toRecovery) {
+        auto err = setBootFromRecovery();
+        if (err) {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, err);
+            return ESP_FAIL;
+        }
+    }
+    httpd_resp_sendstr(req, "ok");
+    ESP_LOGI(TAG, "Rebooting%s...", toRecovery ? " to recovery" : "");
+    asyncCall([]() {
+        esp_restart();
+    }, 100000);
+    return ESP_OK;
+}
 void startWebserver(bool isAp)
 {
     ESP_LOGI(TAG, "Starting server on port 80...");
@@ -316,7 +314,7 @@ void startWebserver(bool isAp)
     // Set URI handlers
     ESP_LOGI(TAG, "Registering URI handlers");
     netLogger.registerWithHttpServer(gHttpServer.handle(), "/log");
-    gHttpServer.on("/ota", HTTP_POST, otaHttpRequestHandler, nullptr);
-    gHttpServer.on("/", HTTP_GET, indexUrlHandler, nullptr);
+    gHttpServer.on("/reboot", HTTP_GET, httpReboot);
+    gHttpServer.on("/", HTTP_GET, indexUrlHandler);
     httpFsRegisterHandlers(gHttpServer.handle());
 }

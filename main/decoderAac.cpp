@@ -1,5 +1,11 @@
 #include "decoderAac.hpp"
 
+#ifdef CONFIG_ESP32_SPIRAM_SUPPORT
+    #define HELIX_FEATURE_AUDIO_CODEC_AAC_SBR 1
+#endif
+
+#include <aacdec.h>
+
 static const char* TAG = "aacdec";
 
 DecoderAac::DecoderAac(DecoderNode& parent, AudioNode& src): Decoder(parent, src, kCodecAac)

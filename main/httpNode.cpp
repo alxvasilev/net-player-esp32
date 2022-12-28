@@ -346,8 +346,8 @@ bool HttpNode::recv()
 uint32_t HttpNode::pollSpeed() const
 {
     LOCK();
-    mSpeedProbe.poll();
-    return mSpeedProbe.average();
+    return mSpeedProbe.poll();
+//    return mSpeedProbe.average();
 }
 
 void HttpNode::setUrl(UrlInfo* urlInfo)

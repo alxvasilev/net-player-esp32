@@ -2,8 +2,8 @@
 #define DECODER_AAC_HPP
 
 #include "decoderNode.hpp"
-#include <aacdec.h>
 
+typedef void *HAACDecoder;
 class DecoderAac: public Decoder
 {
 protected:

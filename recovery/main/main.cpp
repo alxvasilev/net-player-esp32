@@ -1,0 +1,305 @@
+/* Blink Example
+
+   This example code is in the Public Domain (or CC0 licensed, at your option.)
+
+   Unless required by applicable law or agreed to in writing, this
+   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+   CONDITIONS OF ANY KIND, either express or implied.
+*/
+#include <stdio.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include <esp_ota_ops.h>
+#include "driver/gpio.h"
+#include "esp_log.h"
+#include "sdkconfig.h"
+#include <driver/spi_common.h>
+#include <st7735.hpp>
+#include <wifi.hpp>
+#include <httpServer.hpp>
+#include <memory>
+#include <nvsSimple.hpp>
+#include <nvs_flash.h>
+#include <mdns.hpp>
+
+static constexpr ST7735Display::PinCfg lcdPins = {
+    {
+        .clk = GPIO_NUM_18,
+        .mosi = GPIO_NUM_23,
+        .cs = GPIO_NUM_5,
+    },
+    .dc = GPIO_NUM_33, // data/command
+    .rst = GPIO_NUM_4
+};
+static const char *TAG = "main";
+
+const char* kDefaultMdnsDomain = "netplayer";
+const int kRxChunkBufSize = 8192;
+const char kPercentCompleteSuffix[] = "% complete";
+enum {
+    kLcdLogFirstLine = 30,
+    kLcdOperationTxtY = 186, kLcdProgressPercentTxtY = kLcdOperationTxtY + 31,
+    kLcdProgressPercentBarY = kLcdOperationTxtY + 26, kLcdProgressPercentBarHeight = 2
+};
+
+//extern Font font_Camingo32;
+extern Font font_Camingo22;
+ST7735Display lcd(VSPI_HOST);
+NvsSimple nvs;
+std::unique_ptr<WifiBase> wifi;
+http::Server server;
+MDns mdns;
+
+void lcdDrawFlashWriteScreen(const char* msg,  bool displayProgress)
+{
+    ESP_LOGW(TAG, "%s", msg);
+    lcd.setFont(font_Camingo22);
+    lcd.clear(0, kLcdOperationTxtY, lcd.width(), lcd.fontHeight());
+    lcd.clear(0, kLcdProgressPercentTxtY, lcd.width(), lcd.fontHeight());
+    lcd.clear(0, kLcdProgressPercentBarY, lcd.width(), kLcdProgressPercentBarHeight);
+    lcd.gotoXY(0, kLcdOperationTxtY);
+    lcd.putsCentered(msg);
+    if (!displayProgress) {
+        return;
+    }
+    auto txtWidth = lcd.textWidth(3 + sizeof(kPercentCompleteSuffix) - 1);
+    auto txtStart = (lcd.width() - txtWidth) / 2;
+    lcd.gotoXY(txtStart, kLcdProgressPercentTxtY);
+    lcd.puts("  0");
+    lcd.puts(kPercentCompleteSuffix);
+}
+
+void lcdUpdateProgress(int pct)
+{
+    char num[5];
+    toString(num, sizeof(num), fmtInt(pct, 0, 3));
+    auto txtWidth = lcd.textWidth(3 + sizeof(kPercentCompleteSuffix) - 1);
+    lcd.gotoXY((lcd.width() - txtWidth) / 2, kLcdProgressPercentTxtY);
+    lcd.puts(num);
+    lcd.fillRect(0, kLcdProgressPercentBarY, lcd.width() * pct / 100, kLcdProgressPercentBarHeight);
+}
+const char* setBootPartition(const esp_partition_t* appPartition)
+{
+    const char* kFuncName = "setBootPartition";
+    if (!appPartition) {
+        appPartition = esp_ota_get_next_update_partition(nullptr);
+    }
+    if (!appPartition) {
+        const char* kMsg = "No app partition found";
+        ESP_LOGE(TAG, "%s: %s", kFuncName, kMsg);
+        return kMsg;
+    }
+    ESP_LOGW(TAG, "Setting boot partition to %s", appPartition->label);
+    auto err = esp_ota_set_boot_partition(appPartition);
+    if (err != ESP_OK) {
+        const char* kMsg = "Error setting boot partition";
+        ESP_LOGE(TAG, "%s: %s: %s", kFuncName, kMsg, esp_err_to_name(err));
+        return kMsg;
+    }
+    return nullptr;
+}
+
+/* Receive .bin file */
+esp_err_t httpOta(httpd_req_t *req)
+{
+    UrlParams params(req);
+    int contentLen = req->content_len;
+    ESP_LOGW(TAG, "OTA request received, image size: %d",contentLen);
+    const auto update_partition = esp_ota_get_next_update_partition(NULL);
+    esp_ota_handle_t ota_handle;
+    lcdDrawFlashWriteScreen("Erasing partition...", false);
+    esp_err_t err = esp_ota_begin(update_partition, contentLen, &ota_handle);
+    if (err == ESP_ERR_OTA_ROLLBACK_INVALID_STATE) {
+        ESP_LOGW(TAG, "Invalid OTA state of running app, trying to set it");
+        esp_ota_mark_app_valid_cancel_rollback();
+        err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Error %s after attempting to fix OTA state of running app, aborting OTA", esp_err_to_name(err));
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "esp_ota_begin error");
+            return ESP_FAIL;
+        }
+    } else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_begin returned error %s, aborting OTA", esp_err_to_name(err));
+        char msg[64];
+        snprintf(msg, 64, "esp_ota_begin() error %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, msg);
+        return ESP_FAIL;
+    }
+    ESP_LOGW(TAG, "Writing to partition '%s' subtype %d at offset 0x%x",
+        update_partition->label, update_partition->subtype, update_partition->address);
+
+    lcdDrawFlashWriteScreen("Flashing firmware...", true);
+    char otaBuf[kRxChunkBufSize];
+    int totalRx = 0;
+    ESP_LOGI(TAG, "Receiving and flashing image in small chunks...");
+    ElapsedTimer timer;
+    while(totalRx < contentLen) {
+        int recvLen = httpd_req_recv(req, otaBuf, std::min(contentLen - totalRx, kRxChunkBufSize));
+        if (recvLen == HTTPD_SOCK_ERR_TIMEOUT) {
+            ESP_LOGW(TAG, "Receive timeout, retrying");
+            continue;
+        }
+        else if (recvLen < 0) {
+            ESP_LOGE(TAG, "OTA receive error %d, aborting", recvLen);
+            return ESP_FAIL;
+        }
+        else if (recvLen == 0) {
+            ESP_LOGE(TAG, "OTA receive returned zero bytes, aborting");
+            return ESP_FAIL;
+        }
+        totalRx += recvLen;
+        esp_ota_write(ota_handle, otaBuf, recvLen);
+        lcdUpdateProgress((totalRx * 100 + (contentLen >> 1)) / contentLen);
+    }
+    ESP_LOGI(TAG, "Flash completed in %.1f seconds", (float)timer.usElapsed() / 1000000);
+
+    err = esp_ota_end(ota_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_end error: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "esp_ota_end error");
+        return ESP_FAIL;
+    }
+    auto reboot = params.intVal("reboot", 1);
+    if (reboot) {
+        // Reboot asynchronously, after we return the http response
+        asyncCall([]() {
+            ESP_LOGI(TAG, "Restarting system...");
+            esp_restart();
+        }, 500000);
+    }
+    httpd_resp_sendstr(req, "OTA update successful");
+    return ESP_OK;
+}
+
+esp_err_t httpReboot(httpd_req_t *req)
+{
+    UrlParams params(req);
+    auto toRecovery = params.intVal("recovery", 0);
+    if (toRecovery) {
+        auto errMsg = setBootPartition(esp_ota_get_running_partition());
+        if (errMsg) {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, errMsg);
+            return ESP_FAIL;
+        }
+    }
+    const char* msg = toRecovery ? "Rebooting to recovery..." : "Rebooting to app...";
+    ESP_LOGW(TAG, "%s", msg);
+    asyncCall([msg]() {
+        esp_restart();
+    }, 500000);
+    httpd_resp_sendstr(req, msg);
+    return ESP_OK;
+}
+
+esp_err_t httpSetWifi(httpd_req_t* req)
+{
+    UrlParams params(req);
+    auto ssid = params.strVal("ssid");
+    auto pass = params.strVal("pass");
+    if (!ssid || !pass) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing ssid and/or pass URL param");
+        return ESP_FAIL;
+    }
+    const char msg[] = "Error writing to NVS: ";
+    auto err = nvs.setString("wifi.ssid", ssid.str);
+    if (err != ESP_OK) {
+        return http::sendEspError(req, HTTPD_500_INTERNAL_SERVER_ERROR, err, msg, sizeof(msg)-1);
+    }
+    err = nvs.setString("wifi.pass", pass.str);
+    if (err != ESP_OK) {
+        return http::sendEspError(req, HTTPD_500_INTERNAL_SERVER_ERROR, err, msg, sizeof(msg)-1);
+    }
+    httpd_resp_sendstr(req, "WiFi credentials updated");
+    return ESP_OK;
+}
+esp_err_t httpNvsClear(httpd_req_t* req)
+{
+    nvs.close();
+    auto err = nvs_flash_erase();
+    if (err != ESP_OK) {
+        http::sendEspError(req, HTTPD_500_INTERNAL_SERVER_ERROR, err, "Error erasing NVS partition");
+        return ESP_FAIL;
+    }
+    err = nvs.init("aplayer", false);
+    if (err != ESP_OK) {
+        http::sendEspError(req, HTTPD_500_INTERNAL_SERVER_ERROR, err, "Error mounting NVS after erase");
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+esp_err_t httpIsRecovery(httpd_req_t* req)
+{
+    httpd_resp_sendstr(req, "yes");
+    return ESP_OK;
+}
+const char* connectToWiFi()
+{
+    auto err = nvs.init("aplayer", false);
+    if (err != ESP_OK) {
+        return "Error mounting NVS storage";
+    }
+    auto ssid = nvs.getString("wifi.ssid");
+    if (!ssid) {
+        return "No WiFi ssid in config";
+    }
+    auto pass = nvs.getString("wifi.pass");
+    if (!pass) {
+        return "No WiFi password in config";
+    }
+    auto ySave = lcd.cursorY;
+    lcd.puts("Connecting to WiFi...\n");
+    wifi.reset(new WifiClient);
+    static_cast<WifiClient*>(wifi.get())->start(ssid.ptr(), pass.ptr());
+    bool success = wifi->waitForConnect(20000);
+    lcd.clear(0, ySave, lcd.width(), lcd.fontHeight());
+    lcd.gotoXY(0, ySave);
+    if (!success) {
+        return "Unable to connect";
+    }
+    return nullptr;
+}
+
+extern "C" void app_main(void)
+{
+    lcd.init(320, 240, lcdPins);
+    lcd.setFont(Font_7x11, 2);
+    lcd.gotoXY(0, 0);
+    lcd.setFgColor(255, 255, 0);
+    lcd.putsCentered("Recovery mode\n");
+    lcd.setFgColor(255, 255, 255);
+    setBootPartition(nullptr);
+    lcd.gotoXY(0, kLcdLogFirstLine);
+    lcd.setFont(Font_7x11);
+    auto err = connectToWiFi();
+    lcd.gotoXY(0, kLcdLogFirstLine);
+    if (err) {
+        lcd.setFgColor(255, 0, 0);
+        lcd.puts("WiFi error: ");
+        lcd.puts(err);
+        lcd.setFgColor(255, 255, 255);
+        lcd.newLine();
+        lcd.cursorY += 2;
+        lcd.puts("Starting AP\n");
+        wifi.reset(new WifiAp);
+        static_cast<WifiAp*>(wifi.get())->start("netplayer", "alexisthebest", 1);
+        lcd.puts("ssid: netplayer, key: alexisthebest\n");
+    }
+    const char* mDnsDomain = nvs.handle() ? nvs.getString("mdnsDomain").ptr() : nullptr;
+    if (!mDnsDomain) {
+        mDnsDomain = kDefaultMdnsDomain;
+    }
+    mdns.start(mDnsDomain);
+    server.start(80, nullptr, 10, kRxChunkBufSize + 4096);
+    char localIp[17];
+    snprintf(localIp, 17, IPSTR, IP2STR(&wifi->localIp()));
+    lcd.puts("Listening on http://");
+    lcd.puts(localIp);
+    lcd.newLine();
+
+    server.on("/ota", HTTP_POST, httpOta);
+    server.on("/reboot", HTTP_GET, httpReboot);
+    server.on("/wifi", HTTP_GET, httpSetWifi);
+    server.on("/nvclear", HTTP_GET, httpNvsClear);
+    server.on("/isrecovery", HTTP_GET, httpIsRecovery);
+    nvs.registerHttpHandlers(server);
+}

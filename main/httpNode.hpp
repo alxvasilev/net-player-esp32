@@ -154,7 +154,7 @@ protected:
             }
             uint32_t speed = ((int64_t)mBytes * 1000000 + (elapsed >> 1)) / elapsed; //rounded int division
             mBytes = 0;
-            mAvgSpeed = (mAvgSpeed * 3 + speed + 2) >> 2; // rounded int division by 32
+            mAvgSpeed = (mAvgSpeed * 3 + speed + 2) >> 2; // rounded int division by 4
             return speed;
         }
     };
