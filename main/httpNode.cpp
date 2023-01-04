@@ -336,6 +336,7 @@ bool HttpNode::recv()
         if (mWaitingPrefill && (ringBufDataSize >= mPrefillAmount)) {
             ESP_LOGI(mTag, "Buffer prefilled >= %d bytes, allowing read", mPrefillAmount);
             setWaitingPrefill(false);
+            plSendEvent(kEventPlaying);
         }
         return true;
     }

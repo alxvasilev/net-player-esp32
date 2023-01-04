@@ -98,6 +98,7 @@ public:
     enum: uint32_t {
         kEventConnecting = 1,
         kEventConnected,
+        kEventPlaying,
         kEventNextTrack,
         kEventNoMoreTracks,
         kEventTrackInfo,

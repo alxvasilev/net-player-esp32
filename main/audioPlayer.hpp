@@ -18,6 +18,11 @@ namespace http { class Server; }
 namespace nvs { class NVSHandle; }
 struct TrackInfo;
 
+extern Font font_CamingoBold43;
+extern Font font_Camingo22;
+extern Font font_Camingo32;
+extern Font font_Icons22;
+
 class AudioPlayer: public IAudioPipeline
 {
 public:
@@ -49,17 +54,16 @@ protected:
         kI2sStackSize = 9000, kI2sCpuCore = 1,
         kLcdTaskStackSize = 2200, kLcdTaskPrio = 10, kLcdTaskCore = 0
     };
-    typedef enum: char {
-        kSymBlank = ' ',
-        kSymStopped = 38,
-        kSymPaused = 37,
-        kSymConnecting = 34,
-        kSymPlaying = 36,
+    enum {
+        kLcdArtistNameLineY = 38, kLcdPlayStateLineY = 74
+    };
+
+    enum {
+        kSymBlank = 32,
         kSymFavorite = 33,
-        kSymRecording = 34,
-        kSymRecEnabled = 35
-    } GuiPlayState; // used for displaying pause/connecting icon
-    static constexpr const Font& kPictoFont = Font_7x11;
+        kSymRecording = 34
+    };
+    static constexpr const Font& kPictoFont = font_Icons22;
     enum { kEqGainPrecisionDiv = 2 };
     static const float sDefaultEqGains[];
     Flags mFlags;
@@ -108,13 +112,12 @@ protected:
     void lcdInit();
     void lcdDrawGui();
     void initTimedDrawTask();
-    void lcdUpdatePlayState(char state);
+    void lcdUpdatePlayState(const char* text);
     void lcdSetupForTrackTitle();
     void lcdUpdateTrackTitle(const char* buf);
     void lcdScrollTrackTitle(int step=1);
     void lcdUpdateArtistName(const char* name);
     void lcdUpdateStationInfo();
-    void lcdUpdateRecIcon();
     // stream info line
     void lcdWriteStreamInfo(int8_t charOfs, const char* str);
     void lcdUpdateCodec(CodecType codec);

@@ -10,5 +10,4 @@
 COMPONENT_SRCDIRS := .
 COMPONENT_ADD_INCLUDEDIRS += .
 CFLAGS += -O3 -Wno-error=unused-label -Wno-error=return-type -Wno-error=missing-braces -Wno-error=pointer-sign -Wno-error=parentheses -Wno-implicit-fallthrough
-CXXFLAGS += -O3
-CPPFLAGS += -DHELIX_FEATURE_AUDIO_CODEC_AAC_SBR=1
+CPPFLAGS += -DHELIX_FEATURE_AUDIO_CODEC_AAC_SBR=1 -Dmalloc=my_malloc -Drealloc=my_realloc

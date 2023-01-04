@@ -14,15 +14,11 @@
 #include <httpServer.hpp>
 #include "tostring.hpp"
 
-extern Font font_CamingoBold43;
-extern Font font_Camingo22;
-extern Font font_Camingo32;
-extern Font font_Icons22;
-
 #define kStreamInfoFont font_Camingo22
 #define kLcdColorCaption 255, 255, 128
 #define kLcdColorGrid 0, 128, 128
 #define kLcdColorStreamInfo 128, 255, 255
+#define kLcdColorPlayState 0, 200, 0
 
 #define LOCK_PLAYER() MutexLocker locker(mutex)
 
@@ -260,7 +256,7 @@ void AudioPlayer::lcdUpdateStationInfo()
     }
     lcdUpdateArtistName(station.name());
 // station flags
-    mLcd.setFont(font_Icons22);
+    mLcd.setFont(kPictoFont);
     mLcd.cursorY = 0;
     mLcd.cursorX = (mLcd.width() - mLcd.charWidth(kSymFavorite)) / 2;
     if (station.flags() & Station::kFlagFavorite) {
@@ -269,52 +265,47 @@ void AudioPlayer::lcdUpdateStationInfo()
     } else {
         mLcd.putc(kSymBlank);
     }
-
-    lcdUpdateRecIcon();
 }
 void AudioPlayer::lcdUpdateArtistName(const char* name)
 {
     mLcd.setFont(font_Camingo32);
-    mLcd.clear(0, mLcd.fontHeight() + 6, mLcd.width(), mLcd.fontHeight());
+    mLcd.clear(0, kLcdArtistNameLineY, mLcd.width(), mLcd.fontHeight());
     if (name) {
-        mLcd.gotoXY(0, mLcd.fontHeight() + 6);
+        mLcd.gotoXY(0, kLcdArtistNameLineY);
         mLcd.setFgColor(kLcdColorCaption);
         mLcd.putsCentered(name);
     }
 }
-void AudioPlayer::lcdUpdateRecIcon()
+
+void AudioPlayer::lcdUpdatePlayState(const char* text)
 {
-    mLcd.setFont(font_Icons22);
-    mLcd.setFgColor(200, 0, 0);
-    char sym;
-    do {
-        if (!stationList) {
-            sym = kSymBlank;
-            break;
+    mLcd.setFont(font_Camingo22);
+    mLcd.clear(0, kLcdPlayStateLineY, mLcd.width(), mLcd.fontHeight());
+    if (text) {
+        mLcd.setFgColor(kLcdColorPlayState);
+        mLcd.gotoXY(0, kLcdPlayStateLineY);
+        mLcd.putsCentered(text);
+    }
+    else { // playing
+        if ((mPlayerMode != kModeRadio) || !mStreamIn.get() || !stationList) {
+            return;
         }
         auto& station = stationList->currStation;
         if (!station.isValid()) {
-            sym = kSymBlank;
-            break;
+            return;
         }
-        bool recEnabled = station.flags() & Station::kFlagRecord;
-        if (recEnabled) {
-            auto& httpNode = *static_cast<HttpNode*>(mStreamIn.get());
-            sym = httpNode.recordingIsActive() ? kSymRecording : kSymRecEnabled;
+        if (!(station.flags() & Station::kFlagRecord)) {
+            return;
+        }
+        auto& httpNode = *static_cast<HttpNode*>(mStreamIn.get());
+        if (httpNode.recordingIsActive()) {
+            mLcd.setFgColor(200, 0, 0);
         } else {
-            sym = kSymBlank;
+            mLcd.setFgColor(200, 100, 0);
         }
-    } while(false);
-    mLcd.gotoXY(mLcd.width() - mLcd.charWidth(kSymPlaying) - mLcd.charWidth(sym) - 4, 0);
-    mLcd.putc(sym);
-}
-
-void AudioPlayer::lcdUpdatePlayState(char sym)
-{
-    mLcd.setFont(font_Icons22);
-    mLcd.setFgColor(kLcdColorCaption);
-    mLcd.gotoXY(mLcd.width() - mLcd.charWidth(sym) - 1, 0);
-    mLcd.putc(sym);
+        mLcd.gotoXY(0, kLcdPlayStateLineY);
+        mLcd.putsCentered("rec");
+    }
 }
 
 std::string AudioPlayer::printPipeline()
@@ -408,7 +399,6 @@ bool AudioPlayer::playUrl(const char* url, PlayerMode playerMode, const char* re
         mTrackInfo.reset();
         return false;
     }
-    printf("===================trackInfo: name: %s\n", mTrackInfo.get() ? mTrackInfo->trackName : "null");
     setPlayerMode(playerMode);
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
     auto urlInfo = HttpNode::UrlInfo::Create(url, ++mStreamSeqNo, record);
@@ -476,7 +466,6 @@ void AudioPlayer::play()
 {
     mStreamIn->run();
     mStreamOut->run();
-    lcdUpdatePlayState(kSymPlaying);
 }
 
 void AudioPlayer::resume()
@@ -485,18 +474,16 @@ void AudioPlayer::resume()
 }
 void AudioPlayer::pipelineStop()
 {
-    printf("before pipelineStop - new\n");
     mStreamIn->stop(false);
     mStreamOut->stop(false);
     mStreamIn->waitForStop();
     mStreamOut->waitForStop();
     mDecoder->reset();
-    printf("after pipelineStop\n");
 }
 void AudioPlayer::pause()
 {
     pipelineStop();
-    lcdUpdatePlayState(kSymPaused);
+    lcdUpdatePlayState("[ Paused ]");
 }
 void AudioPlayer::stop()
 {
@@ -505,7 +492,7 @@ void AudioPlayer::stop()
     if (mVolumeInterface) {
         mVolumeInterface->clearAudioLevels();
     }
-    lcdUpdatePlayState(kSymStopped);
+    lcdUpdatePlayState("[ Stopped ]");
 }
 uint32_t AudioPlayer::positionTenthSec() const
 {
@@ -979,11 +966,11 @@ void AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t arg, si
             asyncCall([this, event]() {
                 LOCK_PLAYER();
                 if (event == HttpNode::kEventConnected) {
-                    lcdUpdatePlayState(kSymPlaying);
+                    lcdUpdatePlayState("Buffering...");
                 } else if (event == HttpNode::kEventConnecting) {
-                    lcdUpdatePlayState(kSymConnecting);
-                } else if (event == HttpNode::kEventRecording) {
-                    lcdUpdateRecIcon();
+                    lcdUpdatePlayState("Connecting...");
+                } else if (event == HttpNode::kEventPlaying || event == HttpNode::kEventRecording) {
+                    lcdUpdatePlayState(nullptr);
                 }
             });
         }
