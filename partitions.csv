@@ -3,5 +3,5 @@ nvs,      data, nvs,      ,         16K
 otadata,  data, ota,      ,         8K
 phy_init, data, phy,      ,         4K
 storage,  data, spiffs,	  0x10000,  320K
-factory,  app,  factory,  0x60000,  768K
-ota_0,    app,  ota_0,    0x120000, 2944K
+factory,  app,  factory,  0x60000,  704K
+ota_0,    app,  ota_0,    0x110000, 3008K
