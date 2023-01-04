@@ -117,15 +117,20 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
     }
     ESP_LOGI(TAG, "\e[34mhdr: '%s': '%s'", evt->header_key, evt->header_value);
 
-    auto self = static_cast<HttpNode*>(evt->user_data);
-    auto key = evt->header_key;
-    if (strcasecmp(key, "Content-Type") == 0) {
-        self->mInCodec = self->codecFromContentType(evt->header_value);
-        ESP_LOGI(TAG, "Parsed content-type '%s' as %s", evt->header_value, codecTypeToStr(self->mInCodec));
-    } else {
-        self->mIcyParser.parseHeader(key, evt->header_value);
-    }
+    static_cast<HttpNode*>(evt->user_data)->onHttpHeader(evt->header_key, evt->header_value);
     return ESP_OK;
+}
+void HttpNode::onHttpHeader(const char* key, const char* val)
+{
+    if (strcasecmp(key, "Content-Type") == 0) {
+        mInCodec = codecFromContentType(val);
+        if (utils::haveSpiRam() && (mInCodec == kCodecFlac || mInCodec == kCodecOggTransport)) {
+            mPrefillAmount = std::min(512 * 1024, mRingBuf.size() - 1024);
+        }
+        ESP_LOGI(TAG, "Parsed content-type '%s' as %s", key, codecTypeToStr(mInCodec));
+    } else {
+        mIcyParser.parseHeader(key, val);
+    }
 }
 
 bool HttpNode::connect(bool isReconnect)
@@ -423,9 +428,9 @@ HttpNode::~HttpNode()
     free(mUrlInfo);
 }
 
-HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize, size_t prefillAmount)
+HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize, int prefill)
     : AudioNodeWithTask(parent, "node-http", kStackSize, 5, 1), mRingBuf(bufSize, utils::haveSpiRam()),
-  mPrefillAmount(prefillAmount), mIcyParser(mMutex)
+      mPrefillAmount(prefill), mIcyParser(mMutex)
 {
 }
 

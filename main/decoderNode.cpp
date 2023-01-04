@@ -116,7 +116,7 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
             return kNoError;
         }
         if (odp.size) {
-            printf("=============== ASSERT odp.size is not zero but %d, event %d\n", odp.size, err);
+            printf("ASSERT odp.size is not zero but %d, event %d\n", odp.size, err);
         }
         if (err == kStreamChanged) {
             if (odp.codec == mDecoder->codec) {

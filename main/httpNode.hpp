@@ -27,7 +27,10 @@ class HttpNode: public AudioNodeWithTask
 public:
     class UrlInfo;
 protected:
-    enum { kHttpRecvTimeoutMs = 2000, kHttpClientBufSize = 512, kReadSize = 4096, kStackSize = 3600 };
+    enum {
+        kHttpRecvTimeoutMs = 2000, kHttpClientBufSize = 512,
+        kReadSize = 4096, kStackSize = 3600
+    };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1, kCommandNotifyFlushed };
     // Read mode dictates how the pullData() caller behaves. Since it may
     // need to wait for the read mode to change to a specific value, the enum values
@@ -70,6 +73,7 @@ protected:
     std::unique_ptr<TrackRecorder> mRecorder;
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     static CodecType codecFromContentType(const char* content_type);
+    void onHttpHeader(const char* key, const char* val);
     bool isPlaylist();
     bool createClient();
     bool parseContentType();
@@ -106,7 +110,7 @@ public:
     };
     mutable Mutex mMutex;
     IcyInfo& icyInfo() { return mIcyParser; }
-    HttpNode(IAudioPipeline& parent, size_t bufSize, size_t prefillAmount);
+    HttpNode(IAudioPipeline& parent, size_t bufSize, int prefill);
     virtual ~HttpNode();
     virtual Type type() const { return kTypeHttpIn; }
     virtual StreamError pullData(DataPullReq &dp);
@@ -124,7 +128,7 @@ public:
         static UrlInfo* Create(const char* aUrl, uint32_t streamId, const char* aRecStaName) noexcept
         {
             auto urlLen = strlen(aUrl) + 1;
-            auto staLen = aRecStaName ? strlen(aRecStaName) : 0;
+            auto staLen = aRecStaName ? strlen(aRecStaName) + 1 : 0;
             auto inst = (UrlInfo*)malloc(sizeof(UrlInfo) + urlLen + staLen);
             inst->streamId = streamId;
             inst->url = (char*)inst + sizeof(UrlInfo);

@@ -299,9 +299,9 @@ void AudioPlayer::lcdUpdatePlayState(const char* text)
         }
         auto& httpNode = *static_cast<HttpNode*>(mStreamIn.get());
         if (httpNode.recordingIsActive()) {
-            mLcd.setFgColor(200, 0, 0);
+            mLcd.setFgColor(255, 0, 0);
         } else {
-            mLcd.setFgColor(200, 100, 0);
+            mLcd.setFgColor(0xF68E); // orange
         }
         mLcd.gotoXY(0, kLcdPlayStateLineY);
         mLcd.putsCentered("rec");
