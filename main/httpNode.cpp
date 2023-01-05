@@ -284,7 +284,7 @@ bool HttpNode::recv()
         auto bufSize = mRingBuf.getWriteBuf(buf, kReadSize, kHttpRecvTimeoutMs);
         if (bufSize <= 0) { // stop flag was set, or timeout
             if (bufSize == 0) {
-                printf("============recv: timeout\n");
+                ESP_LOGW(TAG, "Ringbuf write timeout, consumer node is probably stuck");
             }
             return false;
         }
@@ -429,7 +429,7 @@ void HttpNode::nodeThreadFunc()
                 setState(kStateStopped);
                 continue;
             } else {
-                ESP_LOGI(TAG, "Connected, buffering...");
+                ESP_LOGI(TAG, "Buffering...");
             }
         }
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
