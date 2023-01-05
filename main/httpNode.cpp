@@ -76,9 +76,6 @@ void HttpNode::doSetUrl(UrlInfo* urlInfo)
     }
     free(mUrlInfo);
     mUrlInfo = urlInfo;
-    mStreamEventQueue.clear();
-    mRingBuf.clear();
-    mSpeedProbe.reset();
     setWaitingPrefill(true);
 }
 void HttpNode::updateUrl(const char* url)
@@ -105,7 +102,7 @@ bool HttpNode::createClient()
         ESP_LOGE(TAG, "Error creating http client, probably out of memory");
         return false;
     };
-    esp_http_client_set_header(mClient, "User-Agent", "curl/7.65.3");
+    esp_http_client_set_header(mClient, "User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36");
     esp_http_client_set_header(mClient, "Icy-MetaData", "1");
     return true;
 }
@@ -147,7 +144,12 @@ bool HttpNode::connect(bool isReconnect)
     if (!isReconnect) {
         {
             LOCK();
+            printf("clearing ring buffer\n");
+            mRingBuf.clear();
+            mStreamEventQueue.clear();
+            mRingBuf.clear();
             mStreamStartPos = mRxByteCtr; // mStreamStartPos is read in pullData()
+            mSpeedProbe.reset();
         }
         recordingMaybeEnable();
     } else {
@@ -162,8 +164,6 @@ bool HttpNode::connect(bool isReconnect)
     }
     // request IceCast stream metadata
     mIcyParser.reset();
-
-    esp_http_client_set_header(mClient, "User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36");
 
     if (isReconnect) { // we are resuming, send position
         char rang_header[32];
@@ -233,6 +233,9 @@ int8_t HttpNode::handleResponseAsPlaylist(int32_t contentLen)
         return 0;
     }
     ESP_LOGI(TAG, "Response looks like a playlist");
+    if (!contentLen) {
+        contentLen = 2048;
+    }
     std::unique_ptr<char[]> buf(new char[contentLen + 1]);
     if (!buf.get()) {
         ESP_LOGE(TAG, "Out of memory allocating buffer for playlist download");
@@ -241,9 +244,6 @@ int8_t HttpNode::handleResponseAsPlaylist(int32_t contentLen)
     int rlen = esp_http_client_read(mClient, buf.get(), contentLen);
     if (rlen < 0) {
         ESP_LOGW(TAG, "Error %d receiving playlist, retrying...", esp_http_client_get_errno(mClient));
-        return -1;
-    } else if (rlen != contentLen) {
-        ESP_LOGW(TAG, "Playlist download incomplete, retrying...");
         return -1;
     }
     buf.get()[rlen] = 0;
@@ -281,8 +281,11 @@ bool HttpNode::recv()
 {
     for (int retries = 0; retries < 26; retries++) { // retry net errors
         char* buf;
-        auto bufSize = mRingBuf.getWriteBuf(buf, kReadSize, -1);
-        if (bufSize < 0) { // stop flag was set
+        auto bufSize = mRingBuf.getWriteBuf(buf, kReadSize, kHttpRecvTimeoutMs);
+        if (bufSize <= 0) { // stop flag was set, or timeout
+            if (bufSize == 0) {
+                printf("============recv: timeout\n");
+            }
             return false;
         }
         if (bufSize > kReadSize) { // ringbuf will return max possible value, which may be more than the requested
@@ -305,7 +308,7 @@ bool HttpNode::recv()
                 return false;
             }
             destroyClient(); // just in case
-            connect(true);
+            connect(false);
             continue;
         }
         LOCK();
@@ -348,7 +351,19 @@ bool HttpNode::recv()
     setState(kStateStopped);
     return false;
 }
-
+void HttpNode::logStartOfRingBuf(const char* msg)
+{
+    char hex[128];
+    char* tmpbuf = nullptr;
+    auto nread = mRingBuf.contigRead(tmpbuf, 20, -1);
+    if (nread <= 0) {
+        hex[0] = 0;
+    } else {
+        binToHex((uint8_t*)tmpbuf, nread, hex);
+    }
+    printf("%s: %s\n", msg, hex);
+    mRingBuf.commitContigRead(0);
+}
 uint32_t HttpNode::pollSpeed() const
 {
     LOCK();
@@ -413,6 +428,8 @@ void HttpNode::nodeThreadFunc()
             if (!connect()) {
                 setState(kStateStopped);
                 continue;
+            } else {
+                ESP_LOGI(TAG, "Connected, buffering...");
             }
         }
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {

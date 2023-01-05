@@ -121,6 +121,7 @@ public:
     bool recordingIsActive() const;
     bool recordingIsEnabled() const;
     uint32_t pollSpeed() const;
+    void logStartOfRingBuf(const char* msg);
     struct UrlInfo {
         uint32_t streamId;
         const char* url;
