@@ -405,6 +405,9 @@ bool AudioPlayer::playUrl(const char* url, PlayerMode playerMode, const char* re
     // setUrl will start the http node, if it's stopped. However, this may take a while.
     // If we meanwhile start the i2s out node, it will start to pull data from the not-yet-started http node,
     // whose state may not be set up correctly for the new stream (i.e. waitingPrefill not set)
+    http.stop(true);
+    mStreamOut->stop(true);
+    mDecoder->reset();
     http.setUrl(urlInfo);
     if (http.waitForState(AudioNode::kStateRunning) != AudioNode::kStateRunning) {
         return false;
@@ -994,8 +997,9 @@ void AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t arg, si
             asyncCall([this, arg, numArg]() {
                 const char* errName = AudioNode::streamEventToStr((AudioNode::StreamError)numArg);
                 if (arg != mStreamSeqNo) {
-                    ESP_LOGW(TAG, "Discarding stream error %s from output node, streamId is old", errName);
-                } else {
+                    ESP_LOGW(TAG, "Discarding stream error %s from output node, streamId is old (got %d, expected %d)", errName, arg, mStreamSeqNo);
+                }
+                else {
                     ESP_LOGW(TAG, "Received stream error %s from output node, stopping playback", errName);
                     stop();
                 }
