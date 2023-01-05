@@ -164,6 +164,12 @@ public:
             myassert(codec == kCodecUnknown);
         }
         void clear() { reset(0); }
+        void clearExceptStreamId()
+        {
+            size = 0;
+            buf = nullptr;
+            fmt.clear();
+        }
     };
 
     // Upon return, buf is set to the internal buffer containing the data, and size is updated to the available data
@@ -189,17 +195,19 @@ class AudioNodeWithState: public AudioNode
 {
 protected:
     EventGroup mEvents;
-    volatile State mState = kStateTerminated; // state is a backing store for the state in mEvents
+    volatile State mState; // state is a backing store for the state in mEvents
     enum { kStateMask = (kStateLast << 1) - 1, kEvtStopRequest = kStateLast << 1, kEvtLast = kEvtStopRequest };
     /** Called internally when the state has been reached */
     void setState(State newState);
     virtual void onStopped() {}
 public:
     AudioNodeWithState(IAudioPipeline& parent, const char* tag)
-    : AudioNode(parent, tag), mEvents(kEvtStopRequest | kStateTerminated) {}
+    : AudioNode(parent, tag), mState(kStateTerminated) {
+        mEvents.setBits(kStateTerminated);
+    }
     State state() const { return mState; }
     State waitForState(unsigned state, int timeout=-1) { return (State)mEvents.waitForOneNoReset(state, timeout); }
-    void waitForStop() { waitForState(kStateStopped); }
+    void waitForStop() { waitForState(kStateStopped|kStateTerminated); }
     void waitForTerminate() { waitForState(kStateTerminated); }
     virtual bool run();
     virtual void stop(bool wait=true);
