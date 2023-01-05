@@ -28,6 +28,7 @@ void I2sOutputNode::adjustSamplesForInternalDac(char* sBuff, int len)
 void I2sOutputNode::nodeThreadFunc()
 {
     for (;;) {
+        setState(kStateStopped);
         processMessages();
         if (mTerminate) {
             return;

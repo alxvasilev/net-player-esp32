@@ -35,9 +35,9 @@ AudioNode::StreamError detectOggCodec(AudioNode& src, AudioNode::DataPullReq& in
         if (err != AudioNode::kNoError) {
             return err;
         }
-        src.confirmRead(dpr.size);
         assert(nRead + dpr.size <= kPrefetchAmount);
         memcpy(buf.get() + nRead, dpr.buf, dpr.size);
+        src.confirmRead(dpr.size);
         nRead += dpr.size;
     } while(nRead < kPrefetchAmount);
     OggPageHeader& hdr = *((OggPageHeader*)buf.get());

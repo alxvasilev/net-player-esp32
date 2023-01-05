@@ -5,9 +5,9 @@
 #include <driver/spi_common.h>
 #include <esp_wifi.h>
 #include <nvs_flash.h>
-#include <esp_ota_ops.h>
 #include <esp_log.h>
 #include <esp_system.h>
+#include <esp_ota_ops.h>
 #include <esp_http_server.h>
 #include <esp_spiffs.h>
 #include <sys/param.h>
@@ -17,7 +17,6 @@
 #include <utils.hpp>
 #include <netLogger.hpp>
 #include <httpFile.hpp>
-#include <ota.hpp>
 #include <wifi.hpp>
 #include <taskList.hpp>
 #include <st7735.hpp>
@@ -202,10 +201,6 @@ extern "C" void app_main(void)
     lcd.puts("Starting Player...\n");
     player.reset(new AudioPlayer(lcd, gHttpServer));
     MutexLocker locker(player->mutex);
-    otaNotifyCallback = []() {
-        MutexLocker locker(player->mutex);
-        player->stop();
-    };
     if (player->inputType() == AudioNode::kTypeHttpIn) {
         ESP_LOGI(TAG, "Player input set to HTTP stream");
         auto before = xPortGetFreeHeapSize();
@@ -300,7 +295,7 @@ esp_err_t httpReboot(httpd_req_t* req)
     ESP_LOGI(TAG, "Rebooting%s...", toRecovery ? " to recovery" : "");
     asyncCall([]() {
         esp_restart();
-    }, 100000);
+    }, 400000);
     return ESP_OK;
 }
 void startWebserver(bool isAp)

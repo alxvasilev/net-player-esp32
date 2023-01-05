@@ -1,7 +1,8 @@
 #!/bin/bash
+set -e
 source ./esp-host.sh
 
-ISRECOVERY=`curl -s -o /dev/null -w "%{http_code}" http://${ESP_HOST}:80/isrecovery`
+ISRECOVERY=`curl -s -S -o /dev/null -w "%{http_code}" http://${ESP_HOST}:80/isrecovery`
 if [ "$ISRECOVERY" != "200" ]; then
     echo -n "Rebooting to recovery..."
     curl "http://${ESP_HOST}:80/reboot?recovery=1"
