@@ -147,7 +147,6 @@ bool HttpNode::connect(bool isReconnect)
             printf("clearing ring buffer\n");
             mRingBuf.clear();
             mStreamEventQueue.clear();
-            mRingBuf.clear();
             mStreamStartPos = mRxByteCtr; // mStreamStartPos is read in pullData()
             mSpeedProbe.reset();
         }
@@ -331,7 +330,6 @@ bool HttpNode::recv()
         }
         mRingBuf.commitWrite(rlen);
         mRxByteCtr += rlen;
-
         // First commit the write, only after that record to SD card,
         // to avoid blocking the stream consumer
         // Note: The buffer is still valid, even if it has been consumed
@@ -457,13 +455,22 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
         dp.clear();
         return kStreamStopped;
     }
-    while (mWaitingPrefill) {
+    if (mWaitingPrefill) {
         ESP_LOGI(TAG, "Waiting ringbuf prefill...");
-        if (!waitPrefillChange()) {
+        do {
+            if (!waitPrefillChange()) {
+                dp.clear();
+                return kStreamStopped;
+            }
+        } while(mWaitingPrefill);
+    }
+    else {
+        if (mRingBuf.waitForData(-1) < 0) {
             dp.clear();
             return kStreamStopped;
         }
     }
+
     {
         // First, process stream events that are due
         LOCK();
