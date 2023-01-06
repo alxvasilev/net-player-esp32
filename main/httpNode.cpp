@@ -366,7 +366,7 @@ uint32_t HttpNode::pollSpeed() const
 {
     LOCK();
     return mSpeedProbe.poll();
-//    return mSpeedProbe.average();
+//  return mSpeedProbe.average();
 }
 
 void HttpNode::setUrl(UrlInfo* urlInfo)
@@ -449,6 +449,15 @@ HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize, int prefill)
 {
 }
 
+void HttpNode::signalUnderrun(uint8_t newState)
+{
+    if (newState == mBufUnderrunState) {
+        return;
+    }
+    mBufUnderrunState = newState;
+    plSendEvent(kEventBufState, 0, newState);
+}
+
 AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
 {
     if (state() != kStateRunning && (waitForState(kStateRunning, 4000) != kStateRunning)) {
@@ -465,9 +474,17 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
         } while(mWaitingPrefill);
     }
     else {
-        if (mRingBuf.waitForData(-1) < 0) {
-            dp.clear();
-            return kStreamStopped;
+        auto dataSize = mRingBuf.dataSize();
+        if (dataSize == 0) {
+            signalUnderrun(0);
+            if (mRingBuf.waitForData(-1) < 0) {
+                dp.clear();
+                return kStreamStopped;
+            }
+        } else if (dataSize < 1024 * 8) {
+            signalUnderrun(1);
+        } else {
+            signalUnderrun(0xff);
         }
     }
 

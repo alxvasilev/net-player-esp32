@@ -106,7 +106,8 @@ public:
         kEventNextTrack,
         kEventNoMoreTracks,
         kEventTrackInfo,
-        kEventRecording
+        kEventRecording,
+        kEventBufState
     };
     mutable Mutex mMutex;
     IcyInfo& icyInfo() { return mIcyParser; }
@@ -121,6 +122,7 @@ public:
     bool recordingIsActive() const;
     bool recordingIsEnabled() const;
     uint32_t pollSpeed() const;
+    uint8_t bufUnderrunState() const { return mBufUnderrunState; }
     void logStartOfRingBuf(const char* msg);
     struct UrlInfo {
         uint32_t streamId;
@@ -165,6 +167,8 @@ protected:
         }
     };
     mutable LinkSpeedProbe mSpeedProbe;
+    uint8_t mBufUnderrunState = 0;
+    inline void signalUnderrun(uint8_t newState);
     const char* url() const { return mUrlInfo ? mUrlInfo->url : nullptr; }
     const char* recStaName() const { return mUrlInfo ? mUrlInfo->recStaName : nullptr; }
 };

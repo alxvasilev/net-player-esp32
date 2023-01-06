@@ -120,6 +120,7 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
         }
         if (err == kStreamChanged) {
             if (odp.codec == mDecoder->codec) {
+                ESP_LOGI(mTag, "Stream changed, but codec is the same, resetting %s decoder", codecTypeToStr(mDecoder->codec));
                 mDecoder->reset();
             } else {
                 deleteDecoder();

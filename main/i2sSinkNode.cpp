@@ -53,7 +53,10 @@ void I2sOutputNode::nodeThreadFunc()
                     ESP_LOGI(mTag, "streamId set to %u", mStreamId);
                     continue;
                 } else {
-                    plSendEvent(kEventStreamError, mStreamId, err);
+                    // Note: we are sending the error with dpr.streamId directly (i.e. not with mStreamId)
+                    // because it may be possible that the kStreamChanged event was not have been delivered
+                    // by the decoder, if it entered a confused state. This may happen with the FLAC decoder
+                    plSendEvent(kEventStreamError, dpr.streamId, err);
                     break;
                 }
             }
