@@ -182,6 +182,12 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
     }
     switch(outType) {
     case AudioNode::kTypeI2sOut: {
+        uint8_t dmaBufCnt = mNvsHandle.readDefault<uint8_t>("i2s.dmaBufCnt", utils::haveSpiRam()
+            ? kI2sDmaBufCntSpiRam : kI2sDmaBufCntInternalRam);
+        if (dmaBufCnt < 2 || dmaBufCnt > 64) {
+            ESP_LOGE(TAG, "Bad i2s.dmaBufCnt config value %u, defaulting to %u", dmaBufCnt,
+                utils::haveSpiRam() ? kI2sDmaBufCntSpiRam : kI2sDmaBufCntInternalRam);
+        };
         i2s_pin_config_t cfg = {
             .mck_io_num = I2S_PIN_NO_CHANGE,
             .bck_io_num = 26,
@@ -189,7 +195,7 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
             .data_out_num = 27,
             .data_in_num = -1,
         };
-        mStreamOut.reset(new I2sOutputNode(*this, 0, &cfg, kI2sStackSize, kI2sCpuCore));
+        mStreamOut.reset(new I2sOutputNode(*this, 0, &cfg, kI2sStackSize, dmaBufCnt, kI2sCpuCore));
         break;
     }
     /*

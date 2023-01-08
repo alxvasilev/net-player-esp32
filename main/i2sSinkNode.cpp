@@ -120,8 +120,9 @@ bool I2sOutputNode::setFormat(StreamFormat fmt)
     return true;
 }
 
-I2sOutputNode::I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t* pinCfg, uint32_t stackSize, int8_t cpuCore)
-:AudioNodeWithTask(parent, "node-i2s-out", stackSize, 20, cpuCore), mFormat(kDefaultSamplerate, 16, 2)
+I2sOutputNode::I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t* pinCfg, uint16_t stackSize,
+    uint8_t dmaBufCnt, int8_t cpuCore)
+:AudioNodeWithTask(parent, "node-i2s-out", stackSize, kTaskPriority, cpuCore), mFormat(kDefaultSamplerate, 16, 2)
 {
     if (port == 0xff) {
         mUseInternalDac = true;
@@ -133,11 +134,11 @@ I2sOutputNode::I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t*
     i2s_config_t cfg = {};
     cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
     cfg.sample_rate = kDefaultSamplerate;
-    cfg.bits_per_sample = (i2s_bits_per_sample_t) 16;
+    cfg.bits_per_sample = (i2s_bits_per_sample_t) kDefaultBps;
     cfg.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
     cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
-    cfg.dma_buf_count = utils::haveSpiRam() ? kDmaBufCntSpiRam : kDmaBufCntInternalRam;
-    cfg.dma_buf_len = kDmaBufLen;
+    cfg.dma_buf_count = dmaBufCnt;
+    cfg.dma_buf_len = 1024;
     cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL3|ESP_INTR_FLAG_IRAM;
     cfg.tx_desc_auto_clear = true;
     cfg.use_apll = true;
