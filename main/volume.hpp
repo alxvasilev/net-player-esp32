@@ -60,7 +60,7 @@ protected:
 class DefaultVolumeImpl: public IAudioVolume
 {
 protected:
-    enum: uint8_t { kVolumeDiv = 64 };
+    enum: uint8_t { kVolumeDivShift = 7, kVolumeDiv = 1 << kVolumeDivShift };
     uint8_t mVolume = kVolumeDiv;
 private:
     typedef void (DefaultVolumeImpl::*ProcessFunc)(AudioNode::DataPullReq& dpr);
@@ -72,7 +72,7 @@ void processVolume(AudioNode::DataPullReq& dpr)
 {
     T* end = (T*)(dpr.buf + dpr.size);
     for(T* pSample = (T*)dpr.buf; pSample < end; pSample++) {
-        *pSample = (static_cast<int64_t>(*pSample) * mVolume + kVolumeDiv / 2) / kVolumeDiv;
+        *pSample = (static_cast<int64_t>(*pSample) * mVolume + kVolumeDiv / 2) >> kVolumeDivShift;
     }
 }
 template <typename T>
@@ -188,7 +188,7 @@ void volumeNotifyLevelCallback()
 public:
 uint16_t getVolume() const
 {
-    return (mVolume * 100 + kVolumeDiv/2) / kVolumeDiv;
+    return (mVolume * 100 + kVolumeDiv/2) >> kVolumeDivShift;
 }
 
 void setVolume(uint16_t vol)
