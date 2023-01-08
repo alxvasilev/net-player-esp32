@@ -1040,7 +1040,7 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
             MutexLocker locker(self.mutex);
             if (events & kEventVolLevel) {
                 tsLastVolEvent = now;
-                self.mVuDisplay.update(self.mVuLevelInterface->audioLevels());
+                self.mVuDisplay.update(self.mVuLevels);
             }
             else if (events == 0) { // timeout, due time to scroll title
                 tsLastTitleScroll = now;
@@ -1050,7 +1050,7 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
                 if (now - tsLastVolEvent > 50000) { // 50ms no volume event, force update the VU display
                     ESP_LOGD(TAG, "No sound output, clearing VU levels");
                     self.mVolumeInterface->clearAudioLevelsNoEvent();
-                    self.mVuDisplay.update(self.mVolumeInterface->audioLevels());
+                    self.mVuDisplay.update(self.mVuLevels);
                 }
                 if (now - tsLastSpeedUpdate > kLcdNetSpeedUpdateIntervalUs) {
                     tsLastSpeedUpdate = now;
@@ -1215,7 +1215,11 @@ void AudioPlayer::lcdResetNetSpeedIndication()
 }
 void AudioPlayer::audioLevelCb(void* ctx)
 {
+    // If we are called by the i2s output node, it calls us just before getting the new levels,
+    // thus implementing one audio frame delay, which compensates a bit for the actual audio output
+    // delay due to DMA buffering
     auto& self = *static_cast<AudioPlayer*>(ctx);
+    self.mVuLevels = self.mVuLevelInterface->audioLevels();
     self.mEvents.setBits(kEventVolLevel);
 }
 

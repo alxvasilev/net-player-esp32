@@ -84,6 +84,7 @@ protected:
 // general display stuff
     ST7735Display::Color mFontColor = ST7735Display::rgb(255, 255, 128);
     VuDisplay mVuDisplay;
+    IAudioVolume::StereoLevels mVuLevels = {0,0};
 // track name scroll stuff
     DynBuffer mLcdTrackTitle;
     int16_t mTitleScrollCharOffset = 0;
