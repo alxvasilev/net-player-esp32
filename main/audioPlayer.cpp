@@ -1040,7 +1040,7 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
             MutexLocker locker(self.mutex);
             if (events & kEventVolLevel) {
                 tsLastVolEvent = now;
-                self.mVuDisplay.update(self.mVolumeInterface->audioLevels());
+                self.mVuDisplay.update(self.mVuLevelInterface->audioLevels());
             }
             else if (events == 0) { // timeout, due time to scroll title
                 tsLastTitleScroll = now;
