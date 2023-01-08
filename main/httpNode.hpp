@@ -116,13 +116,14 @@ public:
     virtual Type type() const { return kTypeHttpIn; }
     virtual StreamError pullData(DataPullReq &dp);
     virtual void confirmRead(int size);
+    virtual void onStopped() override { recordingCancelCurrent(); }
     void setUrl(UrlInfo* urlInfo);
     bool isConnected() const;
     const char* trackName() const;
     bool recordingIsActive() const;
     bool recordingIsEnabled() const;
     uint32_t pollSpeed() const;
-    uint8_t bufUnderrunState() const { return mBufUnderrunState; }
+    int32_t bufferedDataSize() const { return mRingBuf.dataSize(); }
     void logStartOfRingBuf(const char* msg);
     struct UrlInfo {
         uint32_t streamId;
@@ -167,8 +168,8 @@ protected:
         }
     };
     mutable LinkSpeedProbe mSpeedProbe;
-    uint8_t mBufUnderrunState = 0;
-    inline void signalUnderrun(uint8_t newState);
+    bool mBufUnderrunState = false;
+    void setUnderrunState(bool newState);
     const char* url() const { return mUrlInfo ? mUrlInfo->url : nullptr; }
     const char* recStaName() const { return mUrlInfo ? mUrlInfo->recStaName : nullptr; }
 };

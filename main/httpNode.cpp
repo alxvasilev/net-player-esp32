@@ -141,18 +141,16 @@ bool HttpNode::connect(bool isReconnect)
         return false;
     }
     ESP_LOGI(mTag, "Connecting to '%s'...", url());
-    if (!isReconnect) {
-        {
-            LOCK();
-            printf("clearing ring buffer\n");
+    {
+        LOCK();
+        if (!isReconnect) {
+            ESP_LOGI(TAG, "Clearing ring buffer and event queue");
             mRingBuf.clear();
             mStreamEventQueue.clear();
             mStreamStartPos = mRxByteCtr; // mStreamStartPos is read in pullData()
             mSpeedProbe.reset();
         }
         recordingMaybeEnable();
-    } else {
-        recordingCancelCurrent();
     }
 
     if (!mClient) {
@@ -256,11 +254,6 @@ int8_t HttpNode::handleResponseAsPlaylist(int32_t contentLen)
     return 1;
 }
 
-void HttpNode::disconnect()
-{
-    mPlaylist.clear();
-    destroyClient();
-}
 void HttpNode::destroyClient()
 {
     if (!mClient) {
@@ -293,6 +286,7 @@ bool HttpNode::recv()
         int rlen = esp_http_client_read(mClient, buf, bufSize);
         if (rlen <= 0) {
             mRingBuf.abortWrite();
+            recordingCancelCurrent();
             if (errno == ETIMEDOUT) {
                 return false;
             }
@@ -384,15 +378,7 @@ void HttpNode::onStopRequest()
 {
     mRingBuf.setStopSignal();
 }
-/*
-void HttpNode::onStopped()
-{
-    ESP_LOGI(TAG, "Clearing ring buffer and event queue");
-    mStreamEventQueue.clear();
-    mRingBuf.clear();
-    setWaitingPrefill(true);
-}
-*/
+
 bool HttpNode::dispatchCommand(Command &cmd)
 {
     if (AudioNodeWithTask::dispatchCommand(cmd)) {
@@ -449,13 +435,15 @@ HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize, int prefill)
 {
 }
 
-void HttpNode::signalUnderrun(uint8_t newState)
+void HttpNode::setUnderrunState(bool newState)
 {
     if (newState == mBufUnderrunState) {
         return;
     }
     mBufUnderrunState = newState;
-    plSendEvent(kEventBufState, 0, newState);
+    if (newState) {
+        plSendEvent(kEventBufState);
+    }
 }
 
 AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
@@ -476,15 +464,13 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
     else {
         auto dataSize = mRingBuf.dataSize();
         if (dataSize == 0) {
-            signalUnderrun(0);
+            setUnderrunState(true);
             if (mRingBuf.waitForData(-1) < 0) {
                 dp.clear();
                 return kStreamStopped;
             }
-        } else if (dataSize < 1024 * 8) {
-            signalUnderrun(1);
         } else {
-            signalUnderrun(0xff);
+            setUnderrunState(false);
         }
     }
 
@@ -521,7 +507,7 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
     if (dp.size == 0) { // there was no due stream change event, and this is a codec probe
         return kNoError;
     }
-    printf("ringbuf: %d\n", mRingBuf.dataSize());
+    //printf("ringbuf: %d\n", mRingBuf.dataSize());
     auto ret = mRingBuf.contigRead(dp.buf, dp.size, -1);
     if (ret < 0) {
         dp.size = 0;
@@ -555,11 +541,11 @@ bool HttpNode::waitPrefillChange()
 }
 
 bool HttpNode::recordingMaybeEnable() {
-    LOCK();
     auto staName = recStaName();
     if (!staName) {
         return false;
     }
+    ESP_LOGW(TAG, "============Preparing recorder for station %s", staName);
     if (!mRecorder) {
         mRecorder.reset(new TrackRecorder("/sdcard/rec"));
     }

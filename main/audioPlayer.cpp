@@ -15,13 +15,12 @@
 #include "tostring.hpp"
 
 #define kStreamInfoFont font_Camingo22
-#define kLcdColorCaption 255, 255, 128
-#define kLcdColorGrid 0, 128, 128
-#define kLcdColorStreamInfo 128, 255, 255
-#define kLcdColorPlayState 0, 200, 0
-#define kLcdColorNetSpeed_Normal kLcdColorCaption
-#define kLcdColorNetSpeed_Underrun 255, 0, 0
-#define kLcdColorNetSpeed_BufLow 255, 128, 0
+const auto kLcdColorCaption = ST7735Display::rgb(255, 255, 128);
+const auto kLcdColorGrid = ST7735Display::rgb(0, 128, 128);
+const auto kLcdColorStreamInfo = ST7735Display::rgb(128, 255, 255);
+const auto kLcdColorPlayState = ST7735Display::rgb(0, 200, 0);
+const auto kLcdColorNetSpeed_Normal = kLcdColorCaption;
+const auto kLcdColorNetSpeed_Underrun = ST77XX_RED;
 
 #define LOCK_PLAYER() MutexLocker locker(mutex)
 
@@ -403,6 +402,7 @@ bool AudioPlayer::playUrl(const char* url, PlayerMode playerMode, const char* re
         return false;
     }
     setPlayerMode(playerMode);
+    lcdResetNetSpeedIndication();
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
     auto urlInfo = HttpNode::UrlInfo::Create(url, ++mStreamSeqNo, record);
     // setUrl will start the http node, if it's stopped. However, this may take a while.
@@ -1131,7 +1131,20 @@ void AudioPlayer::lcdWriteStreamInfo(int8_t charOfs, const char* str)
 }
 void AudioPlayer::lcdUpdateCodec(CodecType codec)
 {
-    lcdWriteStreamInfo(0, codecTypeToStr(codec));
+    enum { kMaxLen = 8 };
+    char buf[kMaxLen + 1];
+    char* wptr = buf;
+    const char* end = buf + kMaxLen;
+    const char* name = codecTypeToStr(codec);
+    do {
+        *(wptr++) = *(name++);
+    } while (*name && wptr < end);
+
+    while(wptr < end) {
+        *(wptr++) = ' ';
+    }
+    *wptr = 0;
+    lcdWriteStreamInfo(0, buf);
 }
 void AudioPlayer::lcdUpdateAudioFormat(StreamFormat fmt)
 {
@@ -1147,21 +1160,22 @@ void AudioPlayer::lcdUpdateNetSpeed()
     }
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
     auto speed = http.pollSpeed();
-    uint8_t bufState;
+    uint32_t bufDataSize;
 
     if (!mDisplayedBufUnderrunTimer) {
         if (speed == mLastShownNetSpeed) {
             return;
         }
-        bufState = http.bufUnderrunState();
+        bufDataSize = http.bufferedDataSize();
     }
     else {
-        bufState = --mDisplayedBufUnderrunTimer ? mLatchedBufUnderrunState : http.bufUnderrunState();
+        printf("timer=%d\n", mDisplayedBufUnderrunTimer);
+        bufDataSize = (--mDisplayedBufUnderrunTimer) ? 0 : http.bufferedDataSize();
     }
     mLastShownNetSpeed = speed;
-    lcdRenderNetSpeed(speed, bufState);
+    lcdRenderNetSpeed(speed, bufDataSize);
 }
-void AudioPlayer::lcdRenderNetSpeed(uint32_t speed, uint8_t underrunState)
+void AudioPlayer::lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize)
 {
     char buf[16];
     int whole = speed / 1024;
@@ -1172,27 +1186,32 @@ void AudioPlayer::lcdRenderNetSpeed(uint32_t speed, uint8_t underrunState)
     }
     auto end = vtsnprintf(buf, sizeof(buf), fmtInt(whole, 0, 4), '.', dec, "K/s");
     uint16_t color;
-    if (underrunState == 0xff) {
-        color = mLcd.rgb(kLcdColorNetSpeed_Normal);
-    } else if (underrunState == 0) {
-        color = mLcd.rgb(kLcdColorNetSpeed_Underrun);
+    printf("buf: %u\n", bufDataSize);
+    if (bufDataSize >= 128 * 1024) {
+        color = kLcdColorNetSpeed_Normal;
+    } else if (bufDataSize == 0) {
+        color = kLcdColorNetSpeed_Underrun;
     } else {
-        color = mLcd.rgb(kLcdColorNetSpeed_BufLow);
+        uint8_t green = 16 + bufDataSize / 2780;
+        assert(green < 64);
+        printf("buf: %u, green=%d\n", bufDataSize, green);
+        color = mLcd.rgb(255, green << 2, 128);
     }
     mLcd.setFont(kStreamInfoFont);
     mLcd.setFgColor(color);
     mLcd.gotoXY(mLcd.width() - mLcd.textWidth(end - buf), 0);
-    printf("net speed: '%s'\n", buf);
     mLcd.puts(buf);
 }
 void AudioPlayer::lcdShowBufUnderrunImmediate(uint8_t bufState)
 {
-    // if it's an underrun condition and is more severe than the current (if any), start/reset the timer
-    if ((bufState != 0xff) && (!mDisplayedBufUnderrunTimer || (bufState < mLatchedBufUnderrunState))) {
-        mDisplayedBufUnderrunTimer = 2;
-        mLatchedBufUnderrunState = bufState;
-    }
+    printf("Underrun: set timer\n");
+    mDisplayedBufUnderrunTimer = 1;
     lcdRenderNetSpeed(mLastShownNetSpeed, bufState);
+}
+void AudioPlayer::lcdResetNetSpeedIndication()
+{
+    mDisplayedBufUnderrunTimer = 0;
+    lcdRenderNetSpeed(0, 0xff);
 }
 void AudioPlayer::audioLevelCb(void* ctx)
 {

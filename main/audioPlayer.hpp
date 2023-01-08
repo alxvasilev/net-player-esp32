@@ -89,7 +89,7 @@ protected:
     int16_t mTitleScrollCharOffset = 0;
     int8_t mTitleScrollPixOffset = 0;
     bool mTitleScrollEnabled = false;
-    int16_t mLastShownNetSpeed = -1;
+    uint32_t mLastShownNetSpeed = 0xffffffff;
     uint8_t mLatchedBufUnderrunState = 0xff;
     uint8_t mDisplayedBufUnderrunTimer = 0;
     static void audioLevelCb(void* ctx);
@@ -125,7 +125,8 @@ protected:
     void lcdUpdateCodec(CodecType codec);
     void lcdUpdateAudioFormat(StreamFormat fmt);
     void lcdUpdateNetSpeed();
-    void lcdRenderNetSpeed(uint32_t speed, uint8_t underrunState);
+    void lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize);
+    void lcdResetNetSpeedIndication();
     void lcdShowBufUnderrunImmediate(uint8_t underrunState);
     // web URL handlers
     static esp_err_t playUrlHandler(httpd_req_t *req);

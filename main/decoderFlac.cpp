@@ -37,6 +37,7 @@ void DecoderFlac::reset()
 }
 FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void* userp)
 {
+//    printf("readCb\n");
     auto& self = *static_cast<DecoderFlac*>(userp);
     assert(self.mDprPtr);
     auto& dpr = *self.mDprPtr;
@@ -60,7 +61,7 @@ FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *dec
 }
 void DecoderFlac::errorCb(const FLAC__StreamDecoder *decoder, FLAC__StreamDecoderErrorStatus status, void *client_data)
 {
-    ESP_LOGE(TAG, "FLAC decode error: %d", status);
+    ESP_LOGE(TAG, "FLAC decode error: %s(%d)", FLAC__StreamDecoderErrorStatusString[status], status);
 }
 void DecoderFlac::metadataCb(const FLAC__StreamDecoder *decoder, const FLAC__StreamMetadata *metadata, void *client_data)
 {
@@ -191,7 +192,7 @@ FLAC__StreamDecoderWriteStatus DecoderFlac::writeCb(const FLAC__StreamDecoder *d
             ESP_LOGE(TAG, "Unsupported number of channels: %d", nChans);
             return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
         }
-        self.mOutputChunkSize = ((bps <= 16) ? 2 : 4) * nChans * header.sample_rate / 38;
+        self.mOutputChunkSize = 0; //((bps <= 16) ? 2 : 4) * nChans * header.sample_rate / 38;
         printf("outChunkSize = %d\n", self.mOutputChunkSize);
     }
     if ((self.*self.mOutputFunc)(nSamples, buffer) == false) {
