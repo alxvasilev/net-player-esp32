@@ -115,6 +115,7 @@ bool DecoderFlac::outputStereoSamples(int nSamples, const FLAC__int32* const cha
 {
     int outBytes = 2 * nSamples * sizeof(T);
     if (outBytes > kOutputBufSize) {
+        printf("flac: output too large: max expected: %d, actual: %d (nSamples=%d)\n", kOutputBufSize, outBytes, nSamples);
         return false;
     }
     auto ch0 = channels[0];

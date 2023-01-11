@@ -996,9 +996,9 @@ void AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
             asyncCall([this, event, numArg]() {
                 LOCK_PLAYER();
                 if (event == HttpNode::kEventConnected) {
-                    lcdUpdatePlayState("Buffering...");
+                    lcdUpdatePlayState(numArg ? nullptr : "Buffering...");
                 } else if (event == HttpNode::kEventConnecting) {
-                    lcdUpdatePlayState("Connecting...");
+                    lcdUpdatePlayState(numArg ? "Reconnecting..." : "Connecting...");
                 } else if (event == HttpNode::kEventPlaying || event == HttpNode::kEventRecording) {
                     lcdUpdatePlayState(nullptr);
                 } else if (event == HttpNode::kEventBufState) {

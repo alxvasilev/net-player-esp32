@@ -8,7 +8,7 @@ class DecoderFlac: public Decoder
 protected:
     enum {
         kMaxSamplesPerBlock = 4608,
-        kOutputBufSize = kMaxSamplesPerBlock * 4 * 2
+        kOutputBufSize = 65536
     };
     typedef bool (DecoderFlac::*OutputFunc)(int nSamples, const FLAC__int32* const samples[]);
     uint8_t* mOutputBuf;
