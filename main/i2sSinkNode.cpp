@@ -115,7 +115,7 @@ void I2sOutputNode::nodeThreadFunc()
             return;
         }
         myassert(mState == kStateRunning);
-        plSendEvent(kEventAudioFormatChange, 0, mFormat.asCode());
+        plSendEvent(kEventAudioFormatChange, mFormat.asCode());
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
             DataPullReq dpr(0xffff); // read all available data
 #ifdef DEBUG_TIMING
@@ -137,7 +137,9 @@ void I2sOutputNode::nodeThreadFunc()
                     // Note: we are sending the error with dpr.streamId directly (i.e. not with mStreamId)
                     // because it may be possible that the kStreamChanged event was not have been delivered
                     // by the decoder, if it entered a confused state. This may happen with the FLAC decoder
-                    plSendEvent(kEventStreamError, dpr.streamId, err);
+                    plSendEvent(kEventStreamError, err, dpr.streamId);
+                    // flush DMA buffers - ramp / fade out
+                    vTaskDelay(20);
                     break;
                 }
             }
@@ -221,7 +223,7 @@ bool I2sOutputNode::setFormat(StreamFormat fmt)
     mFormat = fmt;
     uint bytesPerSample = fmt.numChannels() * (bps / 8);
     for (mBytesPerSampleShiftDiv = 0; bytesPerSample; bytesPerSample >>= 1, mBytesPerSampleShiftDiv++);
-    plSendEvent(kEventAudioFormatChange, 0, fmt.asCode());
+    plSendEvent(kEventAudioFormatChange, fmt.asCode());
     return true;
 }
 

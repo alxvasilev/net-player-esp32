@@ -86,7 +86,7 @@ class AudioNode;
 
 class IAudioPipeline {
 public:
-    virtual void onNodeEvent(AudioNode& node, uint32_t type, uintptr_t arg, size_t bufSize) = 0;
+    virtual void onNodeEvent(AudioNode& node, uint32_t type, size_t numArg, uintptr_t arg) = 0;
     virtual void onNodeError(AudioNode& node, int error) = 0;
 };
 
@@ -99,6 +99,7 @@ public:
         kNoError = 0,
         kTimeout,
         kStreamStopped,
+        kStreamEnd,
         kStreamChanged,
         kCodecChanged,
         kTitleChanged,
@@ -134,7 +135,7 @@ protected:
     const char* mTag;
     Mutex mMutex;
     AudioNode* mPrev = nullptr;
-    inline void plSendEvent(uint32_t type, uintptr_t arg=0, int bufSize=0);
+    inline void plSendEvent(uint32_t type, size_t numArg = 0, uintptr_t arg=0);
     inline void plNotifyError(int error);
     AudioNode(IAudioPipeline& parent, const char* tag): mPipeline(parent), mTag(tag) {}
 public:
@@ -255,9 +256,9 @@ public:
     virtual void terminate(bool wait=true) override;
 };
 
-inline void AudioNode::plSendEvent(uint32_t type, uintptr_t arg, int bufSize)
+inline void AudioNode::plSendEvent(uint32_t type, size_t numArg, uintptr_t arg)
 {
-    mPipeline.onNodeEvent(*this, type, arg, bufSize);
+    mPipeline.onNodeEvent(*this, type, numArg, arg);
 }
 
 inline void AudioNode::plNotifyError(int error)

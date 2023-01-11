@@ -41,7 +41,7 @@ bool DecoderNode::createDecoder(AudioNode::DataPullReq& info)
     mStreamHdrReadPos = 0;
     ESP_LOGI(mTag, "\e[34mCreated %s decoder, approx %d bytes of RAM consumed (%d free internal)",
         codecTypeToStr(mDecoder->codec), freeBefore - heapFreeTotal(), heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-    plSendEvent(kEventCodecChange, 0, info.codec);
+    plSendEvent(kEventCodecChange, info.codec);
     return true;
 }
 void DecoderNode::deleteDecoder()
@@ -126,7 +126,8 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
                 deleteDecoder();
             }
             printf("decoderNode: kStreamChanged event with streamId: %u\n", odp.streamId);
-        } else if (err == kStreamStopped) {
+        }
+        else if (err == kStreamStopped || err == kStreamEnd) {
             deleteDecoder();
         }
         return err;

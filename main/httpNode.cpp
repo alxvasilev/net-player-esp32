@@ -74,13 +74,12 @@ void HttpNode::doSetUrl(UrlInfo* urlInfo)
     if (mClient) {
         esp_http_client_set_url(mClient, urlInfo->url); // do it here to avoid keeping reference to the old, freed one
     }
-    free(mUrlInfo);
-    mUrlInfo = urlInfo;
+    mUrlInfo.reset(urlInfo);
     setWaitingPrefill(true);
 }
 void HttpNode::updateUrl(const char* url)
 {
-    auto urlInfo = mUrlInfo
+    auto urlInfo = mUrlInfo.get()
         ? UrlInfo::Create(url, mUrlInfo->streamId, mUrlInfo->recStaName)
         : UrlInfo::Create(url, 0, nullptr);
     doSetUrl(urlInfo);
@@ -123,11 +122,16 @@ void HttpNode::onHttpHeader(const char* key, const char* val)
         mInCodec = codecFromContentType(val);
         if (utils::haveSpiRam() && (mInCodec == kCodecFlac || mInCodec == kCodecOggTransport)) {
             mPrefillAmount = std::min(512 * 1024, mRingBuf.size() - 1024);
-        } else {
+        }
+        else {
             mPrefillAmount = 65536;
         }
         ESP_LOGI(TAG, "Parsed content-type '%s' as %s", key, codecTypeToStr(mInCodec));
-    } else {
+    }
+    else if ((strcasecmp(key, "accept-ranges") == 0) && (strcasecmp(val, "bytes") == 0)) {
+        mAcceptsRangeRequests = true;
+    }
+    else {
         mIcyParser.parseHeader(key, val);
     }
 }
@@ -146,6 +150,7 @@ bool HttpNode::connect(bool isReconnect)
     {
         LOCK();
         if (!isReconnect) {
+            mAcceptsRangeRequests = false;
             ESP_LOGI(TAG, "Clearing ring buffer and event queue");
             mRingBuf.clear();
             mStreamEventQueue.clear();
@@ -165,9 +170,10 @@ bool HttpNode::connect(bool isReconnect)
     mIcyParser.reset();
 
     if (isReconnect) { // we are resuming, send position
-        char rang_header[32];
-        snprintf(rang_header, 32, "bytes=%lld-", mRxByteCtr - mStreamStartPos);
-        esp_http_client_set_header(mClient, "Range", rang_header);
+        char strbuf[32];
+        vtsnprintf(strbuf, sizeof(strbuf), "bytes=", mRxByteCtr - mStreamStartPos, '-');
+        printf("strbuf='%s'\n", strbuf);
+        esp_http_client_set_header(mClient, "Range", strbuf);
     }
     plSendEvent(kEventConnecting, isReconnect);
 
@@ -183,10 +189,9 @@ bool HttpNode::connect(bool isReconnect)
             continue;
         }
 
-        int32_t contentLen = esp_http_client_fetch_headers(mClient);
-
+        mContentLen = esp_http_client_fetch_headers(mClient);
         int status_code = esp_http_client_get_status_code(mClient);
-        ESP_LOGI(TAG, "Connected to '%s': http code: %d, content-length: %d", url(), status_code, contentLen);
+        ESP_LOGI(TAG, "Connected to '%s': http code: %d, content-length: %d", url(), status_code, mContentLen);
 
         if (status_code < 0) {
             auto msDelay = delayFromRetryCnt(tries);
@@ -206,7 +211,7 @@ bool HttpNode::connect(bool isReconnect)
             ESP_LOGE(mTag, "Non-200 response code %d", status_code);
             return false;
         }
-        auto ret = handleResponseAsPlaylist(contentLen);
+        auto ret = handleResponseAsPlaylist(mContentLen);
         if (ret) {
             if (ret <= -2) {
                 return false;
@@ -288,22 +293,30 @@ bool HttpNode::recv()
         int rlen = esp_http_client_read(mClient, buf, bufSize);
         if (rlen <= 0) {
             mRingBuf.abortWrite();
-            recordingCancelCurrent();
-            if (errno == ETIMEDOUT) {
-                return false;
+            if (rlen == 0) {
+                if (esp_http_client_is_complete_data_received(mClient)) {
+                    // transfer complete, post end of stream
+                    ESP_LOGI(TAG, "Transfer complete, posting kStreamEnd event (streamId=%d)", mUrlInfo->streamId);
+                    postStreamEvent_Lock(mRxByteCtr, kStreamEnd, mUrlInfo->streamId);
+                    return false;
+                }
+                else if (errno == EAGAIN) { // just return, main loop will retry
+                    return true;
+                }
+                // else we have a graceful disconnect but incomplete transfer?
             }
-            ESP_LOGW(TAG, "Error '%s' receiving http stream, recv len = %d", strerror(errno), rlen);
-            // even though len == 0 means graceful disconnect, i.e.
-            //track end => should go to next track, this often happens when
-            // network lags and stream sender aborts sending to us
-            // => we should reconnect.
+            recordingCancelCurrent();
+            ESP_LOGW(TAG, "Error '%s' receiving http stream, returned rlen: %d", strerror(errno), rlen);
+            // even though len == 0 means graceful disconnect, this often happens when
+            // network lags and stream sender aborts sending to us => we should reconnect.
+            printf("mContentLen = %d, acceptsRanges = %d\n", mContentLen, mAcceptsRangeRequests);
             int msDelay = delayFromRetryCnt(retries);
             ESP_LOGW(TAG, "Reconnecting in %d ms...", msDelay);
             if (mCmdQueue.waitForMessage(msDelay)) {
                 return false;
             }
             destroyClient(); // just in case
-            connect(false);
+            connect(canResume());
             continue;
         }
         LOCK();
@@ -342,7 +355,6 @@ bool HttpNode::recv()
         }
         return true;
     }
-    setState(kStateStopped);
     return false;
 }
 void HttpNode::logStartOfRingBuf(const char* msg)
@@ -419,7 +431,10 @@ void HttpNode::nodeThreadFunc()
             }
         }
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
-            recv(); // retries and goes to new playlist track. Timeout is for waiting for free space in ringbuf
+            if (!recv()) { // returns false on error or end of stream
+                setState(kStateStopped);
+                break;
+            }
         }
     }
 }
@@ -428,7 +443,6 @@ HttpNode::~HttpNode()
 {
     terminate(true);
     destroyClient();
-    free(mUrlInfo);
 }
 
 HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize, int prefill)
@@ -450,10 +464,6 @@ void HttpNode::setUnderrunState(bool newState)
 
 AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
 {
-    if (state() != kStateRunning && (waitForState(kStateRunning, 4000) != kStateRunning)) {
-        dp.clear();
-        return kStreamStopped;
-    }
     if (mWaitingPrefill) {
         ESP_LOGI(TAG, "Waiting ringbuf prefill...");
         do {
@@ -463,60 +473,79 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
             }
         } while(mWaitingPrefill);
     }
-    else {
-        auto dataSize = mRingBuf.dataSize();
-        if (dataSize == 0) {
-            setUnderrunState(true);
-            if (mRingBuf.waitForData(-1) < 0) {
-                dp.clear();
-                return kStreamStopped;
-            }
-        } else {
-            setUnderrunState(false);
+    LOCK(); // we may have been pre-filled, but cleared just before the lock, so check once again after locking
+    auto dataSize = mRingBuf.dataSize();
+    if (dataSize) {
+        setUnderrunState(false);
+    } else {
+        auto evt = dequeueStreamEvent(dp);
+        if (evt != kNoError) {
+            return evt; // ringbuf is empty but there is an event, probably kStreamEnd
+        }
+        setUnderrunState(true);
+        int waitResult;
+        {
+            MutexUnlocker unlock(mMutex);
+            waitResult = mRingBuf.waitForData(-1);
+        }
+        if (waitResult < 0) {
+            dp.clear();
+            return kStreamStopped;
         }
     }
-
-    {
-        // First, process stream events that are due
-        LOCK();
-        while (!mStreamEventQueue.empty()) {
-            auto& event = *mStreamEventQueue.front();
-            auto eventPos = event.streamPos;
-            auto readPos = mRxByteCtr - mRingBuf.dataSize();
-            if (eventPos <= readPos) {
-                decltype(mStreamEventQueue)::Popper popper(mStreamEventQueue);
-                if (event.type == kStreamChanged) {
-                    dp.codec = mOutCodec = event.codec;
-                    dp.streamId = event.streamId;
-                    dp.size = 0;
-                    ESP_LOGI(TAG, "Returning kStreamChanged: codec %s, streamId: %u", codecTypeToStr(event.codec), dp.streamId);
-                    return kStreamChanged;
-                } else if (event.type == kTitleChanged) {
-                    plSendEvent(kEventTrackInfo, (uintptr_t)event.data);
-                    continue;
-                }
-            } else if (eventPos < readPos + dp.size) { // there is an event within the read window
-                // If we were called with zero size for a format probe, the previous 'if' will handle it
-                myassert(dp.size > 0);
-                dp.size = eventPos - readPos;
-                break;
-            } else {
-                break;
-            }
-        }
+    // First, process stream events that are due
+    auto evt = dequeueStreamEvent(dp);
+    if (evt != kNoError) {
+        return evt;
     }
     dp.codec = mOutCodec;
     if (dp.size == 0) { // there was no due stream change event, and this is a codec probe
         return kNoError;
     }
     //printf("ringbuf: %d\n", mRingBuf.dataSize());
-    auto ret = mRingBuf.contigRead(dp.buf, dp.size, -1);
+    auto ret = mRingBuf.contigRead(dp.buf, dp.size, 0);
     if (ret < 0) {
         dp.size = 0;
         return kStreamStopped;
     }
     myassert(ret > 0); // no timeout
     dp.size = ret;
+    return kNoError;
+}
+
+AudioNode::StreamError HttpNode::dequeueStreamEvent(DataPullReq& dp)
+{
+    while (!mStreamEventQueue.empty()) {
+        auto& event = *mStreamEventQueue.front();
+        auto eventPos = event.streamPos;
+        auto readPos = mRxByteCtr - mRingBuf.dataSize();
+        if (eventPos <= readPos) {
+            decltype(mStreamEventQueue)::Popper popper(mStreamEventQueue);
+            if (event.type == kStreamChanged) {
+                dp.codec = mOutCodec = event.codec;
+                dp.streamId = event.streamId;
+                dp.size = 0;
+                ESP_LOGI(TAG, "Returning kStreamChanged: codec %s, streamId: %u", codecTypeToStr(event.codec), dp.streamId);
+                return kStreamChanged;
+            }
+            else if (event.type == kTitleChanged) {
+                plSendEvent(kEventTrackInfo, 0, (uintptr_t)event.data);
+                continue;
+            }
+            else if(event.type == kStreamEnd) {
+                dp.clear();
+                dp.streamId = event.streamId;
+                return kStreamEnd;
+            }
+        } else if (eventPos < readPos + dp.size) { // there is an event within the read window
+            // If we were called with zero size for a format probe, the previous 'if' will handle it
+            myassert(dp.size > 0);
+            dp.size = eventPos - readPos;
+            break;
+        } else {
+            break;
+        }
+    }
     return kNoError;
 }
 
@@ -591,5 +620,5 @@ int HttpNode::delayFromRetryCnt(int tries) {
         return tries * 100;
     }
     int delay = tries * 1000;
-    return (delay <= 30000) ? delay : 30000;
+    return (delay <= 10000) ? delay : 10000;
 }

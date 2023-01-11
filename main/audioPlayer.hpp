@@ -56,7 +56,7 @@ protected:
         kLcdTaskStackSize = 2200, kLcdTaskPrio = 10, kLcdTaskCore = 0
     };
     enum {
-        kLcdArtistNameLineY = 38, kLcdPlayStateLineY = 74
+        kLcdArtistNameLineY = 38, kLcdPlayStateLineY = 76, kLcdTrackTitleY = 106
     };
 
     enum {
@@ -122,6 +122,7 @@ protected:
     void lcdScrollTrackTitle(int step=1);
     void lcdUpdateArtistName(const char* name);
     void lcdUpdateStationInfo();
+    void lcdUpdateTrackDisplay();
     // stream info line
     void lcdWriteStreamInfo(int8_t charOfs, const char* str);
     void lcdUpdateCodec(CodecType codec);
@@ -129,7 +130,7 @@ protected:
     void lcdUpdateNetSpeed();
     void lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize);
     void lcdResetNetSpeedIndication();
-    void lcdShowBufUnderrunImmediate(uint8_t underrunState);
+    void lcdShowBufUnderrunImmediate();
     // web URL handlers
     static esp_err_t playUrlHandler(httpd_req_t *req);
     static esp_err_t pauseUrlHandler(httpd_req_t *req);
@@ -142,6 +143,7 @@ protected:
     static esp_err_t nvsSetParamUrlHandler(httpd_req_t* req);
     static esp_err_t changeInputUrlHandler(httpd_req_t *req);
     void registerHttpGetHandler(const char* path, esp_err_t(*handler)(httpd_req_t*));
+    bool doPlayUrl(const char* url, PlayerMode playerMode, const char* record=nullptr);
 public:
     Mutex mutex;
     PlayerMode mode() const { return mPlayerMode; }
@@ -176,7 +178,7 @@ public:
     bool equalizerSetGainsBulk(char* str, size_t len);
     void registerUrlHanlers();
     // AudioNode::EventHandler interface
-    virtual void onNodeEvent(AudioNode& node, uint32_t type, uintptr_t arg, size_t numArg) override;
+    virtual void onNodeEvent(AudioNode& node, uint32_t type, size_t numArg, uintptr_t arg) override;
     virtual void onNodeError(AudioNode& node, int error) override;
 };
 

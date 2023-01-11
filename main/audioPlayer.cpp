@@ -246,13 +246,26 @@ void AudioPlayer::setPlayerMode(PlayerMode mode)
         mLcd.gotoXY(1, 1);
         mLcd.puts(playerModeToStr(mPlayerMode));
     }
+}
+void AudioPlayer::lcdUpdateTrackDisplay()
+{
     if (mPlayerMode == kModeRadio) {
         if (stationList) {
             lcdUpdateStationInfo();
         }
-    } else {
-        lcdUpdateArtistName(mTrackInfo ? mTrackInfo->artistName : nullptr);
-        lcdUpdateTrackTitle(mTrackInfo ? mTrackInfo->trackName : nullptr);
+    } else if (mTrackInfo) {
+        lcdUpdateArtistName(mTrackInfo->artistName);
+        lcdUpdateTrackTitle(mTrackInfo->trackName);
+    }
+    else if (mStreamIn && mStreamIn->type() == AudioNode::kTypeHttpIn) {
+        lcdUpdateArtistName("Playing URL");
+        auto& http = *static_cast<HttpNode*>(mStreamIn.get());
+        MutexLocker locker(http.mMutex);
+        lcdUpdateTrackTitle(http.url());
+    }
+    else {
+        lcdUpdateArtistName(nullptr);
+        lcdUpdateTrackTitle(nullptr);
     }
 }
 void AudioPlayer::lcdUpdateStationInfo()
@@ -401,7 +414,7 @@ void AudioPlayer::destroyPipeline()
     mStreamOut.reset();
 }
 
-bool AudioPlayer::playUrl(const char* url, PlayerMode playerMode, const char* record)
+bool AudioPlayer::doPlayUrl(const char* url, PlayerMode playerMode, const char* record)
 {
     if (!(playerMode & kModeFlagHttp) || !mStreamIn) {
         mTrackInfo.reset();
@@ -421,13 +434,19 @@ bool AudioPlayer::playUrl(const char* url, PlayerMode playerMode, const char* re
     if (http.waitForState(AudioNode::kStateRunning) != AudioNode::kStateRunning) {
         return false;
     }
+    lcdUpdateTrackDisplay();
     mStreamOut->run();
     return true;
+}
+bool AudioPlayer::playUrl(const char* url, PlayerMode playerMode, const char* record)
+{
+    mTrackInfo.reset();
+    return doPlayUrl(url, playerMode, record);
 }
 bool AudioPlayer::playUrl(TrackInfo* trackInfo, PlayerMode playerMode, const char* record)
 {
     mTrackInfo.reset(trackInfo);
-    return playUrl(trackInfo->url, playerMode, record);
+    return doPlayUrl(trackInfo->url, playerMode, record);
 }
 esp_err_t AudioPlayer::playStation(const char* id)
 {
@@ -500,7 +519,6 @@ void AudioPlayer::pause()
 void AudioPlayer::stop()
 {
     pipelineStop();
-    mTitleScrollEnabled = false;
     if (mVolumeInterface) {
         mVolumeInterface->clearAudioLevels();
     }
@@ -962,7 +980,7 @@ void AudioPlayer::onNodeError(AudioNode& node, int error)
     });
 }
 
-void AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t arg, size_t numArg)
+void AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, uintptr_t arg)
 {
     if (node.type() == AudioNode::kTypeHttpIn) {
         // We are in the http node's thread, must not do any locking from here, so we call
@@ -984,7 +1002,7 @@ void AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t arg, si
                 } else if (event == HttpNode::kEventPlaying || event == HttpNode::kEventRecording) {
                     lcdUpdatePlayState(nullptr);
                 } else if (event == HttpNode::kEventBufState) {
-                    lcdShowBufUnderrunImmediate(numArg);
+                    lcdShowBufUnderrunImmediate();
                 }
             });
         }
@@ -1005,7 +1023,7 @@ void AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t arg, si
             });
         }
         else if (event == AudioNode::kEventStreamError) {
-            asyncCall([this, arg, numArg]() {
+            asyncCall([this, numArg, arg]() {
                 const char* errName = AudioNode::streamEventToStr((AudioNode::StreamError)numArg);
                 if (arg != mStreamSeqNo) {
                     ESP_LOGW(TAG, "Discarding stream error %s from output node, streamId is old (got %d, expected %d)", errName, arg, mStreamSeqNo);
@@ -1089,7 +1107,7 @@ void AudioPlayer::lcdSetupForTrackTitle()
 {
     mLcd.setFont(font_CamingoBold43);
     mLcd.setFgColor(kLcdColorCaption);
-    mLcd.gotoXY(0, (mLcd.height() - mLcd.charHeight()) / 2);
+    mLcd.gotoXY(0, kLcdTrackTitleY);
 }
 
 void AudioPlayer::lcdScrollTrackTitle(int step)
@@ -1208,11 +1226,10 @@ void AudioPlayer::lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize)
     mLcd.gotoXY(mLcd.width() - mLcd.textWidth(end - buf), 0);
     mLcd.puts(buf);
 }
-void AudioPlayer::lcdShowBufUnderrunImmediate(uint8_t bufState)
+void AudioPlayer::lcdShowBufUnderrunImmediate()
 {
-    printf("Underrun: set timer\n");
     mDisplayedBufUnderrunTimer = 1;
-    lcdRenderNetSpeed(mLastShownNetSpeed, bufState);
+    lcdRenderNetSpeed(mLastShownNetSpeed, 0);
 }
 void AudioPlayer::lcdResetNetSpeedIndication()
 {

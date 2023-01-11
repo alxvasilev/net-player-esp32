@@ -50,13 +50,15 @@ protected:
             streamPos(aStreamPos), streamId(aStreamId), codec(aCodec), type(aType) {}
         QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, void* aData):
             streamPos(aStreamPos), data(aData), type(aType) {}
+        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, uint32_t aStreamId):
+            streamPos(aStreamPos), streamId(aStreamId), codec(kCodecUnknown), type(aType) {}
         ~QueuedStreamEvent() {
             if (type == kTitleChanged) {
                 free(data);
             }
         }
     };
-    UrlInfo* mUrlInfo = nullptr;
+    std::unique_ptr<UrlInfo> mUrlInfo;
     esp_http_client_handle_t mClient = nullptr;
     CodecType mInCodec = kCodecUnknown;
     CodecType mOutCodec = kCodecUnknown;
@@ -66,14 +68,16 @@ protected:
     StaticQueue<QueuedStreamEvent, 6> mStreamEventQueue;
     int64_t mRxByteCtr = 0;
     int64_t mStreamStartPos = 0;
-    volatile bool mWaitingPrefill = true;
     int mPrefillAmount;
     int mContentLen;
     IcyParser mIcyParser;
     std::unique_ptr<TrackRecorder> mRecorder;
+    bool mAcceptsRangeRequests = false;
+    volatile bool mWaitingPrefill = true;
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     static CodecType codecFromContentType(const char* content_type);
     void onHttpHeader(const char* key, const char* val);
+    bool canResume() const { return (mContentLen != 0) && mAcceptsRangeRequests; }
     bool isPlaylist();
     bool createClient();
     bool parseContentType();
@@ -90,6 +94,7 @@ protected:
     bool postStreamEvent_NoLock(int64_t streamPos, StreamError event, Args... args);
     void setWaitingPrefill(bool prefill);
     bool waitPrefillChange();
+    StreamError dequeueStreamEvent(DataPullReq& dp);
     int delayFromRetryCnt(int tries);
     void nodeThreadFunc();
     virtual bool dispatchCommand(Command &cmd);
@@ -170,6 +175,7 @@ protected:
     mutable LinkSpeedProbe mSpeedProbe;
     bool mBufUnderrunState = false;
     void setUnderrunState(bool newState);
+public:
     const char* url() const { return mUrlInfo ? mUrlInfo->url : nullptr; }
     const char* recStaName() const { return mUrlInfo ? mUrlInfo->recStaName : nullptr; }
 };

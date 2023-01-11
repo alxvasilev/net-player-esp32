@@ -26,7 +26,7 @@ void AudioNodeWithState::setState(State newState)
     if (newState == prevState) {
         return;
     }
-    ESP_LOGI(mTag, "State change %s -> %s", stateToStr(prevState), stateToStr(newState));
+    ESP_LOGI(mTag, "State change: %s -> %s", stateToStr(prevState), stateToStr(newState));
     EventBits_t clearStopReq = (newState == kStateRunning) ? kEvtStopRequest : 0;
     mEvents.clearBits(kStateTerminated|kStateStopped|kStateRunning|clearStopReq);
     mEvents.setBits(newState);
@@ -83,7 +83,7 @@ bool AudioNodeWithTask::run()
         MutexLocker locker(mMutex);
         auto currState = state();
         if (currState == kStateRunning) {
-            ESP_LOGW(mTag, "Node already running");
+            ESP_LOGI(mTag, "run: Already running");
             return true;
         }
         else if (currState == kStateTerminated) {
@@ -104,7 +104,7 @@ void AudioNodeWithTask::stop(bool wait)
         MutexLocker locker(mMutex);
         auto currState = state();
         if (currState == kStateTerminated || currState == kStateStopped) {
-            ESP_LOGI(mTag, "stop: Already stopped/terminated");
+            ESP_LOGI(mTag, "stop: Already %s", stateToStr(currState));
             return;
         }
         onStopRequest();
@@ -136,17 +136,18 @@ void AudioNodeWithTask::terminate(bool wait)
 bool AudioNodeWithTask::dispatchCommand(Command& cmd)
 {
     // State mutex not locked
+    auto currState = state();
     switch(cmd.opcode) {
     case kCommandRun:
-        if (state() == kStateRunning) {
-            ESP_LOGW(mTag, "kCommandRun: Already running");
+        if (currState == kStateRunning) {
+            ESP_LOGI(mTag, "kCommandRun: Already running");
         } else {
             setState(kStateRunning);
         }
         break;
     case kCommandStop:
-        if (state() == kStateStopped) {
-            ESP_LOGW(mTag, "kCommandStop: Already stopped");
+        if (currState == kStateStopped || currState == kStateTerminated) {
+            ESP_LOGI(mTag, "kCommandStop: Already %s", stateToStr(currState));
         } else {
             setState(kStateStopped);
         }
@@ -189,9 +190,9 @@ const char* codecTypeToStr(CodecType type)
 const char* AudioNodeWithState::stateToStr(State state)
 {
     switch(state) {
-        case kStateRunning: return "Running";
-        case kStateStopped: return "Stopped";
-        case kStateTerminated: return "Terminated";
+        case kStateRunning: return "running";
+        case kStateStopped: return "stopped";
+        case kStateTerminated: return "terminated";
         default: return "(invalid)";
     }
 }
@@ -199,6 +200,7 @@ const char* AudioNode::streamEventToStr(StreamError evt) {
     switch (evt) {
         case kTimeout: return "kTimeout";
         case kStreamStopped: return "kStreamStopped";
+        case kStreamEnd: return "kStreamEnd";
         case kStreamChanged: return "kStreamChanged";
         case kCodecChanged: return "kCodecChanged";
         case kTitleChanged: return "kTitleChanged";
