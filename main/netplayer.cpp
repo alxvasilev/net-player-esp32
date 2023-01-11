@@ -29,7 +29,6 @@
 #include "audioPlayer.hpp"
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
-static constexpr gpio_num_t kPinRollbackButton = GPIO_NUM_32;
 static constexpr gpio_num_t kPinLed = GPIO_NUM_2;
 static constexpr ST7735Display::PinCfg lcdPins = {
     {
@@ -60,10 +59,6 @@ void configGpios()
     gpio_pad_select_gpio(kPinButton);
     gpio_set_direction(kPinButton, GPIO_MODE_INPUT);
     gpio_pullup_en(kPinButton);
-
-    gpio_pad_select_gpio(kPinRollbackButton);
-    gpio_set_direction(kPinRollbackButton, GPIO_MODE_INPUT);
-    gpio_pullup_en(kPinRollbackButton);
 
     gpio_pad_select_gpio(kPinLed);
     gpio_set_direction(kPinLed, GPIO_MODE_OUTPUT);

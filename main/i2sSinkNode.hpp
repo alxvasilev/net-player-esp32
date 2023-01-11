@@ -17,15 +17,27 @@ protected:
     uint64_t mSampleCtr;
     bool mUseInternalDac;
     uint8_t mBytesPerSampleShiftDiv;
+    uint8_t mDmaBufCount; // needed for flushing with silence
+    bool mDacMuted = false;
     enum {
-        kTaskPriority = 20, kDefaultBps = 16, kDefaultSamplerate = 44100
+        kTaskPriority = 20, kDefaultBps = 16, kDefaultSamplerate = 44100, kDepopBufSize = 2048
     };
+    const gpio_num_t kDacMutePin = GPIO_NUM_32;
     virtual void nodeThreadFunc();
     void adjustSamplesForInternalDac(char* sBuff, int len);
     void dmaFillWithSilence();
     bool setFormat(StreamFormat fmt);
+    void setDacMutePin(uint8_t level);
+    void muteDac() { setDacMutePin((gpio_num_t)0); ESP_LOGI(mTag, "DAC muted"); }
+    void unMuteDac() { setDacMutePin((gpio_num_t)1);  ESP_LOGI(mTag, "DAC unmuted");}
+    bool sendSilence();
+    template <typename S>
+    bool rampIn(void* targetSample);
+    template <typename S>
+    bool fadeIn(char* sampleBuf, int sampleBufSize);
 public:
-    I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t* pinCfg, uint16_t stackSize, uint8_t dmaBufCnt, int8_t cpuCore=-1);
+    I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t* pinCfg, uint16_t stackSize,
+        uint8_t dmaBufCnt, int8_t cpuCore=-1);
     ~I2sOutputNode();
     virtual Type type() const { return kTypeI2sOut; }
     virtual IAudioVolume* volumeInterface() override { return this; }

@@ -123,6 +123,8 @@ void HttpNode::onHttpHeader(const char* key, const char* val)
         mInCodec = codecFromContentType(val);
         if (utils::haveSpiRam() && (mInCodec == kCodecFlac || mInCodec == kCodecOggTransport)) {
             mPrefillAmount = std::min(512 * 1024, mRingBuf.size() - 1024);
+        } else {
+            mPrefillAmount = 65536;
         }
         ESP_LOGI(TAG, "Parsed content-type '%s' as %s", key, codecTypeToStr(mInCodec));
     } else {

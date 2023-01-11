@@ -24,10 +24,91 @@ void I2sOutputNode::adjustSamplesForInternalDac(char* sBuff, int len)
         (*buf16) += 0x8000;//turn signed value into unsigned, expand negative value into positive range
     }
 }
+void I2sOutputNode::setDacMutePin(uint8_t level)
+{
+    if (kDacMutePin >= 0) {
+        gpio_set_level(kDacMutePin, level);
+        mDacMuted = (level == 0);
+    }
+}
+template<typename T>
+T myRound(float val)
+{
+    return (val < 0) ? val - 0.5f : val + 0.5f;
+}
 
+template <typename S>
+bool I2sOutputNode::rampIn(void* target)
+{
+    typedef S Sample[2];
+    enum {
+        kSampleSize = sizeof(Sample),
+        kDepopSampleCnt = kDepopBufSize / kSampleSize,
+    };
+    auto samples = (Sample*)alloca(kDepopBufSize);
+    auto end = samples + kDepopSampleCnt;
+    float step0 = (float)((*(Sample*)target)[0]) / kDepopSampleCnt;
+    float step1 = (float)((*(Sample*)target)[1]) / kDepopSampleCnt;
+    float val0 = 0; float val1 = 0;
+    for (Sample* sample = samples; sample < end; sample++) {
+        val0 += step0;
+        val1 += step1;
+        (*sample)[0] = myRound<S>(val0);
+        (*sample)[1] = myRound<S>(val1);
+
+        if (end - sample < 20) {
+//          printf("%d, %d\n", (*sample)[0], (*sample)[1]);
+        }
+
+    }
+//  printf("target: %d, %d\n", ((*(Sample*)target)[0]), ((*(Sample*)target)[1]));
+    size_t written = 0;
+    auto err = i2s_write(mPort, samples, kDepopBufSize, &written, portMAX_DELAY);
+    return err == ESP_OK;
+}
+template <typename S>
+bool I2sOutputNode::fadeIn(char* sampleData, int sampleBufSize)
+{
+    typedef S Sample[2];
+    enum {
+        kSampleSize = sizeof(Sample)
+    };
+    auto samples = (Sample*)sampleData;
+    auto end = (Sample*)(sampleData + sampleBufSize);
+    int sampleCnt = sampleBufSize / kSampleSize;
+    float gainIncStep = (float)1 / sampleCnt;
+    float gain = 0.0f;
+    for (Sample* sample = samples; sample < end; sample++) {
+        gain += gainIncStep;
+        (*sample)[0] *= gain;
+        (*sample)[1] *= gain;
+     // printf("%d, %d\n", (*sample)[0], (*sample)[1]);
+    }
+    size_t written = 0;
+    // printf("sending fade: %d\n", sampleBufSize);
+    auto err = i2s_write(mPort, samples, kDepopBufSize, &written, portMAX_DELAY);
+    return err == ESP_OK;
+}
+
+bool I2sOutputNode::sendSilence()
+{
+    enum { kChunkSize = 2048 };
+    auto buf = (char*)alloca(kChunkSize);
+    memset(buf, 0, kChunkSize);
+    buf[0] = 1;
+    int count = 1 + (mDmaBufCount * (1024 * mFormat.bitsPerSample() * 2 / 8) + kChunkSize - 1) / kChunkSize;
+    for (int i = 0; i < count; i++) {
+        size_t written;
+        if (i2s_write(mPort, buf, kChunkSize, &written, portMAX_DELAY) != ESP_OK) {
+            return false;
+        }
+    }
+    return true;
+}
 void I2sOutputNode::nodeThreadFunc()
 {
     for (;;) {
+        muteDac();
         setState(kStateStopped);
         processMessages();
         if (mTerminate) {
@@ -82,7 +163,31 @@ void I2sOutputNode::nodeThreadFunc()
             if (mUseInternalDac) {
                 adjustSamplesForInternalDac(dpr.buf, dpr.size);
             }
+
             size_t written;
+            if (mDacMuted) {
+                ESP_LOGI(mTag, "Sending a bit of silence...");
+                sendSilence();
+                vTaskDelay(1);
+                unMuteDac();
+#if 1
+//              ESP_LOGW(mTag, "sending ramp");
+                if (mFormat.bitsPerSample() <= 16) {
+                    rampIn<int16_t>(dpr.buf);
+                } else {
+                    rampIn<int32_t>(dpr.buf);
+                }
+//              ESP_LOGW(mTag, "ramp sent");
+#else
+                if (mFormat.bitsPerSample() <= 16) {
+                    fadeIn<int16_t>(dpr.buf, dpr.size);
+                } else {
+                    fadeIn<int32_t>(dpr.buf, dpr.size);
+                }
+                mPrev->confirmRead(dpr.size);
+                continue;
+#endif
+            }
             auto espErr = i2s_write(mPort, dpr.buf, dpr.size, &written, portMAX_DELAY);
             mPrev->confirmRead(dpr.size);
             if (espErr != ESP_OK) {
@@ -122,7 +227,8 @@ bool I2sOutputNode::setFormat(StreamFormat fmt)
 
 I2sOutputNode::I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t* pinCfg, uint16_t stackSize,
     uint8_t dmaBufCnt, int8_t cpuCore)
-:AudioNodeWithTask(parent, "node-i2s-out", stackSize, kTaskPriority, cpuCore), mFormat(kDefaultSamplerate, 16, 2)
+:AudioNodeWithTask(parent, "node-i2s-out", stackSize, kTaskPriority, cpuCore),
+  mFormat(kDefaultSamplerate, 16, 2), mDmaBufCount(dmaBufCnt)
 {
     if (port == 0xff) {
         mUseInternalDac = true;
@@ -130,6 +236,13 @@ I2sOutputNode::I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t*
     } else {
         mUseInternalDac = false;
         mPort = (i2s_port_t)port;
+    }
+    if (kDacMutePin != GPIO_NUM_NC) {
+        gpio_pad_select_gpio(kDacMutePin);
+        printf("before\n");
+        gpio_set_direction(kDacMutePin, GPIO_MODE_OUTPUT);
+        printf("after\n");
+        muteDac();
     }
     i2s_config_t cfg = {};
     cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
