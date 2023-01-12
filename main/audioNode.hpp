@@ -144,6 +144,7 @@ public:
     virtual ~AudioNode() {}
     virtual void reset() {}
     virtual bool waitForPrefill() { return true; }
+    virtual const char* peek(int size, char* buf) { return nullptr; }
     void linkToPrev(AudioNode* prev) { mPrev = prev; }
     AudioNode* prev() const { return mPrev; }
     typedef uint8_t StreamId;

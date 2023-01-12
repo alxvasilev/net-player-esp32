@@ -24,23 +24,18 @@ uint32_t fourccLittleEndian(const char* str)
     return *str | (*(str+1) << 8) | (*(str+2) << 16) | (*(str+3) << 24);
 }
 
-AudioNode::StreamError detectOggCodec(AudioNode& src, AudioNode::DataPullReq& info)
+AudioNode::StreamError detectOggCodec(AudioNode& src, CodecType& codec)
 {
     enum { kPrefetchAmount = sizeof(OggPageHeader) + kMaxNumSegments + 10 }; // we need the first ~7 bytes in the segment
-    unique_ptr_mfree<char> buf((char*)utils::mallocTrySpiram(kPrefetchAmount));
-    int nRead = 0;
-    do {
-        AudioNode::DataPullReq dpr(kPrefetchAmount - nRead);
+    char tmpbuf[kPrefetchAmount];
+    auto data = src.peek(kPrefetchAmount, tmpbuf);
+    if (!data) {
+        AudioNode::DataPullReq dpr(kPrefetchAmount); // just read and discard the data to get the event
         auto err = src.pullData(dpr);
-        if (err != AudioNode::kNoError) {
-            return err;
-        }
-        assert(nRead + dpr.size <= kPrefetchAmount);
-        memcpy(buf.get() + nRead, dpr.buf, dpr.size);
-        src.confirmRead(dpr.size);
-        nRead += dpr.size;
-    } while(nRead < kPrefetchAmount);
-    OggPageHeader& hdr = *((OggPageHeader*)buf.get());
+        assert(err != AudioNode::kNoError);
+        return err;
+    }
+    OggPageHeader& hdr = *((OggPageHeader*)data);
     if (hdr.fourCC != fourccLittleEndian("OggS")) {
         ESP_LOGW("OGG", "Fourcc %x doesn't match 'OggS' (%x)", hdr.fourCC, fourccLittleEndian("OggS"));
         return AudioNode::kErrDecode;
@@ -49,16 +44,14 @@ AudioNode::StreamError detectOggCodec(AudioNode& src, AudioNode::DataPullReq& in
         ESP_LOGW("OGG", "More than expected segments in Ogg page: %d", hdr.numSegments);
         return AudioNode::kErrDecode;
     }
-    const char* magic = buf.get() + sizeof(OggPageHeader) + hdr.numSegments + 1;
+    const char* magic = data + sizeof(OggPageHeader) + hdr.numSegments + 1;
     if (strncmp(magic, "FLAC", 4) == 0) {
-        info.codec = kCodecOggFlac;
+        codec = kCodecOggFlac;
     } else if (strncmp(magic, "vorbis", 7) == 0) {
-        info.codec = kCodecOggVorbis;
+        codec = kCodecOggVorbis;
     } else {
         return AudioNode::kErrNoCodec;
     }
-    info.buf = buf.release();
-    info.size = kPrefetchAmount;
     return AudioNode::kNoError;
 }
 

@@ -31,20 +31,14 @@ class DecoderNode: public AudioNode
 protected:
     Decoder* mDecoder = nullptr;
     bool mStartingNewStream = true;
-    char* mStreamHdr = nullptr;
-    int16_t mStreamHdrLen = 0;
-    int16_t mStreamHdrReadPos = 0;
     // odp in case there is a stream event that needs to be propagated
     AudioNode::StreamError detectCodecCreateDecoder(DataPullReq& odp);
-    bool createDecoder(DataPullReq& info);
+    bool createDecoder(CodecType codec);
     static int32_t heapFreeTotal(); // used to  calculate memory usage for codecs
     void deleteDecoder();
-    void freeStreamHdrBuf();
 public:
     enum { kEventCodecChange = AudioNode::kEventLast + 1 };
     DecoderNode(IAudioPipeline& parent): AudioNode(parent, "decoder"){}
-    bool hasPrefetchedData() const { return mStreamHdr != nullptr; }
-    void pullPrefetchedData(char* buf, size_t& size);
     virtual Type type() const { return kTypeDecoder; }
     virtual StreamError pullData(DataPullReq& dpr);
     virtual void confirmRead(int size) {}

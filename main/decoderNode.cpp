@@ -4,7 +4,7 @@
 #include "decoderFlac.hpp"
 #include "detectorOgg.hpp"
 
-bool DecoderNode::createDecoder(AudioNode::DataPullReq& info)
+bool DecoderNode::createDecoder(CodecType codec)
 {
     /* info may contain a buffer with some bytes prefetched from the stream in order to detect the codec,
      * in case it's encapsulated in a transport stream. For example - ogg, where the mime is just audio/ogg. In this case
@@ -13,7 +13,7 @@ bool DecoderNode::createDecoder(AudioNode::DataPullReq& info)
      * buffer. In that case, pullData() will return less than needed
      */
     auto freeBefore = heapFreeTotal();
-    switch (info.codec) {
+    switch (codec) {
     case kCodecMp3:
         mDecoder = new DecoderMp3(*this, *mPrev);
         break;
@@ -32,16 +32,11 @@ bool DecoderNode::createDecoder(AudioNode::DataPullReq& info)
         break;
 */
     default:
-        free(info.buf);
-        info.size = 0;
         return false;
     }
-    mStreamHdr = info.buf;
-    mStreamHdrLen = info.size;
-    mStreamHdrReadPos = 0;
     ESP_LOGI(mTag, "\e[34mCreated %s decoder, approx %d bytes of RAM consumed (%d free internal)",
         codecTypeToStr(mDecoder->codec), freeBefore - heapFreeTotal(), heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-    plSendEvent(kEventCodecChange, info.codec);
+    plSendEvent(kEventCodecChange, codec);
     return true;
 }
 void DecoderNode::deleteDecoder()
@@ -50,32 +45,11 @@ void DecoderNode::deleteDecoder()
     if (!mDecoder) {
         return;
     }
-    freeStreamHdrBuf();
     auto codec = mDecoder->codec;
     auto freeBefore = heapFreeTotal();
     delete mDecoder;
     mDecoder = nullptr;
     ESP_LOGI(mTag, "\e[34mDeleted %s decoder freed %d bytes", codecTypeToStr(codec), heapFreeTotal() - freeBefore);
-}
-void DecoderNode::freeStreamHdrBuf()
-{
-    if (!mStreamHdr) {
-        return;
-    }
-    free(mStreamHdr);
-    mStreamHdr = nullptr;
-    mStreamHdrReadPos = mStreamHdrLen = 0;
-}
-void DecoderNode::pullPrefetchedData(char* buf, size_t& size)
-{
-    assert(mStreamHdr);
-    size = std::min(mStreamHdrLen - mStreamHdrReadPos, (int)size);
-    assert(size);
-    memcpy(buf, mStreamHdr + mStreamHdrReadPos, size);
-    mStreamHdrReadPos += size;
-    if (mStreamHdrReadPos >= mStreamHdrLen) {
-        freeStreamHdrBuf();
-    }
 }
 AudioNode::StreamError DecoderNode::detectCodecCreateDecoder(AudioNode::DataPullReq& odp)
 {
@@ -87,13 +61,13 @@ AudioNode::StreamError DecoderNode::detectCodecCreateDecoder(AudioNode::DataPull
     assert(!odp.buf && !odp.size);
     if (odp.codec == kCodecOggTransport) {
         // allocates a buffer in odp and fetches some stream bytes in it
-        auto err = detectOggCodec(*mPrev, odp);
+        auto err = detectOggCodec(*mPrev, odp.codec);
         if (err != kNoError) {
             ESP_LOGW(mTag, "Error %s detecting ogg-encapsulated codec", streamEventToStr(err));
             return err;
         }
     }
-    bool ok = createDecoder(odp);
+    bool ok = createDecoder(odp.codec);
     return ok ? kNoError : kErrNoCodec;
 }
 

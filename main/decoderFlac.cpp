@@ -41,10 +41,6 @@ FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *dec
     auto& self = *static_cast<DecoderFlac*>(userp);
     assert(self.mDprPtr);
     auto& dpr = *self.mDprPtr;
-    if (self.mParent.hasPrefetchedData()) {
-        self.mParent.pullPrefetchedData((char*)buffer, *bytes);
-        return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
-    }
     dpr.size = *bytes;
     auto event = self.mLastStreamEvent = self.mSrcNode.pullData(dpr);
     if (event == AudioNode::kNoError) {

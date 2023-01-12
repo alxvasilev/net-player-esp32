@@ -121,6 +121,7 @@ public:
     virtual void confirmRead(int size);
     virtual void onStopped() override { recordingCancelCurrent(); }
     virtual bool waitForPrefill() override;
+    virtual const char* peek(int len, char* buf) override;
     void setUrl(UrlInfo* urlInfo);
     bool isConnected() const;
     void setWaitingPrefill(int amout); // locking required

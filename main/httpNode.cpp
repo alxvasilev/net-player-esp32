@@ -509,6 +509,34 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
     dp.size = ret;
     return kNoError;
 }
+const char* HttpNode::peek(int len, char* buf)
+{
+    LOCK();
+    while (mRingBuf.dataSize() < len) {
+        MutexUnlocker unlocker(mMutex);
+        if (mRingBuf.waitForData(-1) <= 0) {
+            return nullptr;
+        }
+    }
+    if (!mStreamEventQueue.empty()) {
+        bool hasEvent = false;
+        mStreamEventQueue.iterate([this, &hasEvent, len](const QueuedStreamEvent& event) {
+            auto eventPos = event.streamPos;
+            auto readPos = mRxByteCtr - mRingBuf.dataSize();
+            if (eventPos < readPos + len) {
+                if (event.type == kTitleChanged) {
+                    return true; // skip
+                }
+                hasEvent = true;
+            }
+            return false;
+        });
+        if (hasEvent) {
+            return nullptr;
+        }
+    }
+    return mRingBuf.peek(len, buf, 0);
+}
 
 AudioNode::StreamError HttpNode::dequeueStreamEvent(DataPullReq& dp)
 {
