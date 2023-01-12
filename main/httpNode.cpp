@@ -75,7 +75,7 @@ void HttpNode::doSetUrl(UrlInfo* urlInfo)
         esp_http_client_set_url(mClient, urlInfo->url); // do it here to avoid keeping reference to the old, freed one
     }
     mUrlInfo.reset(urlInfo);
-    setWaitingPrefill(true);
+    setWaitingPrefill(0);
 }
 void HttpNode::updateUrl(const char* url)
 {
@@ -120,12 +120,6 @@ void HttpNode::onHttpHeader(const char* key, const char* val)
 {
     if (strcasecmp(key, "Content-Type") == 0) {
         mInCodec = codecFromContentType(val);
-        if (utils::haveSpiRam() && (mInCodec == kCodecFlac || mInCodec == kCodecOggTransport)) {
-            mPrefillAmount = std::min(512 * 1024, mRingBuf.size() - 1024);
-        }
-        else {
-            mPrefillAmount = 65536;
-        }
         ESP_LOGI(TAG, "Parsed content-type '%s' as %s", key, codecTypeToStr(mInCodec));
     }
     else if ((strcasecmp(key, "accept-ranges") == 0) && (strcasecmp(val, "bytes") == 0)) {
@@ -135,7 +129,13 @@ void HttpNode::onHttpHeader(const char* key, const char* val)
         mIcyParser.parseHeader(key, val);
     }
 }
-
+void HttpNode::clearRingBufAndEventQueue()
+{
+    ESP_LOGI(TAG, "Clearing ring buffer and event queue");
+    mRingBuf.clear();
+    mStreamEventQueue.clear();
+    mSpeedProbe.reset();
+}
 bool HttpNode::connect(bool isReconnect)
 {
     if (state() != kStateRunning) {
@@ -151,11 +151,8 @@ bool HttpNode::connect(bool isReconnect)
         LOCK();
         if (!isReconnect) {
             mAcceptsRangeRequests = false;
-            ESP_LOGI(TAG, "Clearing ring buffer and event queue");
-            mRingBuf.clear();
-            mStreamEventQueue.clear();
+            clearRingBufAndEventQueue(); // clear in case of hard reconnect
             mStreamStartPos = mRxByteCtr; // mStreamStartPos is read in pullData()
-            mSpeedProbe.reset();
         }
         recordingMaybeEnable();
     }
@@ -177,7 +174,7 @@ bool HttpNode::connect(bool isReconnect)
     }
     plSendEvent(kEventConnecting, isReconnect);
 
-    for (int tries = 0; tries < 26; tries++) {
+    for (int tries = 0; tries < 10; tries++) {
         auto err = esp_http_client_open(mClient, 0);
         if (err != ESP_OK) {
             int msDelay = delayFromRetryCnt(tries);
@@ -348,9 +345,9 @@ bool HttpNode::recv()
         }
         auto ringBufDataSize = mRingBuf.dataSize();
         ESP_LOGD(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, ringBufDataSize);
-        if (mWaitingPrefill && (ringBufDataSize >= mPrefillAmount)) {
-            ESP_LOGI(mTag, "Buffer prefilled >= %d bytes, allowing read", mPrefillAmount);
-            setWaitingPrefill(false);
+        if (mWaitingPrefill && (ringBufDataSize >= mWaitingPrefill)) {
+            ESP_LOGI(mTag, "Buffer prefilled >= %d bytes, allowing read", mWaitingPrefill);
+            setWaitingPrefill(0);
             plSendEvent(kEventPlaying);
         }
         return true;
@@ -380,12 +377,10 @@ uint32_t HttpNode::pollSpeed() const
 void HttpNode::setUrl(UrlInfo* urlInfo)
 {
     if (!mTaskId) {
-        doSetUrl(urlInfo);
         run();
-    } else {
-        ESP_LOGI(mTag, "Posting setUrl command");
-        mCmdQueue.post(kCommandSetUrl, urlInfo);
     }
+    ESP_LOGI(mTag, "Posting setUrl command");
+    mCmdQueue.post(kCommandSetUrl, urlInfo);
 }
 
 void HttpNode::onStopRequest()
@@ -402,6 +397,10 @@ bool HttpNode::dispatchCommand(Command &cmd)
     case kCommandSetUrl: {
         destroyClient();
         doSetUrl((UrlInfo*)cmd.arg);
+        // must be cleared before going into kStateRunning because player will start the output node
+        // which will start reading from us. Before we had a prefill set here, which guaranteed some delay
+        // to clear the ringbuf in connect(). Now we don't have to wait prefill for the first audio packet
+        clearRingBufAndEventQueue();
         cmd.arg = nullptr;
         setState(kStateRunning);
         break;
@@ -424,7 +423,7 @@ void HttpNode::nodeThreadFunc()
         myassert(mState == kStateRunning);
         if (!isConnected()) {
             if (!connect()) {
-                setState(kStateStopped);
+                stop(false);
                 continue;
             } else {
                 ESP_LOGI(TAG, "Buffering...");
@@ -432,7 +431,7 @@ void HttpNode::nodeThreadFunc()
         }
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
             if (!recv()) { // returns false on error or end of stream
-                setState(kStateStopped);
+                stop(false);
                 break;
             }
         }
@@ -445,9 +444,9 @@ HttpNode::~HttpNode()
     destroyClient();
 }
 
-HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize, int prefill)
+HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize)
     : AudioNodeWithTask(parent, "node-http", kStackSize, 5, 1), mRingBuf(bufSize, utils::haveSpiRam()),
-      mPrefillAmount(prefill), mIcyParser(mMutex)
+    mIcyParser(mMutex)
 {
 }
 
@@ -466,12 +465,10 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
 {
     if (mWaitingPrefill) {
         ESP_LOGI(TAG, "Waiting ringbuf prefill...");
-        do {
-            if (!waitPrefillChange()) {
-                dp.clear();
-                return kStreamStopped;
-            }
-        } while(mWaitingPrefill);
+        if (!waitForPrefill()) {
+            dp.clear();
+            return kStreamStopped;
+        }
     }
     LOCK(); // we may have been pre-filled, but cleared just before the lock, so check once again after locking
     auto dataSize = mRingBuf.dataSize();
@@ -554,21 +551,29 @@ void HttpNode::confirmRead(int size)
     mRingBuf.commitContigRead(size);
 }
 
-void HttpNode::setWaitingPrefill(bool prefill)
+void HttpNode::setWaitingPrefill(int amount)
 {
-    mWaitingPrefill = prefill;
+    if (amount && mRingBuf.dataSize() >= amount) {
+        return;
+    }
+    if (amount) {
+        ESP_LOGI(TAG, "Setting required buffer prefill to %d bytes", amount);
+    }
+    mWaitingPrefill = amount;
     mEvents.setBits(kEvtPrefillChange);
 }
 
-bool HttpNode::waitPrefillChange()
+bool HttpNode::waitForPrefill()
 {
-    auto bits = mEvents.waitForOneAndReset(kEvtPrefillChange|kEvtStopRequest, -1);
-    if (bits & kEvtStopRequest) {
-        return false;
-    } else {
-        myassert(bits & kEvtPrefillChange);
-        return true;
+    while (mWaitingPrefill) {
+        auto bits = mEvents.waitForOneAndReset(kEvtPrefillChange|kEvtStopRequest, -1);
+        if (bits & kEvtStopRequest) {
+            return false;
+        } else {
+            myassert(bits & kEvtPrefillChange);
+        }
     }
+    return true;
 }
 
 bool HttpNode::recordingMaybeEnable() {
@@ -612,13 +617,7 @@ bool HttpNode::recordingIsEnabled() const
     return mRecorder.get() != nullptr;
 }
 
-int HttpNode::delayFromRetryCnt(int tries) {
-    if (tries < 4) {
-        return 0;
-    }
-    if (tries < 10) {
-        return tries * 100;
-    }
-    int delay = tries * 1000;
-    return (delay <= 10000) ? delay : 10000;
+int HttpNode::delayFromRetryCnt(int tries)
+{
+    return (tries < 2) ? 0 : tries * 1000;
 }

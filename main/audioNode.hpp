@@ -80,13 +80,13 @@ public:
     bool isStereo() const { return mNumChannels != 0; }
     void setNumChannels(uint8_t ch) { mNumChannels = ch - 1; }
 };
-const char* codecTypeToStr(CodecType type);
+const char* codecTypeToStr(CodecType type, uint16_t mode=0);
 
 class AudioNode;
 
 class IAudioPipeline {
 public:
-    virtual void onNodeEvent(AudioNode& node, uint32_t type, size_t numArg, uintptr_t arg) = 0;
+    virtual bool onNodeEvent(AudioNode& node, uint32_t type, size_t numArg, uintptr_t arg) = 0;
     virtual void onNodeError(AudioNode& node, int error) = 0;
 };
 
@@ -107,7 +107,7 @@ public:
         kErrDecode,
         kErrStreamFmt
     };
-    enum { kEventStreamError = 1, kEventAudioFormatChange = 2, kEventLast = kEventAudioFormatChange };
+    enum { kEventStreamError = 1, kEventAudioFormatChange, kEventNewStream, kEventLast = kEventNewStream };
     // we put here the state definitions only because the class name is shorter than AudioNodeWithTask
     enum State: uint8_t {
         kStateTerminated = 1, kStateStopped = 2,
@@ -135,7 +135,7 @@ protected:
     const char* mTag;
     Mutex mMutex;
     AudioNode* mPrev = nullptr;
-    inline void plSendEvent(uint32_t type, size_t numArg = 0, uintptr_t arg=0);
+    inline bool plSendEvent(uint32_t type, size_t numArg = 0, uintptr_t arg=0);
     inline void plNotifyError(int error);
     AudioNode(IAudioPipeline& parent, const char* tag): mPipeline(parent), mTag(tag) {}
 public:
@@ -143,6 +143,7 @@ public:
     virtual IAudioVolume* volumeInterface() { return nullptr; }
     virtual ~AudioNode() {}
     virtual void reset() {}
+    virtual bool waitForPrefill() { return true; }
     void linkToPrev(AudioNode* prev) { mPrev = prev; }
     AudioNode* prev() const { return mPrev; }
     typedef uint8_t StreamId;
@@ -203,7 +204,7 @@ protected:
     virtual void onStopped() {}
 public:
     AudioNodeWithState(IAudioPipeline& parent, const char* tag)
-    : AudioNode(parent, tag), mState(kStateTerminated) {
+    : AudioNode(parent, tag), mEvents(kEvtStopRequest), mState(kStateTerminated) {
         mEvents.setBits(kStateTerminated);
     }
     State state() const { return mState; }
@@ -256,9 +257,9 @@ public:
     virtual void terminate(bool wait=true) override;
 };
 
-inline void AudioNode::plSendEvent(uint32_t type, size_t numArg, uintptr_t arg)
+inline bool AudioNode::plSendEvent(uint32_t type, size_t numArg, uintptr_t arg)
 {
-    mPipeline.onNodeEvent(*this, type, numArg, arg);
+    return mPipeline.onNodeEvent(*this, type, numArg, arg);
 }
 
 inline void AudioNode::plNotifyError(int error)

@@ -154,10 +154,10 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         HttpNode* http;
         if (utils::haveSpiRam()) {
             ESP_LOGI(TAG, "Allocating %d bytes in SPIRAM for http buffer", kHttpBufSizeSpiRam);
-            http = new HttpNode(*this, kHttpBufSizeSpiRam, kHttpBufPrefillSpiRam);
+            http = new HttpNode(*this, kHttpBufSizeSpiRam);
         } else {
-            ESP_LOGI(TAG, "Allocating %d bytes internal RAM for http buffer", kHttpBufSizeSpiRam);
-            http = new HttpNode(*this, kHttpBufSizeInternal, kHttpBufSizeInternal * 3 / 4);
+            ESP_LOGI(TAG, "Allocating %d bytes internal RAM for http buffer", kHttpBufSizeInternal);
+            http = new HttpNode(*this, kHttpBufSizeInternal);
         }
         mStreamIn.reset(http);
 
@@ -980,8 +980,9 @@ void AudioPlayer::onNodeError(AudioNode& node, int error)
     });
 }
 
-void AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, uintptr_t arg)
+bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, uintptr_t arg)
 {
+    // For most of the events, we do an asyncCall to access the player, to avoid deadlocks
     if (node.type() == AudioNode::kTypeHttpIn) {
         // We are in the http node's thread, must not do any locking from here, so we call
         // into the player via async messages
@@ -1008,24 +1009,17 @@ void AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
         }
     }
     else if (&node == mDecoder.get()) {
-        if (event == DecoderNode::kEventCodecChange) {
-            asyncCall([this, numArg]() {
-                LOCK_PLAYER();
-                lcdUpdateCodec((CodecType)numArg);
-            });
+        if (event == DecoderNode::kEventNewStream) {
+            // Must be synchronous as the caller expects prefill to be set upon return
+            LOCK_PLAYER();
+            onNewStream((CodecType)(numArg & 0xff), numArg >> 8, StreamFormat(arg));
         }
     }
     else if (&node == mStreamOut.get()) {
-        if (event == AudioNode::kEventAudioFormatChange) {
-            asyncCall([this, numArg]() {
-                LOCK_PLAYER();
-                lcdUpdateAudioFormat(StreamFormat(numArg));
-            });
-        }
-        else if (event == AudioNode::kEventStreamError) {
+        if (event == AudioNode::kEventStreamError) {
             asyncCall([this, numArg, arg]() {
                 const char* errName = AudioNode::streamEventToStr((AudioNode::StreamError)numArg);
-                if (arg != mStreamSeqNo) {
+                if (arg && arg != mStreamSeqNo) {
                     ESP_LOGW(TAG, "Discarding stream error %s from output node, streamId is old (got %d, expected %d)", errName, arg, mStreamSeqNo);
                 }
                 else {
@@ -1035,6 +1029,7 @@ void AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
             });
         }
     }
+    return true;
 }
 
 void AudioPlayer::lcdTimedDrawTask(void* ctx)
@@ -1153,13 +1148,42 @@ void AudioPlayer::lcdWriteStreamInfo(int8_t charOfs, const char* str)
     mLcd.gotoXY(x, mVuDisplay.yTop() - kStreamInfoFont.height - 2);
     mLcd.puts(str);
 }
-void AudioPlayer::lcdUpdateCodec(CodecType codec)
+void AudioPlayer::onNewStream(CodecType codec, uint16_t codecMode, StreamFormat fmt)
+{
+    lcdUpdateCodec(codec, codecMode);
+    lcdUpdateAudioFormat(fmt);
+    int prefill;
+    if (!utils::haveSpiRam()) {
+        prefill = kHttpBufSizeInternal - 1024;
+        mBufLowThreshold = (codec == kCodecFlac || codec == kCodecOggFlac) ? 64 * 1024 : 32 * 1024;
+    }
+    else if (codec == kCodecFlac || codec == kCodecOggFlac) {
+        if (fmt.sampleRate() <= 44000) {
+            prefill = 400 * 1024;
+            mBufLowThreshold = 100 * 1024;
+        } else {
+            prefill = 800 * 1024;
+            mBufLowThreshold = 200 * 1024;
+        }
+    } else {
+        prefill = 65536;
+        mBufLowThreshold = 32768;
+    }
+    mBufLowDisplayGradient = (mBufLowThreshold + 46) / 47;
+    if (mStreamIn && mStreamIn->type() == AudioNode::kTypeHttpIn) {
+        auto& http = *static_cast<HttpNode*>(mStreamIn.get());
+        MutexUnlocker unlocker(mutex);
+        MutexLocker locker(http.mMutex);
+        http.setWaitingPrefill(prefill);
+    }
+}
+void AudioPlayer::lcdUpdateCodec(CodecType codec, uint16_t codecMode)
 {
     enum { kMaxLen = 8 };
     char buf[kMaxLen + 1];
     char* wptr = buf;
     const char* end = buf + kMaxLen;
-    const char* name = codecTypeToStr(codec);
+    const char* name = codecTypeToStr(codec, codecMode);
     do {
         *(wptr++) = *(name++);
     } while (*name && wptr < end);
@@ -1173,8 +1197,8 @@ void AudioPlayer::lcdUpdateCodec(CodecType codec)
 void AudioPlayer::lcdUpdateAudioFormat(StreamFormat fmt)
 {
     char buf[32];
-    auto end = vtsnprintf(buf, sizeof(buf), fmt.sampleRate() / 1000, '.', (fmt.sampleRate() % 1000 + 50) / 100,
-        "kHz/", fmt.bitsPerSample(), "-bit");
+    auto end = vtsnprintf(buf, sizeof(buf), fmtInt(fmt.sampleRate() / 1000, 0, 3),
+        '.', (fmt.sampleRate() % 1000 + 50) / 100, "kHz/", fmt.bitsPerSample(), "-bit");
     lcdWriteStreamInfo(-(end-buf), buf);
 }
 void AudioPlayer::lcdUpdateNetSpeed()
@@ -1193,7 +1217,6 @@ void AudioPlayer::lcdUpdateNetSpeed()
         bufDataSize = http.bufferedDataSize();
     }
     else {
-        printf("timer=%d\n", mDisplayedBufUnderrunTimer);
         bufDataSize = (--mDisplayedBufUnderrunTimer) ? 0 : http.bufferedDataSize();
     }
     mLastShownNetSpeed = speed;
@@ -1211,12 +1234,12 @@ void AudioPlayer::lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize)
     auto end = vtsnprintf(buf, sizeof(buf), fmtInt(whole, 0, 4), '.', dec, "K/s");
     uint16_t color;
     printf("buf: %u\n", bufDataSize);
-    if (bufDataSize >= 128 * 1024) {
+    if (bufDataSize >= mBufLowThreshold) {
         color = kLcdColorNetSpeed_Normal;
     } else if (bufDataSize == 0) {
         color = kLcdColorNetSpeed_Underrun;
     } else {
-        uint8_t green = 16 + bufDataSize / 2780;
+        uint8_t green = 16 + bufDataSize / mBufLowDisplayGradient;
         assert(green < 64);
         printf("buf: %u, green=%d\n", bufDataSize, green);
         color = mLcd.rgb(255, green << 2, 128);

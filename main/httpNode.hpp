@@ -68,12 +68,11 @@ protected:
     StaticQueue<QueuedStreamEvent, 6> mStreamEventQueue;
     int64_t mRxByteCtr = 0;
     int64_t mStreamStartPos = 0;
-    int mPrefillAmount;
     int mContentLen;
     IcyParser mIcyParser;
     std::unique_ptr<TrackRecorder> mRecorder;
     bool mAcceptsRangeRequests = false;
-    volatile bool mWaitingPrefill = true;
+    volatile int mWaitingPrefill = 0;
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     static CodecType codecFromContentType(const char* content_type);
     void onHttpHeader(const char* key, const char* val);
@@ -84,6 +83,7 @@ protected:
     int8_t handleResponseAsPlaylist(int32_t contentLen);
     void doSetUrl(UrlInfo* urlInfo);
     void updateUrl(const char* url);
+    void clearRingBufAndEventQueue();
     bool connect(bool isReconnect=false);
     void disconnect();
     void destroyClient();
@@ -92,8 +92,6 @@ protected:
     bool postStreamEvent_Lock(int64_t streamPos, StreamError event, Args... args);
     template <typename... Args>
     bool postStreamEvent_NoLock(int64_t streamPos, StreamError event, Args... args);
-    void setWaitingPrefill(bool prefill);
-    bool waitPrefillChange();
     StreamError dequeueStreamEvent(DataPullReq& dp);
     int delayFromRetryCnt(int tries);
     void nodeThreadFunc();
@@ -116,14 +114,16 @@ public:
     };
     mutable Mutex mMutex;
     IcyInfo& icyInfo() { return mIcyParser; }
-    HttpNode(IAudioPipeline& parent, size_t bufSize, int prefill);
+    HttpNode(IAudioPipeline& parent, size_t bufSize);
     virtual ~HttpNode();
     virtual Type type() const { return kTypeHttpIn; }
     virtual StreamError pullData(DataPullReq &dp);
     virtual void confirmRead(int size);
     virtual void onStopped() override { recordingCancelCurrent(); }
+    virtual bool waitForPrefill() override;
     void setUrl(UrlInfo* urlInfo);
     bool isConnected() const;
+    void setWaitingPrefill(int amout); // locking required
     const char* trackName() const;
     bool recordingIsActive() const;
     bool recordingIsEnabled() const;

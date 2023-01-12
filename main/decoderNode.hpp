@@ -10,6 +10,7 @@ protected:
     AudioNode& mSrcNode;
 public:
     StreamFormat outputFormat;
+    uint16_t mode = 0;
     CodecType codec;
     Decoder(DecoderNode& parent, AudioNode& src, CodecType aCodec)
     : mParent(parent), mSrcNode(src), codec(aCodec) {}
@@ -29,6 +30,7 @@ class DecoderNode: public AudioNode
 {
 protected:
     Decoder* mDecoder = nullptr;
+    bool mStartingNewStream = true;
     char* mStreamHdr = nullptr;
     int16_t mStreamHdrLen = 0;
     int16_t mStreamHdrReadPos = 0;

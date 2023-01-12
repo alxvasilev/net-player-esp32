@@ -123,8 +123,10 @@ void DecoderAac::getStreamFormat()
     outputFormat.setNumChannels(info.nChans);
     outputFormat.setBitsPerSample(16);
     mOutputLen = info.outputSamps * sizeof(uint16_t);
+    mode = (info.sampRateOut != info.sampRateCore) ? 1 : 0;
+
     ESP_LOGW(TAG, "AAC%s 16-bit %s, %d Hz, %d bps, %d samples/frame",
-        info.sampRateOut == info.sampRateCore ? "" : " SBR",
+        mode ? " SBR" : "",
         info.nChans == 2 ? "stereo" : "mono", info.sampRateOut,
         info.bitRate, info.outputSamps);
 }

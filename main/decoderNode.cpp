@@ -46,6 +46,7 @@ bool DecoderNode::createDecoder(AudioNode::DataPullReq& info)
 }
 void DecoderNode::deleteDecoder()
 {
+    mStartingNewStream = true;
     if (!mDecoder) {
         return;
     }
@@ -113,6 +114,13 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
         odp.size = 0;
         auto err = mDecoder->pullData(odp);
         if (!err) {
+            if (mStartingNewStream) {
+                mStartingNewStream = false;
+                plSendEvent(kEventNewStream, mDecoder->codec | (mDecoder->mode << 16), odp.fmt.asCode());
+                if (!mPrev->waitForPrefill()) {
+                    return kStreamStopped;
+                }
+            }
             return kNoError;
         }
         if (odp.size) {
@@ -122,6 +130,7 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
             if (odp.codec == mDecoder->codec) {
                 ESP_LOGI(mTag, "Stream changed, but codec is the same, resetting %s decoder", codecTypeToStr(mDecoder->codec));
                 mDecoder->reset();
+                mStartingNewStream = true;
             } else {
                 deleteDecoder();
             }

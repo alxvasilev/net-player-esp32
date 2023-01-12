@@ -82,6 +82,8 @@ protected:
     unique_ptr_mfree<TrackInfo> mTrackInfo;
     uint32_t mStreamSeqNo = 0;
     PlayerMode mPlayerMode;
+    int mBufLowThreshold = 0;
+    uint16_t mBufLowDisplayGradient = 0;
 // general display stuff
     ST7735Display::Color mFontColor = ST7735Display::rgb(255, 255, 128);
     VuDisplay mVuDisplay;
@@ -113,6 +115,8 @@ protected:
     void createDlnaHandler();
     void setPlayerMode(PlayerMode mode);
     void pipelineStop();
+    void onNewStream(CodecType codec, uint16_t codecMode, StreamFormat fmt);
+    // GUI stuff
     void lcdInit();
     void lcdDrawGui();
     void initTimedDrawTask();
@@ -125,8 +129,9 @@ protected:
     void lcdUpdateTrackDisplay();
     // stream info line
     void lcdWriteStreamInfo(int8_t charOfs, const char* str);
-    void lcdUpdateCodec(CodecType codec);
+    void lcdUpdateCodec(CodecType codec, uint16_t codecMode);
     void lcdUpdateAudioFormat(StreamFormat fmt);
+    // net speed stuff
     void lcdUpdateNetSpeed();
     void lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize);
     void lcdResetNetSpeedIndication();
@@ -178,7 +183,7 @@ public:
     bool equalizerSetGainsBulk(char* str, size_t len);
     void registerUrlHanlers();
     // AudioNode::EventHandler interface
-    virtual void onNodeEvent(AudioNode& node, uint32_t type, size_t numArg, uintptr_t arg) override;
+    virtual bool onNodeEvent(AudioNode& node, uint32_t type, size_t numArg, uintptr_t arg) override;
     virtual void onNodeError(AudioNode& node, int error) override;
 };
 

@@ -83,7 +83,7 @@ bool AudioNodeWithTask::run()
         MutexLocker locker(mMutex);
         auto currState = state();
         if (currState == kStateRunning) {
-            ESP_LOGI(mTag, "run: Already running");
+            ESP_LOGD(mTag, "run: Already running");
             return true;
         }
         else if (currState == kStateTerminated) {
@@ -104,7 +104,7 @@ void AudioNodeWithTask::stop(bool wait)
         MutexLocker locker(mMutex);
         auto currState = state();
         if (currState == kStateTerminated || currState == kStateStopped) {
-            ESP_LOGI(mTag, "stop: Already %s", stateToStr(currState));
+            ESP_LOGD(mTag, "stop: Already %s", stateToStr(currState));
             return;
         }
         onStopRequest();
@@ -121,7 +121,7 @@ void AudioNodeWithTask::terminate(bool wait)
     {
         MutexLocker locker(mMutex);
         if (state() == kStateTerminated) {
-            ESP_LOGI(mTag, "terminate: Already terminated");
+            ESP_LOGD(mTag, "terminate: Already terminated");
             return;
         }
         mTerminate = true;
@@ -140,14 +140,14 @@ bool AudioNodeWithTask::dispatchCommand(Command& cmd)
     switch(cmd.opcode) {
     case kCommandRun:
         if (currState == kStateRunning) {
-            ESP_LOGI(mTag, "kCommandRun: Already running");
+            ESP_LOGD(mTag, "kCommandRun: Already running");
         } else {
             setState(kStateRunning);
         }
         break;
     case kCommandStop:
         if (currState == kStateStopped || currState == kStateTerminated) {
-            ESP_LOGI(mTag, "kCommandStop: Already %s", stateToStr(currState));
+            ESP_LOGD(mTag, "kCommandStop: Already %s", stateToStr(currState));
         } else {
             setState(kStateStopped);
         }
@@ -172,17 +172,17 @@ void AudioNodeWithTask::processMessages()
         }
     }
 }
-const char* codecTypeToStr(CodecType type)
+const char* codecTypeToStr(CodecType type, uint16_t mode)
 {
     switch (type) {
         case kCodecMp3: return "mp3";
-        case kCodecAac: return "aac";
+        case kCodecAac: return mode ? "aac(sbr)" : "aac";
         case kCodecOggTransport: return "ogg";
         case kCodecM4a: return "m4a";
         case kCodecFlac: return "flac";
         case kCodecOpus: return "opus";
         case kCodecOggFlac: return "ogg/flac";
-        case kCodecOggVorbis: return "ogg/vobris";
+        case kCodecOggVorbis: return "vorbis";
         case kCodecUnknown: return "none";
         default: return "(unknown)";
     }
