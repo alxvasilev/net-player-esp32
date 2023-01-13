@@ -184,6 +184,10 @@ esp_err_t DlnaHandler::httpDlnaCommandHandler(httpd_req_t* req)
     if (recvLen != contentLen) {
         ESP_LOGW(TAG, "Ctrl command: error receiving postdata: %s",
             recvLen < 0 ? esp_err_to_name(recvLen) : "received less than expected");
+        if (recvLen > 0) {
+            strXml.get()[recvLen] = 0; // just in case
+            ESP_LOGW(TAG, "Start of incomplete postdata: '%.*s'", (std::min(recvLen, 128)), strXml.get());
+        }
         return ESP_FAIL;
     }
     strXml.get()[contentLen] = 0; // null-terminate postdata string
@@ -332,18 +336,28 @@ bool DlnaHandler::handleRenderCtlCommand(httpd_req_t* req, const char* cmd, cons
         if (!strVol) {
             return false;
         }
-        char* endptr = nullptr;
-        int vol = strtol(strVol, &endptr, 10);
-        if (vol == 0) {
-            if (errno || (endptr == strVol)) {
-                ESP_LOGW(TAG, "%s: Invalid volume level integer '%s'", cmd, strVol);
-                return false;
-            }
+        int vol = parseInt(strVol, -1);
+        if (vol < 0) {
+            ESP_LOGW(TAG, "%s: Invalid volume level integer '%s'", cmd, strVol);
+            return false;
         }
         mPlayer.volumeSet(vol);
         return true;
     }
-    return ESP_OK;
+    else if (strcasecmp(cmd, "SetMute") == 0) {
+        auto strMute = xmlGetChildText(cmdNode, "DesiredMute");
+        if (!strMute) {
+            return false;
+        }
+        auto mute = parseInt(strMute, -1);
+        if (mute < 0) {
+            ESP_LOGW(TAG, "%s: Invalid mute value '%s'", cmd, strMute);
+            return false;
+        }
+        mute ? mPlayer.mute() : mPlayer.unmute();
+        return true;
+    }
+    return false;
 }
 bool DlnaHandler::registerHttpHandlers()
 {

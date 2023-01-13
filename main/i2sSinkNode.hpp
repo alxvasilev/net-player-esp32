@@ -44,6 +44,8 @@ public:
     virtual StreamError pullData(DataPullReq& dpr) { return kTimeout; }
     virtual void confirmRead(int amount) {}
     uint32_t positionTenthSec() const;
+    void mute() { muteDac(); }
+    void unmute() { unMuteDac(); }
 };
 
 #endif

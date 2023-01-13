@@ -84,6 +84,7 @@ protected:
     PlayerMode mPlayerMode;
     int mBufLowThreshold = 0;
     uint16_t mBufLowDisplayGradient = 0;
+    int16_t mMuteVolume = -1;
 // general display stuff
     ST7735Display::Color mFontColor = ST7735Display::rgb(255, 255, 128);
     VuDisplay mVuDisplay;
@@ -175,8 +176,11 @@ public:
     uint32_t positionTenthSec() const;
     static bool playerModeIsValid(PlayerMode mode);
     int volumeGet();
-    bool volumeSet(uint16_t vol);
-    uint16_t volumeChange(int step);
+    void volumeSet(uint8_t vol);
+    int volumeChange(int step);
+    bool isMuted() const { return mMuteVolume >= 0; }
+    void mute();
+    void unmute();
     const float *equalizerGains(); // requies player lock while accessing the gains array
     bool equalizerSetBand(int band, float dbGain);
     // format is: bandIdx1=gain1;bandIdx2=gain2....

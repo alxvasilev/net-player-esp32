@@ -39,8 +39,8 @@ public:
     bool volProcessingEnabled() const { return mVolProcessingEnabled; }
     // volume is in percent of original.
     // 0-99% attenuates, 101-400% amplifies  
-    virtual uint16_t getVolume() const = 0;
-    virtual void setVolume(uint16_t vol) = 0;
+    virtual uint8_t getVolume() const = 0;
+    virtual void setVolume(uint8_t vol) = 0;
     const StereoLevels& audioLevels() const { return mAudioLevels; }
     void clearAudioLevels()
     {
@@ -186,12 +186,12 @@ void volumeNotifyLevelCallback()
     mAudioLevelCb(mAudioLevelCbArg);
 }
 public:
-uint16_t getVolume() const
+uint8_t getVolume() const
 {
     return (mVolume * 100 + kVolumeDiv/2) >> kVolumeDivShift;
 }
 
-void setVolume(uint16_t vol)
+void setVolume(uint8_t vol)
 {
     mVolume = ((vol * kVolumeDiv + 50) / 100);
 }

@@ -291,7 +291,7 @@ bool HttpNode::recv()
         if (rlen <= 0) {
             mRingBuf.abortWrite();
             if (rlen == 0) {
-                if (esp_http_client_is_complete_data_received(mClient)) {
+                if (mContentLen && esp_http_client_is_complete_data_received(mClient)) {
                     // transfer complete, post end of stream
                     ESP_LOGI(TAG, "Transfer complete, posting kStreamEnd event (streamId=%d)", mUrlInfo->streamId);
                     postStreamEvent_Lock(mRxByteCtr, kStreamEnd, mUrlInfo->streamId);

@@ -369,8 +369,9 @@ void AudioPlayer::changeInput(PlayerMode playerMode)
 void AudioPlayer::loadSettings()
 {
     if (mVolumeInterface) {
-        mVolumeInterface->setVolume(
-            mNvsHandle.readDefault<uint16_t>("volume", 50));
+        auto vol = mNvsHandle.readDefault<uint8_t>("volume", 15);
+        ESP_LOGI(TAG, "Setting volume to %u", vol);
+        mVolumeInterface->setVolume(vol);
     }
     if (mEqualizer) {
         int8_t gains[10];
@@ -536,40 +537,72 @@ uint32_t AudioPlayer::positionTenthSec() const
     }
     return i2sOut.positionTenthSec();
 }
-bool AudioPlayer::volumeSet(uint16_t vol)
+void AudioPlayer::volumeSet(uint8_t vol)
 {
-    if (!mVolumeInterface) {
-        return false;
+    if (vol > 15) {
+        ESP_LOGW(TAG, "Artificially limiting volume %u to 15", vol);
+        vol = 15;
     }
-    mVolumeInterface->setVolume(vol);
+    if (isMuted() && vol <= mMuteVolume) {
+        mMuteVolume = vol;
+    }
+    else {
+        mMuteVolume = -1;
+        if (mVolumeInterface) {
+            mVolumeInterface->setVolume(vol);
+        }
+    }
     mNvsHandle.write("volume", vol);
-    return true;
 }
 
 int AudioPlayer::volumeGet()
 {
-    if (mVolumeInterface) {
+    if (mMuteVolume >= 0) {
+        return mMuteVolume;
+    }
+    else if (mVolumeInterface) {
         return mVolumeInterface->getVolume();
     }
     return -1;
 }
-
-uint16_t AudioPlayer::volumeChange(int step)
+void AudioPlayer::mute()
 {
-    auto currVol = volumeGet();
-    if (currVol < 0) {
-        return currVol;
+    if (!mVolumeInterface) {
+        return;
     }
-    double newVol = currVol + step;
+    if (mMuteVolume > -1) {
+        ESP_LOGI(TAG, "mute: Already muted");
+        return;
+    }
+    mMuteVolume = mVolumeInterface->getVolume();
+    mVolumeInterface->setVolume(0);
+}
+void AudioPlayer::unmute()
+{
+    if (!mVolumeInterface) {
+        return;
+    }
+    if (mMuteVolume < 0) {
+        ESP_LOGI(TAG, "unmute: Not muted");
+        return;
+    }
+    mVolumeInterface->setVolume(mMuteVolume);
+    mMuteVolume = -1;
+}
+int AudioPlayer::volumeChange(int step)
+{
+    int currVol = volumeGet();
+    if (currVol < 0) {
+        return -1;
+    }
+    int newVol = currVol + step;
     if (newVol < 0) {
         newVol = 0;
     } else if (newVol > 255) {
         newVol = 255;
     }
-    if (fabs(newVol - currVol) > 0.01) {
-        if (!volumeSet(newVol)) {
-            return -1;
-        }
+    if (newVol != currVol) {
+        volumeSet(newVol);
     }
     return newVol;
 }
@@ -1018,6 +1051,7 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
     else if (&node == mStreamOut.get()) {
         if (event == AudioNode::kEventStreamError) {
             asyncCall([this, numArg, arg]() {
+                LOCK_PLAYER();
                 const char* errName = AudioNode::streamEventToStr((AudioNode::StreamError)numArg);
                 if (arg && arg != mStreamSeqNo) {
                     ESP_LOGW(TAG, "Discarding stream error %s from output node, streamId is old (got %d, expected %d)", errName, arg, mStreamSeqNo);
@@ -1158,7 +1192,7 @@ void AudioPlayer::onNewStream(CodecType codec, uint16_t codecMode, StreamFormat 
         mBufLowThreshold = (codec == kCodecFlac || codec == kCodecOggFlac) ? 64 * 1024 : 32 * 1024;
     }
     else if (codec == kCodecFlac || codec == kCodecOggFlac) {
-        if (fmt.sampleRate() <= 44000) {
+        if (fmt.sampleRate() <= 48000) {
             prefill = 400 * 1024;
             mBufLowThreshold = 100 * 1024;
         } else {
