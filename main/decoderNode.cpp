@@ -108,7 +108,6 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
             } else {
                 deleteDecoder();
             }
-            printf("decoderNode: kStreamChanged event with streamId: %u\n", odp.streamId);
         }
         else if (err == kStreamStopped || err == kStreamEnd) {
             deleteDecoder();

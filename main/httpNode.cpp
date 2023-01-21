@@ -169,7 +169,6 @@ bool HttpNode::connect(bool isReconnect)
     if (isReconnect) { // we are resuming, send position
         char strbuf[32];
         vtsnprintf(strbuf, sizeof(strbuf), "bytes=", mRxByteCtr - mStreamStartPos, '-');
-        printf("strbuf='%s'\n", strbuf);
         esp_http_client_set_header(mClient, "Range", strbuf);
     }
     plSendEvent(kEventConnecting, isReconnect);
@@ -306,7 +305,6 @@ bool HttpNode::recv()
             ESP_LOGW(TAG, "Error '%s' receiving http stream, returned rlen: %d", strerror(errno), rlen);
             // even though len == 0 means graceful disconnect, this often happens when
             // network lags and stream sender aborts sending to us => we should reconnect.
-            printf("mContentLen = %d, acceptsRanges = %d\n", mContentLen, mAcceptsRangeRequests);
             int msDelay = delayFromRetryCnt(retries);
             ESP_LOGW(TAG, "Reconnecting in %d ms...", msDelay);
             if (mCmdQueue.waitForMessage(msDelay)) {

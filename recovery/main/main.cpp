@@ -21,6 +21,7 @@
 #include <nvsSimple.hpp>
 #include <nvs_flash.h>
 #include <mdns.hpp>
+#include "rtcSharedMem.hpp"
 
 static constexpr ST7735Display::PinCfg lcdPins = {
     {
@@ -36,13 +37,15 @@ static const char *TAG = "main";
 const char* kDefaultMdnsDomain = "netplayer";
 const int kRxChunkBufSize = 8192;
 const char kPercentCompleteSuffix[] = "% complete";
+esp_ota_handle_t gOtaPreparedHandle; // 0 is an invalid value in the current implementation, but not documented
+bool gOtaPreparedHandleValid = false;
+
 enum {
     kLcdLogFirstLine = 30,
     kLcdOperationTxtY = 186, kLcdProgressPercentTxtY = kLcdOperationTxtY + 31,
     kLcdProgressPercentBarY = kLcdOperationTxtY + 26, kLcdProgressPercentBarHeight = 2
 };
 
-//extern Font font_Camingo32;
 extern Font font_Camingo22;
 ST7735Display lcd(VSPI_HOST);
 NvsSimple nvs;
@@ -50,7 +53,7 @@ std::unique_ptr<WifiBase> wifi;
 http::Server server;
 MDns mdns;
 
-void lcdDrawFlashWriteScreen(const char* msg,  bool displayProgress)
+void lcdDrawFlashWriteScreen(const char* msg, bool displayProgress)
 {
     ESP_LOGW(TAG, "%s", msg);
     lcd.setFont(font_Camingo22);
@@ -98,40 +101,53 @@ const char* setBootPartition(const esp_partition_t* appPartition)
     }
     return nullptr;
 }
-
+esp_err_t openAndEraseOtaPartition(esp_ota_handle_t& otaHandle, size_t imgSize)
+{
+    ElapsedTimer timer;
+    auto partition = esp_ota_get_next_update_partition(NULL);
+    lcdDrawFlashWriteScreen("Erasing partition...", false);
+    esp_err_t err = esp_ota_begin(partition, imgSize, &otaHandle);
+    if (err == ESP_ERR_OTA_ROLLBACK_INVALID_STATE) {
+        ESP_LOGW(TAG, "Invalid OTA state of running app, trying to set it");
+        esp_ota_mark_app_valid_cancel_rollback();
+        err = esp_ota_begin(partition, OTA_SIZE_UNKNOWN, &otaHandle);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Error %s after attempting to fix OTA state of running app, aborting OTA", esp_err_to_name(err));
+            return err;
+        }
+    }
+    else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_begin returned error %s, aborting OTA", esp_err_to_name(err));
+        return err;
+    }
+    ESP_LOGW(TAG, "Erased partition '%s' size %d KB, at offset 0x%x",
+        partition->label, partition->size / 1024, partition->address);
+    ESP_LOGW(TAG, "Erase took %.1f seconds", (float)timer.usElapsed() / 1000000);
+    return ESP_OK;
+}
 /* Receive .bin file */
 esp_err_t httpOta(httpd_req_t *req)
 {
     UrlParams params(req);
-    int contentLen = req->content_len;
-    ESP_LOGW(TAG, "OTA request received, image size: %d",contentLen);
-    const auto update_partition = esp_ota_get_next_update_partition(NULL);
-    esp_ota_handle_t ota_handle;
-    lcdDrawFlashWriteScreen("Erasing partition...", false);
-    esp_err_t err = esp_ota_begin(update_partition, contentLen, &ota_handle);
-    if (err == ESP_ERR_OTA_ROLLBACK_INVALID_STATE) {
-        ESP_LOGW(TAG, "Invalid OTA state of running app, trying to set it");
-        esp_ota_mark_app_valid_cancel_rollback();
-        err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
+    int contentLen = req->content_len; // need an int instead of size_t for arithmetic operations
+    ESP_LOGW(TAG, "OTA request received, image size: %d", contentLen);
+    esp_ota_handle_t otaHandle;
+    if (gOtaPreparedHandleValid) {
+        otaHandle = gOtaPreparedHandle;
+        gOtaPreparedHandleValid = false;
+    } else {
+        esp_err_t err = openAndEraseOtaPartition(otaHandle, contentLen);
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Error %s after attempting to fix OTA state of running app, aborting OTA", esp_err_to_name(err));
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "esp_ota_begin error");
+            char msg[128];
+            snprintf(msg, 127, "esp_ota_begin() error %s", esp_err_to_name(err));
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, msg);
             return ESP_FAIL;
         }
-    } else if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_ota_begin returned error %s, aborting OTA", esp_err_to_name(err));
-        char msg[64];
-        snprintf(msg, 64, "esp_ota_begin() error %s", esp_err_to_name(err));
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, msg);
-        return ESP_FAIL;
     }
-    ESP_LOGW(TAG, "Writing to partition '%s' subtype %d at offset 0x%x",
-        update_partition->label, update_partition->subtype, update_partition->address);
-
     lcdDrawFlashWriteScreen("Flashing firmware...", true);
     char otaBuf[kRxChunkBufSize];
     int totalRx = 0;
-    ESP_LOGI(TAG, "Receiving and flashing image in small chunks...");
+    ESP_LOGI(TAG, "Receiving and flashing image...");
     ElapsedTimer timer;
     while(totalRx < contentLen) {
         int recvLen = httpd_req_recv(req, otaBuf, std::min(contentLen - totalRx, kRxChunkBufSize));
@@ -148,12 +164,12 @@ esp_err_t httpOta(httpd_req_t *req)
             return ESP_FAIL;
         }
         totalRx += recvLen;
-        esp_ota_write(ota_handle, otaBuf, recvLen);
+        esp_ota_write(otaHandle, otaBuf, recvLen);
         lcdUpdateProgress((totalRx * 100 + (contentLen >> 1)) / contentLen);
     }
     ESP_LOGI(TAG, "Flash completed in %.1f seconds", (float)timer.usElapsed() / 1000000);
 
-    err = esp_ota_end(ota_handle);
+    auto err = esp_ota_end(otaHandle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_end error: %s", esp_err_to_name(err));
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "esp_ota_end error");
@@ -258,7 +274,25 @@ const char* connectToWiFi()
     }
     return nullptr;
 }
+bool checkHandleRebootFlags()
+{
+    uint32_t flags = recoveryReadAndInvalidateFlags();
 
+    if (esp_reset_reason() != ESP_RST_SW) {
+        return false;
+    }
+    if (flags == kRecoveryFlagsInvalid) {
+        ESP_LOGI(TAG, "RTC flags: no flags found");
+        return false;
+    }
+    ESP_LOGW(TAG, "Detected application-sent flags: 0x%X", flags);
+    if (flags & kRecoveryFlagEraseImmediately) {
+        auto err = openAndEraseOtaPartition(gOtaPreparedHandle, OTA_SIZE_UNKNOWN);
+        gOtaPreparedHandleValid = (err == ESP_OK);
+        lcdDrawFlashWriteScreen("Waiting for image...", false);
+    }
+    return true;
+}
 extern "C" void app_main(void)
 {
     lcd.init(320, 240, lcdPins);
@@ -268,10 +302,12 @@ extern "C" void app_main(void)
     lcd.putsCentered("Recovery mode\n");
     lcd.setFgColor(255, 255, 255);
     setBootPartition(nullptr);
-    lcd.gotoXY(0, kLcdLogFirstLine);
+
+    checkHandleRebootFlags();
+
     lcd.setFont(Font_7x11);
-    auto err = connectToWiFi();
     lcd.gotoXY(0, kLcdLogFirstLine);
+    auto err = connectToWiFi();
     if (err) {
         lcd.setFgColor(255, 0, 0);
         lcd.puts("WiFi error: ");
@@ -290,10 +326,9 @@ extern "C" void app_main(void)
     }
     mdns.start(mDnsDomain);
     server.start(80, nullptr, 10, kRxChunkBufSize + 4096);
-    char localIp[17];
-    snprintf(localIp, 17, IPSTR, IP2STR(&wifi->localIp()));
-    lcd.puts("Listening on http://");
-    lcd.puts(localIp);
+    char msg[48];
+    snprintf(msg, 47, "Listening on http://" IPSTR, IP2STR(&wifi->localIp()));
+    lcd.putsCentered(msg);
     lcd.newLine();
 
     server.on("/ota", HTTP_POST, httpOta);

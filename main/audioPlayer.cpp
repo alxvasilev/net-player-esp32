@@ -1285,7 +1285,7 @@ void AudioPlayer::lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize)
     }
     auto end = vtsnprintf(buf, sizeof(buf), fmtInt(whole, 0, 4), '.', dec, "K/s");
     uint16_t color;
-    printf("buf: %u\n", bufDataSize);
+    // printf("buf: %u\n", bufDataSize);
     if (bufDataSize >= mBufLowThreshold) {
         color = kLcdColorNetSpeed_Normal;
     } else if (bufDataSize == 0) {
@@ -1293,7 +1293,7 @@ void AudioPlayer::lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize)
     } else {
         uint8_t green = 16 + bufDataSize / mBufLowDisplayGradient;
         assert(green < 64);
-        printf("buf: %u, green=%d\n", bufDataSize, green);
+        // printf("buf: %u, green=%d\n", bufDataSize, green);
         color = mLcd.rgb(255, green << 2, 128);
     }
     mLcd.setFont(kStreamInfoFont);

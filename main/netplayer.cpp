@@ -26,6 +26,7 @@
 #include <nvsSimple.hpp>
 #include <mdns.hpp>
 #include <new>
+#include "../recovery/main/rtcSharedMem.hpp"
 #include "audioPlayer.hpp"
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
@@ -52,6 +53,7 @@ NvsSimple nvsSimple;
 SDCard sdcard;
 NetLogger netLogger(false);
 MDns mdns;
+
 void startWebserver(bool isAp=false);
 
 void configGpios()
@@ -161,12 +163,12 @@ void* operator new(size_t size)
 }
 extern "C" void* my_malloc(size_t size)
 {
-    printf("my_malloc(%zu)\n", size);
+    //printf("my_malloc(%zu)\n", size);
     return utils::mallocTrySpiram(size);
 }
 extern "C" void* my_realloc(void* ptr, size_t size)
 {
-    printf("my_realloc(%zu): isSpi: %d\n", size, utils::isInSpiRam(ptr));
+    //printf("my_realloc(%zu): isSpi: %d\n", size, utils::isInSpiRam(ptr));
     return utils::reallocTrySpiram(ptr, size);
 }
 
@@ -188,6 +190,8 @@ extern "C" void app_main(void)
     lcd.puts("Starting webserver...\n");
     startWebserver();
 //===
+    RTC_SLOW_MEM[123] = 0x12345678;
+    printf("address of RTC variable: %p, val=0x%x\n", &(RTC_SLOW_MEM[0]), RTC_SLOW_MEM[123]);
     lcd.puts("Mounting SDCard...\n");
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };
     sdcard.init(HSPI_HOST, pins, "/sdcard");
@@ -283,6 +287,11 @@ esp_err_t httpReboot(httpd_req_t* req)
         if (err) {
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, err);
             return ESP_FAIL;
+        }
+        int flags = params.intVal("flags", 0);
+        if (flags) {
+            recoveryWriteFlags(flags);
+            ESP_LOGW(TAG, "Sending flags to recovery: 0x%X", flags);
         }
     }
     httpd_resp_sendstr(req, "ok");
