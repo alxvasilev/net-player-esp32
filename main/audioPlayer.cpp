@@ -276,6 +276,7 @@ void AudioPlayer::lcdUpdateStationInfo()
         return;
     }
     lcdUpdateArtistName(station.name());
+    lcdUpdateTrackTitle(nullptr);
 // station flags
     mLcd.setFont(kPictoFont);
     mLcd.cursorY = 0;
@@ -431,9 +432,12 @@ bool AudioPlayer::doPlayUrl(const char* url, PlayerMode playerMode, const char* 
     // whose state may not be set up correctly for the new stream (i.e. waitingPrefill not set)
     http.stop(true);
     mStreamOut->stop(true);
+    if (mVuLevelInterface) {
+        mVuLevelInterface->clearAudioLevels();
+    }
     mDecoder->reset();
     http.setUrl(urlInfo);
-    if (http.waitForState(AudioNode::kStateRunning) != AudioNode::kStateRunning) {
+    if (http.waitForState(AudioNode::kStateRunning, 10000) != AudioNode::kStateRunning) {
         return false;
     }
     lcdUpdateTrackDisplay();
@@ -521,8 +525,8 @@ void AudioPlayer::pause()
 void AudioPlayer::stop()
 {
     pipelineStop();
-    if (mVolumeInterface) {
-        mVolumeInterface->clearAudioLevels();
+    if (mVuLevelInterface) {
+        mVuLevelInterface->clearAudioLevels();
     }
     lcdUpdatePlayState("[ Stopped ]");
 }
@@ -1119,20 +1123,22 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
 
 void AudioPlayer::lcdUpdateTrackTitle(const char* buf)
 {
-    size_t len;
-    if (!buf || !(len = strlen(buf))) {
+    if (!buf || !buf[0]) {
+        mTitleScrollEnabled = false;
+        mLcdTrackTitle.clear();
         lcdSetupForTrackTitle();
         mLcd.clear(mLcd.cursorX, mLcd.cursorY, mLcd.width(), mLcd.fontHeight());
-        mTitleScrollEnabled = -1; // hard disable
         return;
     }
+
+    size_t len = strlen(buf);
     mLcdTrackTitle.reserve(len + 4);
     mLcdTrackTitle.assign(buf, len);
     mLcdTrackTitle.append(" * ", 4);
     mTitleScrollCharOffset = mTitleScrollPixOffset = 0;
-    mTitleScrollEnabled = 0; // will be enabled when the audio format is detected, if it's not too heavy
     lcdSetupForTrackTitle();
     mLcd.puts(mLcdTrackTitle.buf(), mLcd.kFlagNoAutoNewline | mLcd.kFlagAllowPartial);
+    mTitleScrollEnabled = !streamIsCpuHeavy();
 }
 
 void AudioPlayer::lcdSetupForTrackTitle()
@@ -1187,8 +1193,12 @@ void AudioPlayer::lcdWriteStreamInfo(int8_t charOfs, const char* str)
 }
 void AudioPlayer::onNewStream(CodecType codec, uint16_t codecMode, StreamFormat fmt)
 {
+    mStreamFormat = fmt;
+    mCodec = codec;
     lcdUpdateCodec(codec, codecMode);
     lcdUpdateAudioFormat(fmt);
+
+    mTitleScrollEnabled = mLcdTrackTitle.dataSize() && !streamIsCpuHeavy();
     bool isFlac = (codec == kCodecFlac || codec == kCodecOggFlac);
     int prefill;
     if (!utils::haveSpiRam()) {
@@ -1214,10 +1224,10 @@ void AudioPlayer::onNewStream(CodecType codec, uint16_t codecMode, StreamFormat 
         MutexLocker locker(http.mMutex);
         http.setWaitingPrefill(prefill);
     }
-    if (mTitleScrollEnabled == 0 && (fmt.sampleRate() < 90000 && fmt.bitsPerSample() < 24)) {
-        // disable title scroll for very heavy audio files to save some CPU resources
-        mTitleScrollEnabled = 1;
-    }
+}
+bool AudioPlayer::streamIsCpuHeavy() const
+{
+    return mStreamFormat.sampleRate() > 90000 && mStreamFormat.bitsPerSample() >= 24;
 }
 void AudioPlayer::lcdUpdateCodec(CodecType codec, uint16_t codecMode)
 {

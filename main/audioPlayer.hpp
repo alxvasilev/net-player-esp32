@@ -94,10 +94,12 @@ protected:
     DynBuffer mLcdTrackTitle;
     int16_t mTitleScrollCharOffset = 0;
     int8_t mTitleScrollPixOffset = 0;
-    int8_t mTitleScrollEnabled = -1; // -1: hard disable, 0: decide from cpu load, 1: enable
+    bool mTitleScrollEnabled = false;
     uint32_t mLastShownNetSpeed = 0xffffffff;
     uint8_t mLatchedBufUnderrunState = 0xff;
     uint8_t mDisplayedBufUnderrunTimer = 0;
+    uint8_t mCodec = kCodecUnknown;
+    StreamFormat mStreamFormat;
     static void audioLevelCb(void* ctx);
 //====
     static void lcdTimedDrawTask(void* ctx);
@@ -118,6 +120,7 @@ protected:
     void setPlayerMode(PlayerMode mode);
     void pipelineStop();
     void onNewStream(CodecType codec, uint16_t codecMode, StreamFormat fmt);
+    bool streamIsCpuHeavy() const;
     // GUI stuff
     void lcdInit();
     void lcdDrawGui();

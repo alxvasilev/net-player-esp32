@@ -401,6 +401,7 @@ bool HttpNode::dispatchCommand(Command &cmd)
         // which will start reading from us. Before we had a prefill set here, which guaranteed some delay
         // to clear the ringbuf in connect(). Now we don't have to wait prefill for the first audio packet
         clearRingBufAndEventQueue();
+        mRingBuf.clearStopSignal();
         cmd.arg = nullptr;
         setState(kStateRunning);
         break;
@@ -445,8 +446,8 @@ HttpNode::~HttpNode()
 }
 
 HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize)
-    : AudioNodeWithTask(parent, "node-http", kStackSize, 5, 1), mRingBuf(bufSize, utils::haveSpiRam()),
-    mIcyParser(mMutex)
+    : AudioNodeWithTask(parent, "node-http", kStackSize, 5, 1),
+      mRingBuf(bufSize, utils::haveSpiRam()), mIcyParser(mMutex)
 {
 }
 
@@ -460,13 +461,22 @@ void HttpNode::setUnderrunState(bool newState)
         plSendEvent(kEventBufState);
     }
 }
-
+uint32_t HttpNode::currentStreamId() const
+{
+    if (mUrlInfo.get()) {
+        return mUrlInfo->streamId;
+    } else {
+        ESP_LOGW(mTag, "Assert fail: Returning zero streamId for event, as we have no urlInfo");
+        return 0;
+    }
+}
 AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
 {
     if (mWaitingPrefill) {
         ESP_LOGI(TAG, "Waiting ringbuf prefill...");
         if (!waitForPrefill()) {
             dp.clear();
+            dp.streamId = currentStreamId();
             return kStreamStopped;
         }
     }
@@ -487,6 +497,7 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
         }
         if (waitResult < 0) {
             dp.clear();
+            dp.streamId = currentStreamId();
             return kStreamStopped;
         }
     }
@@ -503,6 +514,7 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
     auto ret = mRingBuf.contigRead(dp.buf, dp.size, 0);
     if (ret < 0) {
         dp.size = 0;
+        dp.streamId = currentStreamId();
         return kStreamStopped;
     }
     myassert(ret > 0); // no timeout

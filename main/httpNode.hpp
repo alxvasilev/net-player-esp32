@@ -84,6 +84,7 @@ protected:
     void doSetUrl(UrlInfo* urlInfo);
     void updateUrl(const char* url);
     void clearRingBufAndEventQueue();
+    uint32_t currentStreamId() const;
     bool connect(bool isReconnect=false);
     void disconnect();
     void destroyClient();
