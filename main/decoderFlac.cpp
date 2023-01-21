@@ -118,8 +118,8 @@ bool DecoderFlac::outputStereoSamples(int nSamples, const FLAC__int32* const cha
     auto ch1 = channels[1];
     T* wptr = (T*)mOutputBuf;
     for (int i = 0; i < nSamples; i++) {
-        *(wptr++) = ch0[i] << Shift;
-        *(wptr++) = ch1[i] << Shift;
+        *(wptr++) = ch0[i];
+        *(wptr++) = ch1[i];
     }
     mOutputLen = outBytes;
     return true;
@@ -134,7 +134,7 @@ bool DecoderFlac::outputMonoSamples(int nSamples, const FLAC__int32* const sampl
     T* wptr = (T*)mOutputBuf;
     auto end = samples[0] + nSamples;
     for (auto sample = samples[0]; sample < end;) {
-        *(wptr++) = *(sample++) << Shift;
+        *(wptr++) = *(sample++);
     }
     mOutputLen = outBytes;
     return true;

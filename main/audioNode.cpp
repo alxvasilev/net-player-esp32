@@ -144,18 +144,18 @@ bool AudioNodeWithTask::dispatchCommand(Command& cmd)
         } else {
             setState(kStateRunning);
         }
-        break;
+        return true;
     case kCommandStop:
         if (currState == kStateStopped || currState == kStateTerminated) {
             ESP_LOGD(mTag, "kCommandStop: Already %s", stateToStr(currState));
         } else {
             setState(kStateStopped);
         }
-        break;
+        return true;
     default:
         return false;
     }
-    return false;
+    return false; // never reached
 }
 
 void AudioNodeWithTask::processMessages()

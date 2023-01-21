@@ -62,20 +62,36 @@ class DefaultVolumeImpl: public IAudioVolume
 protected:
     enum: uint8_t { kVolumeDivShift = 7, kVolumeDiv = 1 << kVolumeDivShift };
     uint8_t mVolume = kVolumeDiv;
+    uint8_t mVolumeAndAlignShift = 0;
 private:
     typedef void (DefaultVolumeImpl::*ProcessFunc)(AudioNode::DataPullReq& dpr);
     ProcessFunc mProcessVolumeFunc = nullptr;
     ProcessFunc mGetLevelFunc = nullptr;
     StreamFormat mFormat;
-template <typename T>
+    static constexpr int calculateShift(int bitsPerSample)
+    {
+        if (bitsPerSample == 8 || bitsPerSample == 24) {
+            return kVolumeDivShift - 8;
+        } else {
+            // static_assert(bitsPerSample == 16 || bitsPerSample == 32, "Unsupported bits per sample");
+            return kVolumeDivShift;
+        }
+    }
+template <typename T, int Bps>
 void processVolume(AudioNode::DataPullReq& dpr)
 {
+    // we do two shifts at once - one is for the volume multiply/divide, and the other one
+    // is to left-align the sample, as is required by i2s
+    enum { kShift = calculateShift(Bps) };
     T* end = (T*)(dpr.buf + dpr.size);
     for(T* pSample = (T*)dpr.buf; pSample < end; pSample++) {
-        *pSample = (static_cast<int64_t>(*pSample) * mVolume + kVolumeDiv / 2) >> kVolumeDivShift;
+        int32_t unaligned = (static_cast<int32_t>(*pSample) * mVolume + kVolumeDiv / 2);
+        *pSample = (kShift >= 0) ? (unaligned >> kShift) : (unaligned << -kShift);
     }
+    dpr.fmt.setIsLeftAligned(true);
 }
-template <typename T>
+
+template <typename T, int Bps, bool LeftAligned>
 void getPeakLevelMono(AudioNode::DataPullReq& dpr)
 {
     T level = 0;
@@ -85,15 +101,18 @@ void getPeakLevelMono(AudioNode::DataPullReq& dpr)
             level = *pSample;
         }
     }
-    // sample is always left-aligned. I.e. for 24 bit, we have a left-aligned 32bit int
-    enum { kShift = std::max((int)sizeof(T) * 8 - 16, 0) };
+    enum { kShift = LeftAligned
+           ? std::max((int)sizeof(T) * 8 - 16, 0)
+           : std::max(Bps - 16, 0)
+    };
     if (kShift != 0) {
         mAudioLevels.left = mAudioLevels.right = level >> kShift;
     } else {
         mAudioLevels.left = mAudioLevels.right = level;
     }
 }
-template <typename T>
+
+template <typename T, int Bps, bool LeftAligned>
 void getPeakLevelStereo(AudioNode::DataPullReq& dpr)
 {
     T left = 0;
@@ -108,7 +127,11 @@ void getPeakLevelStereo(AudioNode::DataPullReq& dpr)
             left = *pSample;
         }
     }
-    enum { kShift = std::max((int)sizeof(T) * 8 - 16, 0) };
+    // leave only the most significant 16 bits
+    enum { kShift = LeftAligned
+           ? std::max((int)sizeof(T) * 8 - 16, 0)
+           : std::max(Bps - 16, 0)
+    };
     if (kShift != 0) {
         mAudioLevels.left = left >> kShift;
         mAudioLevels.right = right >> kShift;
@@ -118,50 +141,52 @@ void getPeakLevelStereo(AudioNode::DataPullReq& dpr)
     }
 }
 
-template<typename T>
+template<typename T, int Bps>
 void updateProcessFuncsStereo()
 {
-    mProcessVolumeFunc = &DefaultVolumeImpl::processVolume<T>;
-    mGetLevelFunc = &DefaultVolumeImpl::getPeakLevelStereo<T>;
+    mProcessVolumeFunc = &DefaultVolumeImpl::processVolume<T, Bps>;
+    mGetLevelFunc = mFormat.isLeftAligned()
+        ? &DefaultVolumeImpl::getPeakLevelStereo<T, Bps, true>
+        : &DefaultVolumeImpl::getPeakLevelStereo<T, Bps, false>;
 }
-template<typename T>
+
+template<typename T, int Bps>
 void updateProcessFuncsMono()
 {
-    mProcessVolumeFunc = &DefaultVolumeImpl::processVolume<T>;
-    mGetLevelFunc = &DefaultVolumeImpl::getPeakLevelMono<T>;
+    mProcessVolumeFunc = &DefaultVolumeImpl::processVolume<T, Bps>;
+    mGetLevelFunc = mFormat.isLeftAligned()
+        ? &DefaultVolumeImpl::getPeakLevelMono<T, Bps, true>
+        : &DefaultVolumeImpl::getPeakLevelMono<T, Bps, false>;
 }
-bool updateVolumeFormat(StreamFormat fmt)
+template <typename T, int Bps>
+bool updateProcessFuncs()
 {
-    auto bps = fmt.bitsPerSample();
-    auto nChans = fmt.numChannels();
+    auto nChans = mFormat.numChannels();
     if (nChans == 2) {
-        if (bps == 16) {
-            updateProcessFuncsStereo<int16_t>();
-        } else if (bps == 24) {
-            updateProcessFuncsStereo<int32_t>();
-        } else if (bps == 32) {
-            updateProcessFuncsStereo<int32_t>();
-        } else if (bps == 8) {
-            updateProcessFuncsStereo<int8_t>();
-        } else {
-            return false;
-        }
+        updateProcessFuncsStereo<T, Bps>();
     } else if (nChans == 1) {
-        if (bps == 16) {
-            updateProcessFuncsMono<int16_t>();
-        } else if (bps == 24) {
-            updateProcessFuncsMono<int32_t>();
-        } else if (bps == 32) {
-            updateProcessFuncsMono<int32_t>();
-        } else if (bps == 8) {
-            updateProcessFuncsMono<int8_t>();
-        } else {
-            return false;
-        }
+        updateProcessFuncsMono<T, Bps>();
     } else {
         return false;
     }
     return true;
+}
+
+bool updateVolumeFormat(StreamFormat fmt)
+{
+    mFormat = fmt;
+    auto bps = fmt.bitsPerSample();
+    if (bps == 16) {
+        return updateProcessFuncs<int16_t, 16>();
+    } else if (bps == 24) {
+        return updateProcessFuncs<int32_t, 24>();
+    } else if (bps == 32) {
+        return updateProcessFuncs<int32_t, 32>();
+    } else if (bps == 8) {
+        return updateProcessFuncs<int16_t, 8>();
+    } else {
+        return false;
+    }
 }
 protected:
 void volumeProcess(AudioNode::DataPullReq& dpr)

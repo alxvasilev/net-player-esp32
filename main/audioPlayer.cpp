@@ -368,8 +368,9 @@ void AudioPlayer::changeInput(PlayerMode playerMode)
 
 void AudioPlayer::loadSettings()
 {
+    mVolumeCap = mNvsHandle.readDefault<uint8_t>("maxVolume", 255);
     if (mVolumeInterface) {
-        auto vol = mNvsHandle.readDefault<uint8_t>("volume", 15);
+        auto vol = mNvsHandle.readDefault<uint8_t>("volume", kDefaultVolume);
         ESP_LOGI(TAG, "Setting volume to %u", vol);
         mVolumeInterface->setVolume(vol);
     }
@@ -539,9 +540,9 @@ uint32_t AudioPlayer::positionTenthSec() const
 }
 void AudioPlayer::volumeSet(uint8_t vol)
 {
-    if (vol > 15) {
-        ESP_LOGW(TAG, "Artificially limiting volume %u to 15", vol);
-        vol = 15;
+    if (vol > mVolumeCap) {
+        ESP_LOGW(TAG, "Artificially limiting volume %u to %u", vol, mVolumeCap);
+        vol = mVolumeCap;
     }
     if (isMuted() && vol <= mMuteVolume) {
         mMuteVolume = vol;
@@ -1097,7 +1098,7 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
             }
             else if (events == 0) { // timeout, due time to scroll title
                 tsLastTitleScroll = now;
-                if (self.mTitleScrollEnabled) {
+                if (self.mTitleScrollEnabled == 1) {
                     self.lcdScrollTrackTitle();
                 }
                 if (now - tsLastVolEvent > 50000) { // 50ms no volume event, force update the VU display
@@ -1120,16 +1121,18 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf)
 {
     size_t len;
     if (!buf || !(len = strlen(buf))) {
-        mTitleScrollEnabled = false;
         lcdSetupForTrackTitle();
         mLcd.clear(mLcd.cursorX, mLcd.cursorY, mLcd.width(), mLcd.fontHeight());
+        mTitleScrollEnabled = -1; // hard disable
         return;
     }
     mLcdTrackTitle.reserve(len + 4);
     mLcdTrackTitle.assign(buf, len);
     mLcdTrackTitle.append(" * ", 4);
     mTitleScrollCharOffset = mTitleScrollPixOffset = 0;
-    mTitleScrollEnabled = true;
+    mTitleScrollEnabled = 0; // will be enabled when the audio format is detected, if it's not too heavy
+    lcdSetupForTrackTitle();
+    mLcd.puts(mLcdTrackTitle.buf(), mLcd.kFlagNoAutoNewline | mLcd.kFlagAllowPartial);
 }
 
 void AudioPlayer::lcdSetupForTrackTitle()
@@ -1186,12 +1189,13 @@ void AudioPlayer::onNewStream(CodecType codec, uint16_t codecMode, StreamFormat 
 {
     lcdUpdateCodec(codec, codecMode);
     lcdUpdateAudioFormat(fmt);
+    bool isFlac = (codec == kCodecFlac || codec == kCodecOggFlac);
     int prefill;
     if (!utils::haveSpiRam()) {
         prefill = kHttpBufSizeInternal - 1024;
-        mBufLowThreshold = (codec == kCodecFlac || codec == kCodecOggFlac) ? 64 * 1024 : 32 * 1024;
+        mBufLowThreshold = isFlac ? 64 * 1024 : 32 * 1024;
     }
-    else if (codec == kCodecFlac || codec == kCodecOggFlac) {
+    else if (isFlac) {
         if (fmt.sampleRate() <= 48000) {
             prefill = 400 * 1024;
             mBufLowThreshold = 100 * 1024;
@@ -1209,6 +1213,10 @@ void AudioPlayer::onNewStream(CodecType codec, uint16_t codecMode, StreamFormat 
         MutexUnlocker unlocker(mutex);
         MutexLocker locker(http.mMutex);
         http.setWaitingPrefill(prefill);
+    }
+    if (mTitleScrollEnabled == 0 && (fmt.sampleRate() < 90000 && fmt.bitsPerSample() < 24)) {
+        // disable title scroll for very heavy audio files to save some CPU resources
+        mTitleScrollEnabled = 1;
     }
 }
 void AudioPlayer::lcdUpdateCodec(CodecType codec, uint16_t codecMode)

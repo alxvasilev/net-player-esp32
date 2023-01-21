@@ -65,7 +65,7 @@ protected:
         kSymRecording = 34
     };
     static constexpr const Font& kPictoFont = font_Icons22;
-    enum { kEqGainPrecisionDiv = 2 };
+    enum { kEqGainPrecisionDiv = 2, kDefaultVolume = 15 };
     static const float sDefaultEqGains[];
     Flags mFlags;
     std::unique_ptr<AudioNodeWithState> mStreamIn;
@@ -85,6 +85,7 @@ protected:
     int mBufLowThreshold = 0;
     uint16_t mBufLowDisplayGradient = 0;
     int16_t mMuteVolume = -1;
+    uint8_t mVolumeCap;
 // general display stuff
     ST7735Display::Color mFontColor = ST7735Display::rgb(255, 255, 128);
     VuDisplay mVuDisplay;
@@ -93,7 +94,7 @@ protected:
     DynBuffer mLcdTrackTitle;
     int16_t mTitleScrollCharOffset = 0;
     int8_t mTitleScrollPixOffset = 0;
-    bool mTitleScrollEnabled = false;
+    int8_t mTitleScrollEnabled = -1; // -1: hard disable, 0: decide from cpu load, 1: enable
     uint32_t mLastShownNetSpeed = 0xffffffff;
     uint8_t mLatchedBufUnderrunState = 0xff;
     uint8_t mDisplayedBufUnderrunTimer = 0;

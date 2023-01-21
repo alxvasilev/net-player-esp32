@@ -157,7 +157,6 @@ void startMdns()
 void* operator new(size_t size)
 {
     auto mem = utils::mallocTrySpiram(size);
-    printf("operator new(%zu): isSpi: %d\n", size, utils::isInSpiRam(mem));
     return mem;
 }
 extern "C" void* my_malloc(size_t size)

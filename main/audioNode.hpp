@@ -44,7 +44,8 @@ protected:
             uint8_t mNumChannels: 1;
             uint32_t mSampleRate: 19;
             uint8_t mBitsPerSample: 2;
-            int mReserved: 2;
+            bool mIsLeftAligned: 1;
+            uint8_t mReserved: 1;
         };
         uint32_t mCode;
     };
@@ -78,6 +79,8 @@ public:
     void setBitsPerSample(uint8_t bps) { mBitsPerSample = encodeBps(bps); }
     uint8_t numChannels() const { return mNumChannels + 1; }
     bool isStereo() const { return mNumChannels != 0; }
+    bool isLeftAligned() const { return mIsLeftAligned; }
+    void setIsLeftAligned(bool val) { mIsLeftAligned = val; }
     void setNumChannels(uint8_t ch) { mNumChannels = ch - 1; }
 };
 const char* codecTypeToStr(CodecType type, uint16_t mode=0);
