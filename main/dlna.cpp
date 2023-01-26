@@ -1,6 +1,7 @@
 #include <esp_http_server.h>
 #include <sys/socket.h>
 #include "dlna.hpp"
+#include <httpServer.hpp>
 #include <esp_log.h>
 #include "utils.hpp"
 #include "incfile.hpp"
@@ -9,7 +10,8 @@
 #include "audioPlayer.hpp"
 #include <sstream>
 
-static constexpr const char* TAG = "dlna";
+static const char* TAG = "dlna";
+static const char* TAG_NOTIFY = "dlna-notify";
 
 EMBED_TEXTFILE("../../dlna/deviceDesc.xml", xmlMain);
 extern const char xmlMain[];
@@ -36,10 +38,11 @@ static const char kServerHeader[] = "FreeRTOS/x UPnP/1.0 NetPlayer/x";
 #define kUuidPrefix "12345678-abcd-ef12-cafe-"
 
 static constexpr uint32_t kSsdpMulticastAddr = utils::ip4Addr(239,255,255,250);
+uint32_t DlnaHandler::EventSubscription::sSidCounter = 0;
 
 using namespace tinyxml2;
 
-DlnaHandler::DlnaHandler(httpd_handle_t httpServer, const char* hostPort, AudioPlayer& player)
+DlnaHandler::DlnaHandler(http::Server& httpServer, const char* hostPort, AudioPlayer& player)
 : mHttpServer(httpServer), mPlayer(player)
 {
     strncpy(mHttpHostPort, hostPort, sizeof(mHttpHostPort));
@@ -168,7 +171,8 @@ esp_err_t DlnaHandler::httpDlnaCommandHandler(httpd_req_t* req)
         handler = &DlnaHandler::handleRenderCtlCommand;
     } else if (strcmp(url, "ConnectionManager/ctrl") == 0) {
         handler = &DlnaHandler::handleConnMgrCommand;
-    }else { // handle request for service description XMLs
+    } else { // handle request for service description XMLs
+        ESP_LOGW(TAG, "Request for unknown URL '%s'", url);
         httpd_resp_send_404(req);
         return ESP_FAIL;
     }
@@ -186,7 +190,7 @@ esp_err_t DlnaHandler::httpDlnaCommandHandler(httpd_req_t* req)
             recvLen < 0 ? esp_err_to_name(recvLen) : "received less than expected");
         if (recvLen > 0) {
             strXml.get()[recvLen] = 0; // just in case
-            ESP_LOGW(TAG, "Start of incomplete postdata: '%.*s'", (std::min(recvLen, 128)), strXml.get());
+            ESP_LOGW(TAG, "Incomplete postdata: '%s'", strXml.get());
         }
         return ESP_FAIL;
     }
@@ -238,7 +242,7 @@ esp_err_t DlnaHandler::httpDlnaCommandHandler(httpd_req_t* req)
     }
     result.append("</").append(cmd).append("Response></s:Body></s:Envelope>");
     httpd_resp_set_type(req, "text/xml");
-    printf("DLNA tx(%zu):\n%s\n", result.size(), result.c_str());
+    //printf("DLNA tx(%zu):\n%s\n", result.size(), result.c_str());
     httpd_resp_send(req, result.c_str(), result.size());
     return ESP_OK;
 }
@@ -359,6 +363,263 @@ bool DlnaHandler::handleRenderCtlCommand(httpd_req_t* req, const char* cmd, cons
     }
     return false;
 }
+
+typedef char*(*GetPtrFunc)(void*, size_t);
+bool httpGetHeader(httpd_req_t* req, const char* hdrName, void* arg, GetPtrFunc cb)
+{
+    char errMsg[64];
+    auto len = httpd_req_get_hdr_value_len(req, hdrName);
+    if (!len) {
+        snprintf(errMsg, sizeof(errMsg)-1, "No %s header present", hdrName);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, errMsg);
+        return false;
+    }
+    len++;
+    char* buf = cb(arg, len);
+    if (!buf) {
+        return false;
+    }
+    if (httpd_req_get_hdr_value_str(req, hdrName, buf, len) != ESP_OK) {
+        snprintf(errMsg, sizeof(errMsg)-1, "Could not copy %s header", hdrName);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, errMsg);
+        return false;
+    }
+    buf[len-1] = 0;
+//  printf("header '%s' -> '%s'\n", hdrName, buf);
+    return true;
+}
+const char* DlnaHandler::EventSubscription::strSid(char* buf, size_t bufLen) const
+{
+    return "uuid:00000000-0000-4000-8000-000000000001";
+    vtsnprintf(buf, bufLen, kSidPrefix, fmtHex32(sid));
+    return buf;
+}
+uint32_t DlnaHandler::EventSubscription::parseSid(char* sid, int len)
+{
+    if (len < 0) {
+        len = strlen(sid);
+    } else {
+        assert(sid[len] == 0);
+    }
+
+    if (len < 8) {
+        return 0; // invalid
+    }
+    return parseInt(sid + len - 8, 0, 16);
+}
+bool DlnaHandler::EventSubscription::notifySubscribed()
+{
+    if (service == kServiceMediaRenderer) {
+        return notify("&lt;Event xmlns=&quot;urn:schemas-upnp-org:metadata-1-0/RCS/&quot;&gt;&lt;InstanceID val=&quot;0&quot;&gt;&lt;PresetNameList val=&quot;FactoryDefaults&quot; channel=&quot;Master&quot;/&gt;&lt;Mute val=&quot;1&quot; channel=&quot;Master&quot;/&gt;&lt;Volume val=&quot;0&quot; channel=&quot;Master&quot;/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;");
+    } else {
+        ESP_LOGW(TAG_NOTIFY, "notifySubscribed: Unsupported service %d", service);
+        return false;
+    }
+}
+bool DlnaHandler::EventSubscription::notify(const char* xml)
+{
+    esp_http_client_config_t cfg = {};
+    cfg.url = callbackUrl.buf();
+    cfg.timeout_ms = 1000;
+    cfg.buffer_size = 32;
+    cfg.method = HTTP_METHOD_NOTIFY;
+    auto client = esp_http_client_init(&cfg);
+    if (!client) {
+        ESP_LOGW(TAG_NOTIFY, "Could not create http client");
+        return false;
+    }
+    esp_http_client_set_header(client, "NT", "upnp:event");
+    esp_http_client_set_header(client, "NTS", "upnp:propchange");
+    char buf[64];
+    esp_http_client_set_header(client, "SID", strSid(buf, sizeof(buf)));
+    toString(buf, sizeof(buf), ++mSeqNo);
+    esp_http_client_set_header(client, "SEQ", buf);
+    esp_http_client_set_header(client, "Content-Type", "text/xml; charset=\"utf-8\"");
+
+    std::string body = "<?xml version=\"1.0\"?>"
+        "<e:propertyset xmlns:e=\"urn:schemas-upnp-org:event-1-0\"><e:property><LastChange>";
+    body.append(xml).append("</LastChange></e:property></e:propertyset>");
+    printf("NOTIFY tx: %s\n", body.c_str());
+    bool success = false;
+    do {
+        esp_err_t err;
+        if ((err = esp_http_client_open(client, body.size())) != ESP_OK) {
+            ESP_LOGW(TAG_NOTIFY, "Error connecting to target: %s", esp_err_to_name(err));
+            break;
+        }
+        if ((esp_http_client_write(client, body.c_str(), body.size())) < 0) {
+            ESP_LOGW(TAG_NOTIFY, "Error posting xml: %s", strerror(errno));
+            break;
+        }
+        auto responseLen = esp_http_client_fetch_headers(client);
+        if (responseLen < 0) {
+            ESP_LOGW(TAG_NOTIFY, "NOTIFY request: Got negative content-length %d in response, status is %d", responseLen, esp_http_client_get_status_code(client));
+            break;
+        }
+        auto code = esp_http_client_get_status_code(client);
+        if (code != 200) {
+            ESP_LOGW(TAG_NOTIFY, "NOTIFY request failed with code %d, response len: %d", code, responseLen);
+            break;
+        }
+        if (responseLen > 0) {
+            char buf[32];
+            int nread;
+            while((nread = esp_http_client_read(client, buf, sizeof(buf))) > 0);
+            if (nread < 0) {
+                ESP_LOGW(TAG_NOTIFY, "Error reading response body: %s", esp_err_to_name(err));
+            }
+        }
+        success = true;
+    } while(0);
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+    return success;
+}
+DlnaHandler::EventSubscription::~EventSubscription()
+{
+    ESP_LOGI(TAG_NOTIFY, "Deleting event subscription %u", sid);
+}
+void DlnaHandler::notifyEvent(const char* xml)
+{
+    uint32_t now = esp_timer_get_time() / 1000000;
+    for (auto it = mEventSubs.begin(); it != mEventSubs.end();) {
+        if (it->tsTill < now) {
+            it = mEventSubs.erase(it);
+            continue;
+        }
+        it->notify(xml);
+        it++;
+    }
+}
+void DlnaHandler::notifyVolumeChange(int vol)
+{
+    std::string xml;
+    xml.reserve(210);
+    xml = "&lt;Event xmlns=&quot;urn:schemas-upnp-org:metadata-1-0/RCS/&quot;&gt;&lt;InstanceID val=&quot;0&quot;&gt;&lt;Volume val=&quot;";
+    appendAny(xml, vol);
+    xml.append("&quot; channel=&quot;Master&quot;/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;");
+    notifyEvent(xml.c_str());
+}
+
+void DlnaHandler::notifyMute(bool mute, int vol)
+{
+    std::string xml;
+    xml.reserve(256);
+    xml = "&lt;Event xmlns=&quot;urn:schemas-upnp-org:metadata-1-0/RCS/&quot;&gt;&lt;InstanceID val=&quot;0&quot;&gt;&lt;Mute val=&quot;";
+    xml += (mute ? '1' : '0');
+    xml.append("&quot; channel=&quot;Master&quot;/&gt;");
+    if (!mute && vol > -1) {
+        xml.append("&lt;Volume val=&quot;");
+        appendAny(xml, vol);
+        xml.append("&quot; channel=&quot;Master&quot;/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;");
+    }
+    notifyEvent(xml.c_str());
+}
+DlnaHandler::EventSubscription* DlnaHandler::eventSubscriptionBySid(uint32_t sid)
+{
+    for (auto it = mEventSubs.begin(); it != mEventSubs.end(); it++) {
+        if (it->sid == sid) {
+            return &(*it);
+        }
+    }
+    return nullptr;
+}
+esp_err_t DlnaHandler::httpDlnaSubscribeHandler(httpd_req_t* req)
+{
+    if (strcmp(req->uri, "/dlna/RenderingControl/event") != 0) {
+        ESP_LOGW(TAG_NOTIFY, "Refusing event subscribe request for '%s'", req->uri);
+        httpd_resp_send_404(req);
+        return ESP_FAIL;
+    }
+    char buf[64];
+    uint32_t timeout;
+    if (!httpGetHeader(req, "TIMEOUT", buf, [](void* arg, size_t len) { return (char*)arg; }))
+    {
+        return ESP_FAIL;
+    }
+    if (strncasecmp(buf, "Second-", 7)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No 'second-' prefix in TIMEOUT header");
+        return ESP_FAIL;
+    }
+    const char* strTimeout = buf + 7;
+    if (strcasecmp(strTimeout, "infinite") == 0) {
+        timeout = 0xffffffff;
+    } else {
+        timeout = parseInt(strTimeout, 0);
+        if (!timeout) {
+            ESP_LOGW(TAG, "Can't parse timeout, assuming 600 seconds");
+            timeout = 600;
+        }
+    }
+    //timeout=300;
+    auto self = static_cast<DlnaHandler*>(req->user_ctx);
+    if (!httpGetHeader(req, "CALLBACK", self, [](void* arg, size_t urlLen) {
+        auto& self = *static_cast<DlnaHandler*>(arg);
+        auto& buf = self.mEventSubs.emplace_front(EventSubscription::kServiceMediaRenderer)
+                   .callbackUrl;
+        auto ptr = buf.getAppendPtr(urlLen);
+        buf.expandDataSize(urlLen);
+        return ptr;
+    })) {
+        return ESP_FAIL;
+    }
+    auto& subscr = self->mEventSubs.front();
+    auto& url = subscr.callbackUrl;
+    // remove <> brackets
+    memmove(url.buf(), url.buf()+1, url.dataSize()-3);
+    url.setDataSize(url.dataSize()-2);
+    url.buf()[url.dataSize()-1] = 0;
+    subscr.tsTill = esp_timer_get_time() / 1000000 + timeout;
+    vtsnprintf(buf, 64, "Second-", timeout);
+    httpd_resp_set_hdr(req, "TIMEOUT", buf);
+    httpd_resp_set_hdr(req, "SID", subscr.strSid(buf, sizeof(buf)));
+    httpd_resp_send(req, nullptr, 0);
+    ESP_LOGW(TAG, "Subscribed to event: CALLBACK='%s', SID='%s', timeout=%u",
+        url.buf(), buf, timeout);
+    self->mHttpServer.queueWork([self, sid = subscr.sid]() {
+        EventSubscription* subscr = self->eventSubscriptionBySid(sid);
+        if (subscr) {
+            subscr->notifySubscribed();
+        }
+    });
+    return ESP_OK;
+}
+esp_err_t DlnaHandler::httpDlnaUnsubscribeHandler(httpd_req_t* req)
+{
+    char strSid[64];
+    if (!httpGetHeader(req, "SID", strSid, [](void* arg, size_t len) {
+        return (char*)arg;
+    })) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error getting SID header");
+        return ESP_FAIL;
+    }
+    uint32_t sid = EventSubscription::parseSid(strSid);
+    if (!sid) {
+        const char* kMsg = "Error parsing SID header";
+        ESP_LOGW(TAG_NOTIFY, "%s '%s'", kMsg, strSid);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, kMsg);
+        return ESP_FAIL;
+    }
+    auto& self = *static_cast<DlnaHandler*>(req->user_ctx);
+    int numRemoved = 0;
+    self.mEventSubs.remove_if([sid, &numRemoved](EventSubscription& sub) {
+        if (sub.sid != sid) {
+            return false;
+        }
+        numRemoved++;
+        return true;
+    });
+    if (!numRemoved) {
+        httpd_resp_send_404(req);
+        return ESP_FAIL;
+    }
+    else {
+        ESP_LOGW(TAG_NOTIFY, "UNSUBSCRIBE: Removed %d subscriptions with sid '%s'", numRemoved, strSid);
+        httpd_resp_send(req, nullptr, 0);
+        return ESP_OK;
+    }
+}
+
 bool DlnaHandler::registerHttpHandlers()
 {
     httpd_uri_t desc = {
@@ -367,12 +628,22 @@ bool DlnaHandler::registerHttpHandlers()
         .handler   = httpDlnaDescGetHandler,
         .user_ctx  = this
     };
-    if (httpd_register_uri_handler(mHttpServer, &desc) != ESP_OK) {
+    if (httpd_register_uri_handler(mHttpServer.handle(), &desc) != ESP_OK) {
         goto fail;
     }
     desc.method = HTTP_POST;
     desc.handler = httpDlnaCommandHandler;
-    if (httpd_register_uri_handler(mHttpServer, &desc) != ESP_OK) {
+    if (httpd_register_uri_handler(mHttpServer.handle(), &desc) != ESP_OK) {
+        goto fail;
+    }
+    desc.method = HTTP_SUBSCRIBE;
+    desc.handler = httpDlnaSubscribeHandler;
+    if (httpd_register_uri_handler(mHttpServer.handle(), &desc) != ESP_OK) {
+        goto fail;
+    }
+    desc.method = HTTP_UNSUBSCRIBE;
+    desc.handler = httpDlnaUnsubscribeHandler;
+    if (httpd_register_uri_handler(mHttpServer.handle(), &desc) != ESP_OK) {
         goto fail;
     }
     return true;
@@ -383,7 +654,7 @@ fail:
 }
 void DlnaHandler::unregisterHttpHandlers()
 {
-    httpd_unregister_uri(mHttpServer, "/dlna");
+    httpd_unregister_uri(mHttpServer.handle(), "/dlna");
 }
 
 void DlnaHandler::ssdpRxTaskFunc()

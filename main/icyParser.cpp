@@ -11,16 +11,16 @@ bool IcyParser::parseHeader(const char* key, const char* value)
         ESP_LOGI(TAG, "Response contains ICY metadata with interval %d", mIcyInterval);
     } else if (strcasecmp(key, "icy-name") == 0) {
         MutexLocker locker(mInfoMutex);
-        mStaName.freeAndReset(strdup(value));
+        mStaName.reset(strdup(value));
     } else if (strcasecmp(key, "icy-description") == 0) {
         MutexLocker locker(mInfoMutex);
-        mStaDesc.freeAndReset(strdup(value));
+        mStaDesc.reset(strdup(value));
     } else if (strcasecmp(key, "icy-genre") == 0) {
         MutexLocker locker(mInfoMutex);
-        mStaGenre.freeAndReset(strdup(value));
+        mStaGenre.reset(strdup(value));
     } else if (strcasecmp(key, "icy-url") == 0) {
         MutexLocker locker(mInfoMutex);
-        mStaUrl.freeAndReset(strdup(value));
+        mStaUrl.reset(strdup(value));
     } else {
         return false;
     }
@@ -117,7 +117,7 @@ void IcyParser::parseIcyData() // we extract only StreamTitle
     mIcyMetaBuf.setDataSize(titleSize + 1);
     {
         MutexLocker locker(mInfoMutex);
-        mTrackName.freeAndReset(mIcyMetaBuf.release());
+        mTrackName.reset(mIcyMetaBuf.release());
     }
 }
 
@@ -131,10 +131,10 @@ void IcyParser::reset()
 void IcyInfo::clearIcyInfo()
 {
     MutexLocker locker(mInfoMutex);
-    mTrackName.free();
-    mStaName.free();
-    mStaDesc.free();
-    mStaGenre.free();
-    mStaUrl.free();
+    mTrackName.reset();
+    mStaName.reset();
+    mStaDesc.reset();
+    mStaGenre.reset();
+    mStaUrl.reset();
 }
 

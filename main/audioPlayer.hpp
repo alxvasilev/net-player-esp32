@@ -177,6 +177,7 @@ public:
     void pause();
     void resume();
     void stop();
+    void stop(const char* caption);
     uint32_t positionTenthSec() const;
     static bool playerModeIsValid(PlayerMode mode);
     int volumeGet();

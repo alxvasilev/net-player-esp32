@@ -1,22 +1,22 @@
-#include "buffer.hpp"
-#include "mutex.hpp"
+#include <utils.hpp>
+#include <mutex.hpp>
 class IcyInfo
 {
 protected:
-    BufPtr<char> mTrackName = nullptr;
-    BufPtr<char> mStaName = nullptr;
-    BufPtr<char> mStaDesc = nullptr;
-    BufPtr<char> mStaGenre = nullptr;
-    BufPtr<char> mStaUrl = nullptr;
+    unique_ptr_mfree<char> mTrackName;
+    unique_ptr_mfree<char> mStaName;
+    unique_ptr_mfree<char> mStaDesc;
+    unique_ptr_mfree<char> mStaGenre;
+    unique_ptr_mfree<char> mStaUrl;
     Mutex& mInfoMutex;
 public:
     IcyInfo(Mutex& mutex): mInfoMutex(mutex) {}
     void clearIcyInfo();
-    const char* trackName() const { return mTrackName.ptr(); }
-    const char* staName() const { return mStaName.ptr(); }
-    const char* staDesc() const { return mStaDesc.ptr(); }
-    const char* staGenre() const { return mStaGenre.ptr(); }
-    const char* staUrl() const { return mStaUrl.ptr(); }
+    const char* trackName() const { return mTrackName.get(); }
+    const char* staName() const { return mStaName.get(); }
+    const char* staDesc() const { return mStaDesc.get(); }
+    const char* staGenre() const { return mStaGenre.get(); }
+    const char* staUrl() const { return mStaUrl.get(); }
 };
 
 class IcyParser: public IcyInfo

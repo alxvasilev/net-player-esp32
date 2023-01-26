@@ -126,7 +126,7 @@ void connectToWifi(bool forceAP = false)
         }
         lcd.puts("Connecting to WiFi...");
         wifi.reset(new WifiClient);
-        static_cast<WifiClient*>(wifi.get())->start(ssid.ptr(), pass.ptr());
+        static_cast<WifiClient*>(wifi.get())->start(ssid.get(), pass.get());
         if (wifi->waitForConnect(20000)) {
             gIsAp = false;
             lcd.puts("success\n");
@@ -150,7 +150,7 @@ connectSuccess:
 }
 void startMdns()
 {
-    const char* domain = nvsSimple.getString("mdnsDomain").ptr();
+    const char* domain = nvsSimple.getString("mdnsDomain").get();
     if (!domain) {
         domain = kDefaultMdnsDomain;
     }
@@ -190,8 +190,6 @@ extern "C" void app_main(void)
     lcd.puts("Starting webserver...\n");
     startWebserver();
 //===
-    RTC_SLOW_MEM[123] = 0x12345678;
-    printf("address of RTC variable: %p, val=0x%x\n", &(RTC_SLOW_MEM[0]), RTC_SLOW_MEM[123]);
     lcd.puts("Mounting SDCard...\n");
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };
     sdcard.init(HSPI_HOST, pins, "/sdcard");

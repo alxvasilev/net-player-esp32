@@ -60,8 +60,9 @@ protected:
 class DefaultVolumeImpl: public IAudioVolume
 {
 protected:
-    enum: uint8_t { kVolumeDivShift = 7, kVolumeDiv = 1 << kVolumeDivShift };
-    uint8_t mVolume = kVolumeDiv;
+    enum: uint8_t { kVolumeDivShift = 8 };
+    enum: uint16_t { kVolumeDiv = 1 << kVolumeDivShift };
+    uint16_t mVolume = kVolumeDiv;
     uint8_t mVolumeAndAlignShift = 0;
 private:
     typedef void (DefaultVolumeImpl::*ProcessFunc)(AudioNode::DataPullReq& dpr);
@@ -213,12 +214,13 @@ void volumeNotifyLevelCallback()
 public:
 uint8_t getVolume() const
 {
-    return (mVolume * 100 + kVolumeDiv/2) >> kVolumeDivShift;
+    return (mVolume * 100) >> kVolumeDivShift;
 }
 
 void setVolume(uint8_t vol)
 {
-    mVolume = ((vol * kVolumeDiv + 50) / 100);
+    mVolume = ((vol * kVolumeDiv) / 100);
+    ESP_LOGI("vol", "Setting volume multiplier to %u / %u", mVolume, kVolumeDiv);
 }
 };
 #endif

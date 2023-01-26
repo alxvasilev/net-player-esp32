@@ -132,7 +132,7 @@ void AudioPlayer::createDlnaHandler()
     tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ipInfo);
     snprintf(url, sizeof(url), "http%s://" IPSTR ":%d", mHttpServer.isSsl() ? "s":"",
              IP2STR(&ipInfo.ip), 80);
-    mDlna.reset(new DlnaHandler(mHttpServer.handle(), url, *this));
+    mDlna.reset(new DlnaHandler(mHttpServer, url, *this));
 }
 void AudioPlayer::lcdInit()
 {
@@ -519,16 +519,19 @@ void AudioPlayer::pipelineStop()
 }
 void AudioPlayer::pause()
 {
-    pipelineStop();
-    lcdUpdatePlayState("[ Paused ]");
+    stop("Paused");
 }
 void AudioPlayer::stop()
+{
+    stop("Stopped");
+}
+void AudioPlayer::stop(const char* caption)
 {
     pipelineStop();
     if (mVuLevelInterface) {
         mVuLevelInterface->clearAudioLevels();
     }
-    lcdUpdatePlayState("[ Stopped ]");
+    lcdUpdatePlayState(caption);
 }
 uint32_t AudioPlayer::positionTenthSec() const
 {
@@ -558,6 +561,9 @@ void AudioPlayer::volumeSet(uint8_t vol)
         }
     }
     mNvsHandle.write("volume", vol);
+    if (mDlna.get()) {
+        mDlna->notifyVolumeChange(vol);
+    }
 }
 
 int AudioPlayer::volumeGet()
@@ -577,10 +583,13 @@ void AudioPlayer::mute()
     }
     if (mMuteVolume > -1) {
         ESP_LOGI(TAG, "mute: Already muted");
-        return;
+    } else {
+        mMuteVolume = mVolumeInterface->getVolume();
+        mVolumeInterface->setVolume(0);
     }
-    mMuteVolume = mVolumeInterface->getVolume();
-    mVolumeInterface->setVolume(0);
+    if (mDlna) {
+        mDlna->notifyMute(true, mMuteVolume);
+    }
 }
 void AudioPlayer::unmute()
 {
@@ -589,10 +598,14 @@ void AudioPlayer::unmute()
     }
     if (mMuteVolume < 0) {
         ESP_LOGI(TAG, "unmute: Not muted");
-        return;
     }
-    mVolumeInterface->setVolume(mMuteVolume);
-    mMuteVolume = -1;
+    else {
+        mVolumeInterface->setVolume(mMuteVolume);
+        mMuteVolume = -1;
+    }
+    if (mDlna) {
+        mDlna->notifyMute(false, mVolumeInterface->getVolume());
+    }
 }
 int AudioPlayer::volumeChange(int step)
 {
@@ -1025,7 +1038,7 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
         // We are in the http node's thread, must not do any locking from here, so we call
         // into the player via async messages
         if (event == HttpNode::kEventTrackInfo) {
-            ESP_LOGI(TAG, "Received title event: %s", (const char*)arg);
+            ESP_LOGI(TAG, "Received title event: '%s'", (const char*)arg);
             asyncCall([this, title = std::string((const char*)arg)]() {
                 LOCK_PLAYER();
                 lcdUpdateTrackTitle(title.c_str());
