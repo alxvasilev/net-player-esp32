@@ -62,7 +62,7 @@ class DefaultVolumeImpl: public IAudioVolume
 protected:
     enum: uint8_t { kVolumeDivShift = 8 };
     enum: uint16_t { kVolumeDiv = 1 << kVolumeDivShift };
-    uint16_t mVolume = kVolumeDiv;
+    uint16_t mVolume = kVolumeDiv; // 16-bit because it can be 256
     uint8_t mVolumeAndAlignShift = 0;
 private:
     typedef void (DefaultVolumeImpl::*ProcessFunc)(AudioNode::DataPullReq& dpr);
@@ -212,9 +212,10 @@ void volumeNotifyLevelCallback()
     mAudioLevelCb(mAudioLevelCbArg);
 }
 public:
+// volume is a value 0-100
 uint8_t getVolume() const
 {
-    return (mVolume * 100) >> kVolumeDivShift;
+    return (mVolume * 100 + kVolumeDiv / 2) >> kVolumeDivShift;
 }
 
 void setVolume(uint8_t vol)

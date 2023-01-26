@@ -181,7 +181,7 @@ public:
     uint32_t positionTenthSec() const;
     static bool playerModeIsValid(PlayerMode mode);
     int volumeGet();
-    void volumeSet(uint8_t vol);
+    uint8_t volumeSet(uint8_t vol);
     int volumeChange(int step);
     bool isMuted() const { return mMuteVolume >= 0; }
     void mute();

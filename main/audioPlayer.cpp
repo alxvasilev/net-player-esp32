@@ -545,7 +545,7 @@ uint32_t AudioPlayer::positionTenthSec() const
     }
     return i2sOut.positionTenthSec();
 }
-void AudioPlayer::volumeSet(uint8_t vol)
+uint8_t AudioPlayer::volumeSet(uint8_t vol)
 {
     if (vol > mVolumeCap) {
         ESP_LOGW(TAG, "Artificially limiting volume %u to %u", vol, mVolumeCap);
@@ -558,12 +558,14 @@ void AudioPlayer::volumeSet(uint8_t vol)
         mMuteVolume = -1;
         if (mVolumeInterface) {
             mVolumeInterface->setVolume(vol);
+            vol = mVolumeInterface->getVolume();
         }
     }
     mNvsHandle.write("volume", vol);
     if (mDlna.get()) {
         mDlna->notifyVolumeChange(vol);
     }
+    return vol;
 }
 
 int AudioPlayer::volumeGet()
@@ -616,8 +618,8 @@ int AudioPlayer::volumeChange(int step)
     int newVol = currVol + step;
     if (newVol < 0) {
         newVol = 0;
-    } else if (newVol > 255) {
-        newVol = 255;
+    } else if (newVol > 100) {
+        newVol = 100;
     }
     if (newVol != currVol) {
         volumeSet(newVol);
