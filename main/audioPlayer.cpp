@@ -1065,7 +1065,7 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
         if (event == DecoderNode::kEventNewStream) {
             // Must be synchronous as the caller expects prefill to be set upon return
             LOCK_PLAYER();
-            onNewStream((CodecType)(numArg & 0xff), numArg >> 8, StreamFormat(arg));
+            onNewStream(StreamFormat(numArg));
         }
     }
     else if (&node == mStreamOut.get()) {
@@ -1206,22 +1206,21 @@ void AudioPlayer::lcdWriteStreamInfo(int8_t charOfs, const char* str)
     mLcd.gotoXY(x, mVuDisplay.yTop() - kStreamInfoFont.height - 2);
     mLcd.puts(str);
 }
-void AudioPlayer::onNewStream(CodecType codec, uint16_t codecMode, StreamFormat fmt)
+void AudioPlayer::onNewStream(StreamFormat fmt)
 {
     mStreamFormat = fmt;
-    mCodec = codec;
-    lcdUpdateCodec(codec, codecMode);
-    lcdUpdateAudioFormat(fmt);
+    lcdUpdateCodec();
+    lcdUpdateAudioFormat();
 
     mTitleScrollEnabled = mLcdTrackTitle.dataSize() && !streamIsCpuHeavy();
-    bool isFlac = (codec == kCodecFlac || codec == kCodecOggFlac);
+    bool isFlac = (mStreamFormat.codec().type == Codec::kCodecFlac);
     int prefill;
     if (!utils::haveSpiRam()) {
         prefill = kHttpBufSizeInternal - 1024;
         mBufLowThreshold = isFlac ? 64 * 1024 : 32 * 1024;
     }
     else if (isFlac) {
-        if (fmt.sampleRate() <= 48000) {
+        if (mStreamFormat.sampleRate() <= 48000) {
             prefill = 400 * 1024;
             mBufLowThreshold = 100 * 1024;
         } else {
@@ -1244,13 +1243,13 @@ bool AudioPlayer::streamIsCpuHeavy() const
 {
     return mStreamFormat.sampleRate() > 90000 && mStreamFormat.bitsPerSample() >= 24;
 }
-void AudioPlayer::lcdUpdateCodec(CodecType codec, uint16_t codecMode)
+void AudioPlayer::lcdUpdateCodec()
 {
     enum { kMaxLen = 8 };
     char buf[kMaxLen + 1];
     char* wptr = buf;
     const char* end = buf + kMaxLen;
-    const char* name = codecTypeToStr(codec, codecMode);
+    const char* name = mStreamFormat.codec().toString();
     do {
         *(wptr++) = *(name++);
     } while (*name && wptr < end);
@@ -1261,11 +1260,11 @@ void AudioPlayer::lcdUpdateCodec(CodecType codec, uint16_t codecMode)
     *wptr = 0;
     lcdWriteStreamInfo(0, buf);
 }
-void AudioPlayer::lcdUpdateAudioFormat(StreamFormat fmt)
+void AudioPlayer::lcdUpdateAudioFormat()
 {
     char buf[32];
-    auto end = vtsnprintf(buf, sizeof(buf), fmtInt(fmt.sampleRate() / 1000, 0, 3),
-        '.', (fmt.sampleRate() % 1000 + 50) / 100, "kHz/", fmt.bitsPerSample(), "-bit");
+    auto end = vtsnprintf(buf, sizeof(buf), fmtInt(mStreamFormat.sampleRate() / 1000, 0, 3),
+        '.', (mStreamFormat.sampleRate() % 1000 + 50) / 100, "kHz/", mStreamFormat.bitsPerSample(), "-bit");
     lcdWriteStreamInfo(-(end-buf), buf);
 }
 void AudioPlayer::lcdUpdateNetSpeed()

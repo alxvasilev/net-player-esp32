@@ -4,7 +4,8 @@
 
 static const char* TAG = "aacdec";
 
-DecoderAac::DecoderAac(DecoderNode& parent, AudioNode& src): Decoder(parent, src, kCodecAac)
+DecoderAac::DecoderAac(DecoderNode& parent, AudioNode& src)
+: Decoder(parent, src)
 {
     mInputBuf = (unsigned char*)utils::mallocTrySpiram(kInputBufSize + kOutputBufSize);
     if (!mInputBuf) {
@@ -123,10 +124,10 @@ void DecoderAac::getStreamFormat()
     outputFormat.setNumChannels(info.nChans);
     outputFormat.setBitsPerSample(16);
     mOutputLen = info.outputSamps * sizeof(uint16_t);
-    mode = (info.sampRateOut != info.sampRateCore) ? 1 : 0;
+    bool isSbr = (info.sampRateOut != info.sampRateCore);
 
     ESP_LOGW(TAG, "AAC%s 16-bit %s, %d Hz, %d bps, %d samples/frame",
-        mode ? " SBR" : "",
+        isSbr ? " SBR" : "",
         info.nChans == 2 ? "stereo" : "mono", info.sampRateOut,
         info.bitRate, info.outputSamps);
 }

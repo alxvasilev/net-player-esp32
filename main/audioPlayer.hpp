@@ -53,7 +53,7 @@ protected:
     enum {
         kI2sStackSize = 9000, kI2sCpuCore = 1,
         kI2sDmaBufCntInternalRam = 2, kI2sDmaBufCntSpiRam = 9, // 1 buffer is 1024 samples
-        kLcdTaskStackSize = 2200, kLcdTaskPrio = 10, kLcdTaskCore = 0
+        kLcdTaskStackSize = 2200, kLcdTaskPrio = 10, kLcdTaskCore = 1
     };
     enum {
         kLcdArtistNameLineY = 38, kLcdPlayStateLineY = 76, kLcdTrackTitleY = 106
@@ -98,7 +98,6 @@ protected:
     uint32_t mLastShownNetSpeed = 0xffffffff;
     uint8_t mLatchedBufUnderrunState = 0xff;
     uint8_t mDisplayedBufUnderrunTimer = 0;
-    uint8_t mCodec = kCodecUnknown;
     StreamFormat mStreamFormat;
     static void audioLevelCb(void* ctx);
 //====
@@ -119,7 +118,7 @@ protected:
     void createDlnaHandler();
     void setPlayerMode(PlayerMode mode);
     void pipelineStop();
-    void onNewStream(CodecType codec, uint16_t codecMode, StreamFormat fmt);
+    void onNewStream(StreamFormat fmt);
     bool streamIsCpuHeavy() const;
     // GUI stuff
     void lcdInit();
@@ -134,8 +133,8 @@ protected:
     void lcdUpdateTrackDisplay();
     // stream info line
     void lcdWriteStreamInfo(int8_t charOfs, const char* str);
-    void lcdUpdateCodec(CodecType codec, uint16_t codecMode);
-    void lcdUpdateAudioFormat(StreamFormat fmt);
+    void lcdUpdateCodec();
+    void lcdUpdateAudioFormat();
     // net speed stuff
     void lcdUpdateNetSpeed();
     void lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize);

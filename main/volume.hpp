@@ -91,6 +91,16 @@ void processVolume(AudioNode::DataPullReq& dpr)
     }
     dpr.fmt.setIsLeftAligned(true);
 }
+void processVolume32(AudioNode::DataPullReq& dpr)
+{
+    // we do two shifts at once - one is for the volume multiply/divide, and the other one
+    // is to left-align the sample, as is required by i2s
+    int32_t* end = (int32_t*)(dpr.buf + dpr.size);
+    for(int32_t* pSample = (int32_t*)dpr.buf; pSample < end; pSample++) {
+        *pSample = (static_cast<int64_t>(*pSample) * mVolume + kVolumeDiv / 2) >> kVolumeDivShift;
+    }
+    dpr.fmt.setIsLeftAligned(true);
+}
 
 template <typename T, int Bps, bool LeftAligned>
 void getPeakLevelMono(AudioNode::DataPullReq& dpr)
@@ -145,7 +155,9 @@ void getPeakLevelStereo(AudioNode::DataPullReq& dpr)
 template<typename T, int Bps>
 void updateProcessFuncsStereo()
 {
-    mProcessVolumeFunc = &DefaultVolumeImpl::processVolume<T, Bps>;
+    mProcessVolumeFunc = (Bps == 32)
+        ? &DefaultVolumeImpl::processVolume32
+        : &DefaultVolumeImpl::processVolume<T, Bps>;
     mGetLevelFunc = mFormat.isLeftAligned()
         ? &DefaultVolumeImpl::getPeakLevelStereo<T, Bps, true>
         : &DefaultVolumeImpl::getPeakLevelStereo<T, Bps, false>;
@@ -154,7 +166,9 @@ void updateProcessFuncsStereo()
 template<typename T, int Bps>
 void updateProcessFuncsMono()
 {
-    mProcessVolumeFunc = &DefaultVolumeImpl::processVolume<T, Bps>;
+    mProcessVolumeFunc = (Bps == 32)
+        ? &DefaultVolumeImpl::processVolume32
+        : &DefaultVolumeImpl::processVolume<T, Bps>;
     mGetLevelFunc = mFormat.isLeftAligned()
         ? &DefaultVolumeImpl::getPeakLevelMono<T, Bps, true>
         : &DefaultVolumeImpl::getPeakLevelMono<T, Bps, false>;

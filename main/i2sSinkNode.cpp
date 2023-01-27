@@ -115,7 +115,7 @@ void I2sOutputNode::nodeThreadFunc()
             return;
         }
         myassert(mState == kStateRunning);
-        plSendEvent(kEventAudioFormatChange, mFormat.asCode());
+        plSendEvent(kEventAudioFormatChange, mFormat.asNumCode());
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
             DataPullReq dpr(0xffff); // read all available data
 #ifdef DEBUG_TIMING
@@ -223,7 +223,7 @@ bool I2sOutputNode::setFormat(StreamFormat fmt)
     mFormat = fmt;
     uint bytesPerSample = fmt.numChannels() * (bps / 8);
     for (mBytesPerSampleShiftDiv = 0; bytesPerSample; bytesPerSample >>= 1, mBytesPerSampleShiftDiv++);
-    plSendEvent(kEventAudioFormatChange, fmt.asCode());
+    plSendEvent(kEventAudioFormatChange, fmt.asNumCode());
     return true;
 }
 

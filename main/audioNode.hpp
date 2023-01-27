@@ -20,70 +20,116 @@
 #include "queue.hpp"
 #include "utils.hpp"
 #include "playlist.hpp"
-enum CodecType: uint8_t {
-    kCodecUnknown = 0,
-    kCodecMp3,
-    kCodecAac,
-    kCodecM4a,
-    kCodecOggTransport,
-    kCodecOggVorbis,
-    kCodecFlac,
-    kCodecOggFlac,
-    kCodecOpus,
-    kCodecWav,
-    // ====
-    kPlaylistM3u8,
-    kPlaylistPls
+struct Codec {
+    enum Type: uint8_t {
+        kCodecUnknown = 0,
+        kCodecMp3,
+        kCodecAac,
+        kCodecVorbis,
+        kCodecFlac,
+        kCodecOpus,
+        kCodecWav,
+        kCodecPcm,
+        // ====
+        kPlaylistM3u8,
+        kPlaylistPls
+    };
+    enum Transport: uint8_t {
+        kTransportOgg  = 1,
+        kTransportMpeg = 2
+    };
+    enum Mode: uint8_t {
+        kAacModeSbr    = 1
+    };
+    union {
+        struct {
+            Type type: 4;
+            Mode mode: 2;
+            Transport transport: 2;
+        };
+        uint8_t numCode;
+    };
+    Codec(uint8_t val = 0): numCode(val) {
+        static_assert(sizeof(Codec) == 1, "sizeof(Codec) must be 1 byte");
+    }
+    Codec(Type aType, Transport aTrans): numCode(0) {
+        type = aType;
+        transport = aTrans;
+    }
+    const char* toString() const;
+    const char* fileExt() const;
+    operator uint8_t() const { return this->type; }
+    operator bool() const { return this->type != 0; }
+    Codec& operator=(Type aType) { type = aType; return *this; }
+    uint8_t asNumCode() const { return numCode; }
+    static const char* numCodeToStr(uint8_t aNumCode) {
+        Codec inst = { .numCode = aNumCode }; return inst.toString();
+    }
 };
 
 struct StreamFormat
 {
 protected:
-    union {
-        struct {
-            uint8_t mNumChannels: 1;
-            uint32_t mSampleRate: 19;
-            uint8_t mBitsPerSample: 2;
-            bool mIsLeftAligned: 1;
-            uint8_t mReserved: 1;
-        };
-        uint32_t mCode;
+    struct Members {
+        uint32_t sampleRate: 19;
+        uint8_t numChannels: 1;
+        uint8_t bitsPerSample: 2;
+        bool isLeftAligned: 1;
+        uint8_t reserved: 1;
+        Codec codec;
     };
-public:
-    operator bool() const { return mCode != 0; }
-    static uint8_t encodeBps(uint8_t bits) { return (bits >> 3) - 1; }
-    static uint8_t decodeBps(uint8_t bits) { return (bits + 1) << 3; }
-    void clear() { mCode = 0; }
-    StreamFormat(uint32_t sr, uint8_t bps, uint8_t channels): mCode(0)
+    union {
+        Members members;
+        uint32_t mNumCode;
+    };
+    void initSampleFormat(uint32_t sr, uint8_t bps, uint8_t channels)
     {
         setSampleRate(sr);
         setBitsPerSample(bps);
         setNumChannels(channels);
     }
-    StreamFormat(): mCode(0)
+public:
+    operator bool() const { return mNumCode != 0; }
+    static uint8_t encodeBps(uint8_t bits) { return (bits >> 3) - 1; }
+    static uint8_t decodeBps(uint8_t bits) { return (bits + 1) << 3; }
+    void clear() { mNumCode = 0; }
+    StreamFormat(uint32_t sr, uint8_t bps, uint8_t channels): mNumCode(0)
+    {
+        initSampleFormat(sr, bps, channels);
+    }
+    StreamFormat(Codec codec): mNumCode(0) { members.codec = codec; }
+    StreamFormat(Codec::Type type): mNumCode(0) { members.codec.type = type; }
+    StreamFormat(Codec codec, uint32_t sr, uint8_t bps, uint8_t channels): mNumCode(0)
+    {
+        initSampleFormat(sr, bps, channels);
+        members.codec = codec;
+    }
+    StreamFormat(): mNumCode(0)
     {
         static_assert(sizeof(StreamFormat) == sizeof(uint32_t), "Size of StreamFormat must be 32bit");
     }
-    StreamFormat(uint32_t code): mCode(code) {}
-    bool operator==(StreamFormat other) const { return mCode == other.mCode; }
-    bool operator!=(StreamFormat other) const { return mCode != other.mCode; }
-    uint32_t asCode() const { return mCode; }
+    StreamFormat(uint32_t code): mNumCode(code) {}
+    bool operator==(StreamFormat other) const { return mNumCode == other.mNumCode; }
+    bool operator!=(StreamFormat other) const { return mNumCode != other.mNumCode; }
+    uint32_t asNumCode() const { return mNumCode; }
     void set(uint32_t sr, uint8_t bits, uint8_t channels) {
         setNumChannels(channels);
         setSampleRate(sr);
         setBitsPerSample(bits);
     }
-    uint32_t sampleRate() const { return mSampleRate; }
-    void setSampleRate(uint32_t sr) { mSampleRate = sr; }
-    uint8_t bitsPerSample() const { return decodeBps(mBitsPerSample); }
-    void setBitsPerSample(uint8_t bps) { mBitsPerSample = encodeBps(bps); }
-    uint8_t numChannels() const { return mNumChannels + 1; }
-    bool isStereo() const { return mNumChannels != 0; }
-    bool isLeftAligned() const { return mIsLeftAligned; }
-    void setIsLeftAligned(bool val) { mIsLeftAligned = val; }
-    void setNumChannels(uint8_t ch) { mNumChannels = ch - 1; }
+    const Codec& codec() const { return members.codec; }
+    Codec& codec() { return members.codec; }
+    void setCodec(Codec codec) { members.codec = codec; }
+    uint32_t sampleRate() const { return members.sampleRate; }
+    void setSampleRate(uint32_t sr) { members.sampleRate = sr; }
+    uint8_t bitsPerSample() const { return decodeBps(members.bitsPerSample); }
+    void setBitsPerSample(uint8_t bps) { members.bitsPerSample = encodeBps(bps); }
+    uint8_t numChannels() const { return members.numChannels + 1; }
+    bool isStereo() const { return members.numChannels != 0; }
+    bool isLeftAligned() const { return members.isLeftAligned; }
+    void setIsLeftAligned(bool val) { members.isLeftAligned = val; }
+    void setNumChannels(uint8_t ch) { members.numChannels = ch - 1; }
 };
-const char* codecTypeToStr(CodecType type, uint16_t mode=0);
 
 class AudioNode;
 
@@ -155,10 +201,7 @@ public:
     {
         char* buf = nullptr;
         int size;
-        union {
-            StreamFormat fmt;
-            CodecType codec;
-        };
+        StreamFormat fmt;
         StreamId streamId;
         DataPullReq(size_t aSize): size(aSize) {}
         void reset(size_t aSize)
@@ -167,7 +210,7 @@ public:
             buf = nullptr;
             streamId = 0;
             fmt.clear();
-            myassert(codec == kCodecUnknown);
+            myassert(!fmt.codec());
         }
         void clear() { reset(0); }
         void clearExceptStreamId()
@@ -183,6 +226,9 @@ public:
     // confirmRead() with the actual amount read.
     virtual StreamError pullData(DataPullReq& dpr) = 0;
     virtual void confirmRead(int amount) = 0;
+    /** Reads exactly the specified amount of bytes to buf, or discards them
+     *  if \c buf is null */
+    StreamError readExact(DataPullReq& dpr, int size, char* buf);
     static const char* streamEventToStr(StreamError evt);
     static StreamError threeStateStreamError(int ret) {
         if (ret > 0) {

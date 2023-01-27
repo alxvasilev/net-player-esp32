@@ -20,7 +20,7 @@ protected:
     void freeDecoder();
     void getStreamFormat();
 public:
-    virtual CodecType type() const { return kCodecAac; }
+    virtual Codec::Type type() const { return Codec::kCodecAac; }
     DecoderAac(DecoderNode& parent, AudioNode& src);
     ~DecoderAac();
     virtual AudioNode::StreamError pullData(AudioNode::DataPullReq& output);

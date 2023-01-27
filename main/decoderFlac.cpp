@@ -2,8 +2,8 @@
 
 static const char* TAG = "flac";
 
-DecoderFlac::DecoderFlac(DecoderNode& parent, AudioNode& src, bool oggMode)
-: Decoder(parent, src, kCodecFlac)
+DecoderFlac::DecoderFlac(DecoderNode& parent, AudioNode& src, bool isOgg)
+: Decoder(parent, src)
 {
     mOutputBuf = (uint8_t*)utils::mallocTrySpiram(kOutputBufSize);
     if (!mOutputBuf) {
@@ -15,7 +15,7 @@ DecoderFlac::DecoderFlac(DecoderNode& parent, AudioNode& src, bool oggMode)
         ESP_LOGE(TAG, "Out of memory allocating FLAC decoder");
         abort();
     }
-    auto ret = oggMode
+    auto ret = isOgg
          ? FLAC__stream_decoder_init_ogg_stream(mDecoder, readCb, nullptr, nullptr, nullptr, nullptr,
              writeCb, metadataCb, errorCb, this)
          : FLAC__stream_decoder_init_stream(mDecoder, readCb, nullptr, nullptr, nullptr, nullptr,

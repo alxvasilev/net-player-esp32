@@ -24,7 +24,7 @@ uint32_t fourccLittleEndian(const char* str)
     return *str | (*(str+1) << 8) | (*(str+2) << 16) | (*(str+3) << 24);
 }
 
-AudioNode::StreamError detectOggCodec(AudioNode& src, CodecType& codec)
+AudioNode::StreamError detectOggCodec(AudioNode& src, Codec& codec)
 {
     enum { kPrefetchAmount = sizeof(OggPageHeader) + kMaxNumSegments + 10 }; // we need the first ~7 bytes in the segment
     char tmpbuf[kPrefetchAmount];
@@ -46,10 +46,11 @@ AudioNode::StreamError detectOggCodec(AudioNode& src, CodecType& codec)
     }
     const char* magic = data + sizeof(OggPageHeader) + hdr.numSegments + 1;
     if (strncmp(magic, "FLAC", 4) == 0) {
-        codec = kCodecOggFlac;
+        codec.type = Codec::kCodecFlac;
     } else if (strncmp(magic, "vorbis", 7) == 0) {
-        codec = kCodecOggVorbis;
+        codec.type = Codec::kCodecVorbis;
     } else {
+        codec.type = Codec::kCodecUnknown;
         return AudioNode::kErrNoCodec;
     }
     return AudioNode::kNoError;

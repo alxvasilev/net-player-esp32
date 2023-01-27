@@ -2,9 +2,9 @@
 #include "decoderMp3.hpp"
 #include "decoderAac.hpp"
 #include "decoderFlac.hpp"
+#include "decoderWav.hpp"
 #include "detectorOgg.hpp"
-
-bool DecoderNode::createDecoder(CodecType codec)
+bool DecoderNode::createDecoder(StreamFormat fmt)
 {
     /* info may contain a buffer with some bytes prefetched from the stream in order to detect the codec,
      * in case it's encapsulated in a transport stream. For example - ogg, where the mime is just audio/ogg. In this case
@@ -13,18 +13,21 @@ bool DecoderNode::createDecoder(CodecType codec)
      * buffer. In that case, pullData() will return less than needed
      */
     auto freeBefore = heapFreeTotal();
-    switch (codec) {
-    case kCodecMp3:
+    switch (fmt.codec().type) {
+    case Codec::kCodecMp3:
         mDecoder = new DecoderMp3(*this, *mPrev);
         break;
-    case kCodecAac:
+    case Codec::kCodecAac:
         mDecoder = new DecoderAac(*this, *mPrev);
         break;
-    case kCodecFlac:
-        mDecoder = new DecoderFlac(*this, *mPrev, false);
+    case Codec::kCodecFlac:
+        mDecoder = new DecoderFlac(*this, *mPrev, fmt.codec().transport == Codec::kTransportOgg);
         break;
-    case kCodecOggFlac:
-        mDecoder = new DecoderFlac(*this, *mPrev, true);
+    case Codec::kCodecWav:
+        mDecoder = new DecoderWav(*this, *mPrev, StreamFormat(Codec::kCodecWav));
+        break;
+    case Codec::kCodecPcm:
+        mDecoder = new DecoderWav(*this, *mPrev, fmt);
         break;
 /*
     case kCodecOggVorbis:
@@ -35,8 +38,8 @@ bool DecoderNode::createDecoder(CodecType codec)
         return false;
     }
     ESP_LOGI(mTag, "\e[34mCreated %s decoder, approx %d bytes of RAM consumed (%d free internal)",
-        codecTypeToStr(mDecoder->codec), freeBefore - heapFreeTotal(), heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-    plSendEvent(kEventCodecChange, codec);
+        fmt.codec().toString(), freeBefore - heapFreeTotal(), heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    plSendEvent(kEventCodecChange, fmt.codec().asNumCode());
     return true;
 }
 void DecoderNode::deleteDecoder()
@@ -45,11 +48,12 @@ void DecoderNode::deleteDecoder()
     if (!mDecoder) {
         return;
     }
-    auto codec = mDecoder->codec;
+    auto codec = mDecoder->type();
     auto freeBefore = heapFreeTotal();
     delete mDecoder;
     mDecoder = nullptr;
-    ESP_LOGI(mTag, "\e[34mDeleted %s decoder freed %d bytes", codecTypeToStr(codec), heapFreeTotal() - freeBefore);
+    ESP_LOGI(mTag, "\e[34mDeleted %s decoder freed %d bytes",
+        Codec::numCodeToStr(codec), heapFreeTotal() - freeBefore);
 }
 AudioNode::StreamError DecoderNode::detectCodecCreateDecoder(AudioNode::DataPullReq& odp)
 {
@@ -59,15 +63,16 @@ AudioNode::StreamError DecoderNode::detectCodecCreateDecoder(AudioNode::DataPull
         return err;
     }
     assert(!odp.buf && !odp.size);
-    if (odp.codec == kCodecOggTransport) {
+    Codec& codec = odp.fmt.codec();
+    if (codec.type == Codec::kCodecUnknown && codec.transport == Codec::kTransportOgg) {
         // allocates a buffer in odp and fetches some stream bytes in it
-        auto err = detectOggCodec(*mPrev, odp.codec);
+        auto err = detectOggCodec(*mPrev, codec);
         if (err != kNoError) {
             ESP_LOGW(mTag, "Error %s detecting ogg-encapsulated codec", streamEventToStr(err));
             return err;
         }
     }
-    bool ok = createDecoder(odp.codec);
+    bool ok = createDecoder(odp.fmt);
     return ok ? kNoError : kErrNoCodec;
 }
 
@@ -90,7 +95,7 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
         if (!err) {
             if (mStartingNewStream) {
                 mStartingNewStream = false;
-                plSendEvent(kEventNewStream, mDecoder->codec | (mDecoder->mode << 16), odp.fmt.asCode());
+                plSendEvent(kEventNewStream, mDecoder->outputFormat.asNumCode());
                 if (!mPrev->waitForPrefill()) {
                     return kStreamStopped;
                 }
@@ -101,13 +106,8 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
             printf("ASSERT odp.size is not zero but %d, event %d\n", odp.size, err);
         }
         if (err == kStreamChanged) {
-            if (odp.codec == mDecoder->codec) {
-                ESP_LOGI(mTag, "Stream changed, but codec is the same, resetting %s decoder", codecTypeToStr(mDecoder->codec));
-                mDecoder->reset();
-                mStartingNewStream = true;
-            } else {
-                deleteDecoder();
-            }
+            mStartingNewStream = true;
+            deleteDecoder();
         }
         else if (err == kStreamStopped || err == kStreamEnd) {
             deleteDecoder();
@@ -124,6 +124,9 @@ int32_t DecoderNode::heapFreeTotal()
     return result;
 }
 
-
-
-
+void DecoderNode::confirmRead(int size)
+{
+    if (mDecoder) {
+        mDecoder->confirmRead(size);
+    }
+}

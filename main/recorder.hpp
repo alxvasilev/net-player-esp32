@@ -20,7 +20,7 @@ public:
     TrackRecorder(const char* rootPath);
     ~TrackRecorder() { abortTrack(); }
     void setStation(const char* name);
-    bool onNewTrack(const char* trackName, CodecType codec);
+    bool onNewTrack(const char* trackName, Codec codec);
     void onData(const void* data, int dataLen);
     void abortTrack();
     bool isRecording() const { return mSinkFile != nullptr; }

@@ -77,7 +77,7 @@ void TrackRecorder::commit()
     ESP_LOGI(TAG, "Recorded track '%s' on station '%s'", mCurrTrackName.c_str(), mStationName.c_str());
 }
 
-bool TrackRecorder::onNewTrack(const char* trackName, CodecType codec)
+bool TrackRecorder::onNewTrack(const char* trackName, Codec codec)
 {
     if (mStationName.empty()) {
         return false;
@@ -90,7 +90,7 @@ bool TrackRecorder::onNewTrack(const char* trackName, CodecType codec)
 
     std::string name = trackName;
     name += '.';
-    name += codecTypeToStr(codec);
+    name += codec.fileExt();
 
     struct stat info;
     if (stat(trackNameToPath(name).c_str(), &info) == 0) {

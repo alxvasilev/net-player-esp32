@@ -3,7 +3,7 @@
 
 static const char* TAG = "mp3dec";
 
-DecoderMp3::DecoderMp3(DecoderNode& parent, AudioNode& src): Decoder(parent, src, kCodecMp3)
+DecoderMp3::DecoderMp3(DecoderNode& parent, AudioNode& src): Decoder(parent, src)
 {
     mInputBuf = (unsigned char*)utils::mallocTrySpiram(kInputBufSize + kOutputBufSize);
     if (!mInputBuf) {

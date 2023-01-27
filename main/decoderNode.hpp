@@ -10,12 +10,12 @@ protected:
     AudioNode& mSrcNode;
 public:
     StreamFormat outputFormat;
-    uint16_t mode = 0;
-    CodecType codec;
-    Decoder(DecoderNode& parent, AudioNode& src, CodecType aCodec)
-    : mParent(parent), mSrcNode(src), codec(aCodec) {}
+    Decoder(DecoderNode& parent, AudioNode& src)
+    : mParent(parent), mSrcNode(src) {}
     virtual ~Decoder() {}
+    virtual Codec::Type type() const = 0;
     virtual AudioNode::StreamError pullData(AudioNode::DataPullReq& output) = 0;
+    virtual void confirmRead(int size) {}
     virtual void reset() = 0;
 };
 /*
@@ -33,7 +33,7 @@ protected:
     bool mStartingNewStream = true;
     // odp in case there is a stream event that needs to be propagated
     AudioNode::StreamError detectCodecCreateDecoder(DataPullReq& odp);
-    bool createDecoder(CodecType codec);
+    bool createDecoder(StreamFormat fmt);
     static int32_t heapFreeTotal(); // used to  calculate memory usage for codecs
     void deleteDecoder();
 public:
@@ -41,7 +41,7 @@ public:
     DecoderNode(IAudioPipeline& parent): AudioNode(parent, "decoder"){}
     virtual Type type() const { return kTypeDecoder; }
     virtual StreamError pullData(DataPullReq& dpr);
-    virtual void confirmRead(int size) {}
+    virtual void confirmRead(int size);
     virtual ~DecoderNode() { deleteDecoder(); }
     virtual void reset() override { deleteDecoder(); }
     friend class Decoder;

@@ -18,50 +18,70 @@
 #define LOCK() MutexLocker locker(mMutex)
 
 static const char *TAG = "node-http";
-struct CodecMimeTypes { CodecType type; const char** mimeTypes; };
-/*CodecMimeTypes kCodecMimeMap[] = {
-    { kCodecMp3, (char **){ "mp3", "audio/mp3", "audio/mpeg"}}
-};*/
-CodecType HttpNode::codecFromContentType(const char* content_type)
+StreamFormat HttpNode::codecFromContentType(const char* content_type)
 {
     if (strcasecmp(content_type, "audio/mp3") == 0 ||
         strcasecmp(content_type, "audio/mpeg") == 0) {
-        return kCodecMp3;
+        return Codec::kCodecMp3;
     }
     else if (strcasecmp(content_type, "audio/aac") == 0 ||
         strcasecmp(content_type, "audio/x-aac") == 0 ||
 //      strcasecmp(content_type, "audio/mp4") == 0 ||
         strcasecmp(content_type, "audio/aacp") == 0) {
-        return kCodecAac;
+        return Codec::kCodecAac;
     }
     else if (strcasecmp(content_type, "audio/flac") == 0 ||
              strcasecmp(content_type, "audio/x-flac") == 0) {
-        return kCodecFlac;
+        return Codec::kCodecFlac;
     }
     else if (strcasecmp(content_type, "audio/ogg") == 0 ||
              strcasecmp(content_type, "application/ogg") == 0) {
-        return kCodecOggTransport;
+        return Codec(Codec::kCodecUnknown, Codec::kTransportOgg);
     }
     else if (strcasecmp(content_type, "audio/wav") == 0) {
-        return kCodecWav;
+        return Codec::kCodecWav;
+    }
+    else if (strncasecmp(content_type, "audio/L16", 9) == 0) {
+        return parseLpcmContentType(content_type + 9, 16);
+    }
+    else if (strncasecmp(content_type, "audio/L24", 9) == 0) {
+        return parseLpcmContentType(content_type + 9, 24);
     }
     else if (strcasecmp(content_type, "audio/opus") == 0) {
-        return kCodecOpus;
+        return Codec::kCodecOpus;
     }
     else if (strcasecmp(content_type, "audio/x-mpegurl") == 0 ||
         strcasecmp(content_type, "application/vnd.apple.mpegurl") == 0 ||
         strcasecmp(content_type, "vnd.apple.mpegURL") == 0) {
-        return kPlaylistM3u8;
+        return Codec::kPlaylistM3u8;
     }
     else if (strncasecmp(content_type, "audio/x-scpls", strlen("audio/x-scpls")) == 0) {
-        return kPlaylistPls;
+        return Codec::kPlaylistPls;
     }
-    return kCodecUnknown;
+    return Codec::kCodecUnknown;
 }
-
+StreamFormat HttpNode::parseLpcmContentType(const char* ctype, int bps)
+{
+    const char* kMsg = "Error parsing audio/Lxx";
+    auto len = strlen(ctype);
+    auto copy = (char*)malloc(len + 1);
+    memcpy(copy, ctype, len + 1);
+    KeyValParser params(copy, len, true);
+    if (!params.parse(';', '=', KeyValParser::kTrimSpaces)) {
+        ESP_LOGW(TAG, "%s params", kMsg);
+        return Codec::kCodecUnknown;
+    }
+    auto sr = params.intVal("rate", 0);
+    if (sr == 0) {
+        ESP_LOGW(TAG, "%s samplerate", kMsg);
+        return Codec::kCodecUnknown;
+    }
+    auto chans = params.intVal("channels", 1);
+    return StreamFormat(Codec::kCodecPcm, sr, 16, chans);
+}
 bool HttpNode::isPlaylist()
 {
-    if (mInCodec == kPlaylistM3u8 || mInCodec == kPlaylistPls) {
+    if (mInFormat.codec().type == Codec::kPlaylistM3u8 || mInFormat.codec().type == Codec::kPlaylistPls) {
         return true;
     }
     char *dot = strrchr(url(), '.');
@@ -119,8 +139,8 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
 void HttpNode::onHttpHeader(const char* key, const char* val)
 {
     if (strcasecmp(key, "Content-Type") == 0) {
-        mInCodec = codecFromContentType(val);
-        ESP_LOGI(TAG, "Parsed content-type '%s' as %s", key, codecTypeToStr(mInCodec));
+        mInFormat = codecFromContentType(val);
+        ESP_LOGI(TAG, "Parsed content-type '%s' as %s", key, mInFormat.codec().toString());
     }
     else if ((strcasecmp(key, "accept-ranges") == 0) && (strcasecmp(val, "bytes") == 0)) {
         mAcceptsRangeRequests = true;
@@ -220,8 +240,8 @@ bool HttpNode::connect(bool isReconnect)
         }
         plSendEvent(kEventConnected, isReconnect);
         if (!isReconnect) {
-            ESP_LOGD(TAG, "Posting kStreamChange with codec %s and streamId %d\n", codecTypeToStr(mInCodec), mUrlInfo->streamId);
-            postStreamEvent_Lock(mStreamStartPos, kStreamChanged, mInCodec, mUrlInfo->streamId);
+            ESP_LOGD(TAG, "Posting kStreamChange with codec %s and streamId %d\n", mInFormat.codec().toString(), mUrlInfo->streamId);
+            postStreamEvent_Lock(mStreamStartPos, kStreamChanged, mInFormat, mUrlInfo->streamId);
         }
         return true;
     }
@@ -327,7 +347,7 @@ bool HttpNode::recv()
                 );
 
                 if (mRecorder && !isFirst) { // start recording only on second icy track event - first track may be incomplete
-                    bool ok = mRecorder->onNewTrack(mIcyParser.trackName(), mInCodec);
+                    bool ok = mRecorder->onNewTrack(mIcyParser.trackName(), mInFormat.codec());
                     plSendEvent(kEventRecording, ok);
                 }
             }
@@ -504,7 +524,7 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
     if (evt != kNoError) {
         return evt;
     }
-    dp.codec = mOutCodec;
+    dp.fmt = mOutFormat;
     if (dp.size == 0) { // there was no due stream change event, and this is a codec probe
         return kNoError;
     }
@@ -557,10 +577,10 @@ AudioNode::StreamError HttpNode::dequeueStreamEvent(DataPullReq& dp)
         if (eventPos <= readPos) {
             decltype(mStreamEventQueue)::Popper popper(mStreamEventQueue);
             if (event.type == kStreamChanged) {
-                dp.codec = mOutCodec = event.codec;
+                dp.fmt = mOutFormat = event.fmt;
                 dp.streamId = event.streamId;
                 dp.size = 0;
-                ESP_LOGI(TAG, "Returning kStreamChanged: codec %s, streamId: %u", codecTypeToStr(event.codec), dp.streamId);
+                ESP_LOGI(TAG, "Returning kStreamChanged: codec %s, streamId: %u", event.fmt.codec().toString(), dp.streamId);
                 return kStreamChanged;
             }
             else if (event.type == kTitleChanged) {

@@ -39,19 +39,17 @@ protected:
     struct QueuedStreamEvent {
         int64_t streamPos;
         union {
-            struct {
-                uint32_t streamId: 24;
-                CodecType codec;
-            };
+            StreamFormat fmt;
             void* data;
         };
+        uint16_t streamId;
         StreamError type;
-        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, CodecType aCodec, uint32_t aStreamId):
-            streamPos(aStreamPos), streamId(aStreamId), codec(aCodec), type(aType) {}
-        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, void* aData):
-            streamPos(aStreamPos), data(aData), type(aType) {}
-        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, uint32_t aStreamId):
-            streamPos(aStreamPos), streamId(aStreamId), codec(kCodecUnknown), type(aType) {}
+        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, StreamFormat aFmt, uint32_t aStreamId)
+            :streamPos(aStreamPos), fmt(aFmt), streamId(aStreamId), type(aType) {}
+        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, void* aData)
+            :streamPos(aStreamPos), data(aData), streamId(0), type(aType) {}
+        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, uint32_t aStreamId)
+            :streamPos(aStreamPos), streamId(aStreamId), type(aType) {}
         ~QueuedStreamEvent() {
             if (type == kTitleChanged) {
                 free(data);
@@ -60,8 +58,8 @@ protected:
     };
     std::unique_ptr<UrlInfo> mUrlInfo;
     esp_http_client_handle_t mClient = nullptr;
-    CodecType mInCodec = kCodecUnknown;
-    CodecType mOutCodec = kCodecUnknown;
+    StreamFormat mInFormat;
+    StreamFormat mOutFormat;
     uint32_t mOutStreamId = 0;
     Playlist mPlaylist; /* media playlist */
     RingBuf mRingBuf;
@@ -74,7 +72,8 @@ protected:
     bool mAcceptsRangeRequests = false;
     volatile int mWaitingPrefill = 0;
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
-    static CodecType codecFromContentType(const char* content_type);
+    static StreamFormat parseLpcmContentType(const char* ctype, int bps);
+    static StreamFormat codecFromContentType(const char* content_type);
     void onHttpHeader(const char* key, const char* val);
     bool canResume() const { return (mContentLen != 0) && mAcceptsRangeRequests; }
     bool isPlaylist();

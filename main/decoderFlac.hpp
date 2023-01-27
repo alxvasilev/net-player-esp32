@@ -29,7 +29,7 @@ protected:
     template <typename T, int Shift=0>
     bool outputMonoSamples(int nSamples, const FLAC__int32* const samples[]);
 public:
-    virtual CodecType type() const { return kCodecFlac; }
+    virtual Codec::Type type() const { return Codec::kCodecFlac; }
     DecoderFlac(DecoderNode& parent, AudioNode& src, bool oggMode);
     ~DecoderFlac();
     virtual AudioNode::StreamError pullData(AudioNode::DataPullReq& dpr);
