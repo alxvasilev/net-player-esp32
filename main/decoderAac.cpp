@@ -120,12 +120,15 @@ void DecoderAac::getStreamFormat()
 {
     AACFrameInfo info;
     AACGetLastFrameInfo(mDecoder, &info);
+    outputFormat.setCodec(Codec::kCodecAac);
     outputFormat.setSampleRate(info.sampRateOut);
     outputFormat.setNumChannels(info.nChans);
     outputFormat.setBitsPerSample(16);
     mOutputLen = info.outputSamps * sizeof(uint16_t);
     bool isSbr = (info.sampRateOut != info.sampRateCore);
-
+    if (isSbr) {
+        outputFormat.codec().mode = Codec::kAacModeSbr;
+    }
     ESP_LOGW(TAG, "AAC%s 16-bit %s, %d Hz, %d bps, %d samples/frame",
         isSbr ? " SBR" : "",
         info.nChans == 2 ? "stereo" : "mono", info.sampRateOut,

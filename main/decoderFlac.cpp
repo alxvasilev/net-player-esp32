@@ -3,7 +3,8 @@
 static const char* TAG = "flac";
 
 DecoderFlac::DecoderFlac(DecoderNode& parent, AudioNode& src, bool isOgg)
-: Decoder(parent, src)
+    : Decoder(parent, src), mCodecInfo(Codec::kCodecFlac,
+      isOgg ? Codec::kTransportOgg : Codec::kTransportDefault)
 {
     mOutputBuf = (uint8_t*)utils::mallocTrySpiram(kOutputBufSize);
     if (!mOutputBuf) {
@@ -158,6 +159,7 @@ FLAC__StreamDecoderWriteStatus DecoderFlac::writeCb(const FLAC__StreamDecoder *d
     fmt.setSampleRate(header.sample_rate);
     if (fmt != oldFmt) {
         ESP_LOGI(TAG, "Output format is %d-bit, %.1fkHz %s", bps, (float)fmt.sampleRate() / 1000, (nChans == 2) ? "stereo" : "mono");
+        fmt.setCodec(self.mCodecInfo);
         if (nChans == 2) {
             if (bps == 16) {
                 self.mOutputFunc = &DecoderFlac::outputStereoSamples<int16_t>;

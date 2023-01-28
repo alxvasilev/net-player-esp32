@@ -120,6 +120,7 @@ int DecoderMp3::output(const mad_pcm& pcmData)
     }
 
     if (!outputFormat.sampleRate()) { // we haven't yet initialized output format info
+        outputFormat.setCodec(Codec::kCodecMp3);
         auto sr = pcmData.samplerate;
         if (sr != 11025 && sr != 22050 && sr != 44100 && sr != 48000) {
             ESP_LOGE(TAG, "Invalid/unsupported sample rate: %d\n", sr);

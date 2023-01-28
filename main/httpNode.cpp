@@ -42,10 +42,10 @@ StreamFormat HttpNode::codecFromContentType(const char* content_type)
         return Codec::kCodecWav;
     }
     else if (strncasecmp(content_type, "audio/L16", 9) == 0) {
-        return parseLpcmContentType(content_type + 9, 16);
+        return parseLpcmContentType(content_type, 16);
     }
     else if (strncasecmp(content_type, "audio/L24", 9) == 0) {
-        return parseLpcmContentType(content_type + 9, 24);
+        return parseLpcmContentType(content_type, 24);
     }
     else if (strcasecmp(content_type, "audio/opus") == 0) {
         return Codec::kCodecOpus;
@@ -63,9 +63,15 @@ StreamFormat HttpNode::codecFromContentType(const char* content_type)
 StreamFormat HttpNode::parseLpcmContentType(const char* ctype, int bps)
 {
     const char* kMsg = "Error parsing audio/Lxx";
-    auto len = strlen(ctype);
-    auto copy = (char*)malloc(len + 1);
-    memcpy(copy, ctype, len + 1);
+    ctype = strchr(ctype, ';');
+    if (!ctype) {
+        ESP_LOGW(TAG, "%s: No semicolon found", kMsg);
+        return Codec::kCodecUnknown;
+    }
+    ctype++;
+    auto len = strlen(ctype) + 1;
+    auto copy = (char*)malloc(len);
+    memcpy(copy, ctype, len);
     KeyValParser params(copy, len, true);
     if (!params.parse(';', '=', KeyValParser::kTrimSpaces)) {
         ESP_LOGW(TAG, "%s params", kMsg);

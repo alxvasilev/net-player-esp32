@@ -35,6 +35,7 @@ struct Codec {
         kPlaylistPls
     };
     enum Transport: uint8_t {
+        kTransportDefault = 0,
         kTransportOgg  = 1,
         kTransportMpeg = 2
     };

@@ -19,6 +19,7 @@ protected:
     FLAC__StreamDecoder* mDecoder = nullptr;
     OutputFunc mOutputFunc = nullptr;
     AudioNode::StreamError mLastStreamEvent;
+    Codec mCodecInfo;
     void init();
     static FLAC__StreamDecoderReadStatus readCb(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void *client_data);
     static void errorCb(const FLAC__StreamDecoder *decoder, FLAC__StreamDecoderErrorStatus status, void *client_data);
