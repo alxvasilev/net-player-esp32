@@ -760,6 +760,7 @@ void DlnaHandler::sendPacket(int len, uint32_t ip)
 
 void DlnaHandler::handleSsdpRequest(char* str, int len, uint32_t ip)
 {
+    const char* kErrPrefix = "SSDP request";
     char msearch[] = "M-SEARCH ";
     if (strncasecmp(str, msearch, sizeof(msearch) - 1)) {
         return;
@@ -772,13 +773,16 @@ void DlnaHandler::handleSsdpRequest(char* str, int len, uint32_t ip)
         }
     }
     if (*end == 0) {
-        ESP_LOGW(TAG, "SSDP request contains no newlines");
+        ESP_LOGW(TAG, "%s contains no newlines", kErrPrefix);
         return;
     }
     end++;
 
     KeyValParser params(end, len - (end - str));
-    params.parse('\n', ':', KeyValParser::kTrimSpaces | KeyValParser::kKeysToLower);
+    if (!params.parse('\n', ':', KeyValParser::kTrimSpaces | KeyValParser::kKeysToLower)) {
+        ESP_LOGW(TAG, "%s: Error parsing HTTP headers of:\n%s\n====", kErrPrefix, end);
+        return;
+    }
     for (auto& kv: params.keyVals()) {
         auto& val = kv.val;
         if (val.str[val.len-1] == '\r') {
@@ -787,6 +791,7 @@ void DlnaHandler::handleSsdpRequest(char* str, int len, uint32_t ip)
     }
     auto st = params.strVal("st").str;
     if (!st) {
+        ESP_LOGW(TAG, "%s: No ST header", kErrPrefix);
         return;
     }
     else if (strcasecmp(st, "ssdp:all") == 0) {
@@ -799,13 +804,16 @@ void DlnaHandler::handleSsdpRequest(char* str, int len, uint32_t ip)
     else if (strcasecmp(st, kSsdpRootDev) == 0) {
         sendReply(kSsdpRootDev, ip, nullptr);
     }
+    else if (strncasecmp(st, kUpnpDeviceSchema, sizeof(kUpnpDeviceSchema) - 1) == 0) {
+        st += sizeof(kUpnpDeviceSchema) - 1;
+        if (strncasecmp(st, kMediaRenderer, sizeof(kMediaRenderer) - 2) == 0) {
+            sendReply(kMediaRenderer, ip, kUpnpDeviceSchema);
+        }
+    }
     else if (strncasecmp(st, kUpnpServiceSchema, sizeof(kUpnpServiceSchema) - 1) == 0) {
         st += sizeof(kUpnpServiceSchema) - 1;
         if (strncasecmp(st, kAvTransport, sizeof(kAvTransport) - 2) == 0) { // skip the :version part
             sendReply(kAvTransport, ip, kUpnpServiceSchema);
-        }
-        else if (strncasecmp(st, kMediaRenderer, sizeof(kMediaRenderer) - 2) == 0) {
-            sendReply(kMediaRenderer, ip, kUpnpServiceSchema);
         }
         else if (strncasecmp(st, kRendCtl, sizeof (kRendCtl) - 2) == 0) {
             sendReply(kRendCtl, ip, kUpnpServiceSchema);
