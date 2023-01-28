@@ -144,8 +144,9 @@ void I2sOutputNode::nodeThreadFunc()
                 }
             }
             myassert(dpr.size);
+            dpr.fmt.codec() = Codec::kCodecUnknown;
             if (dpr.fmt != mFormat) {
-                ESP_LOGI(mTag, "Changing I2S output format");
+                ESP_LOGW(mTag, "Stream format changed");
                 setFormat(dpr.fmt);
             }
             {
@@ -241,9 +242,7 @@ I2sOutputNode::I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t*
     }
     if (kDacMutePin != GPIO_NUM_NC) {
         gpio_pad_select_gpio(kDacMutePin);
-        printf("before\n");
         gpio_set_direction(kDacMutePin, GPIO_MODE_OUTPUT);
-        printf("after\n");
         muteDac();
     }
     i2s_config_t cfg = {};

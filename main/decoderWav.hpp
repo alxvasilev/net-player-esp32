@@ -7,7 +7,6 @@ class DecoderWav: public Decoder
 protected:
     typedef void(DecoderWav::*OutputFunc)(AudioNode::DataPullReq& dpr);
     enum { kSamplesPerRequest = 1024 };
-    bool mNeedWavHeader;
     uint8_t mInputBytesPerSample = 0;
     uint16_t mOutputBytesPerFrame = 0;
     uint16_t mInputBytesPerFrame = 0;

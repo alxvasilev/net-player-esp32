@@ -146,7 +146,7 @@ void HttpNode::onHttpHeader(const char* key, const char* val)
 {
     if (strcasecmp(key, "Content-Type") == 0) {
         mInFormat = codecFromContentType(val);
-        ESP_LOGI(TAG, "Parsed content-type '%s' as %s", key, mInFormat.codec().toString());
+        ESP_LOGI(TAG, "Parsed content-type '%s' as %s", val, mInFormat.codec().toString());
     }
     else if ((strcasecmp(key, "accept-ranges") == 0) && (strcasecmp(val, "bytes") == 0)) {
         mAcceptsRangeRequests = true;

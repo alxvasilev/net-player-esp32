@@ -5,10 +5,7 @@ DecoderWav::DecoderWav(DecoderNode& parent, AudioNode& src, StreamFormat fmt)
 : Decoder(parent, src)
 {
     outputFormat = fmt;
-    if (fmt.codec().type == Codec::kCodecWav) {
-        mNeedWavHeader = true;
-    } else {
-        mNeedWavHeader = false;
+    if (fmt.codec().type == Codec::kCodecPcm) {
         assert(fmt.sampleRate() != 0 && fmt.bitsPerSample() != 0);
     }
 }
@@ -53,12 +50,10 @@ if (strncmp(ptr, str, 4) != 0) {                                            \
 AudioNode::StreamError DecoderWav::parseWavHeader(AudioNode::DataPullReq& dpr)
 {
     char buf[sizeof(WavHeader)];
-    printf("reading WAV header...\n");
     auto event = mSrcNode.readExact(dpr, sizeof(WavHeader), buf);
     if (event) {
         return event;
     }
-    printf("got WAV header\n");
     WavHeader& wavHdr = *reinterpret_cast<WavHeader*>(buf);
     CHECK_CHUNK_TYPE(wavHdr.riffHdr.chunkHdr.type, "RIFF");
     CHECK_CHUNK_TYPE(wavHdr.riffHdr.riffType, "WAVE");
@@ -87,7 +82,6 @@ AudioNode::StreamError DecoderWav::parseWavHeader(AudioNode::DataPullReq& dpr)
     ESP_LOGI(TAG, "Audio format: %d-bit, %.1f kHz", bps, (float)wfmt.sampleRate/1000);
     int extra = (int)wfmt.chunkHdr.size - 16;
     if (extra) {
-        printf("reading extra %u bytes of WAVEFORMAT chunk...\n", extra);
         event = mSrcNode.readExact(dpr, extra, nullptr); // discard rest of fmt chunk
         if (event) {
             return event;
@@ -136,17 +130,27 @@ bool DecoderWav::setupOutput()
     else {
         return false;
     }
+    ESP_LOGI(TAG, "Configured for %d-bit %.1f kHz %s", bps, (float)outputFormat.sampleRate() / 1000,
+        nChans == 1 ? "mono" : "stereo");
     return true;
 }
 AudioNode::StreamError DecoderWav::pullData(AudioNode::DataPullReq& dpr)
 {
-    if (mNeedWavHeader) {
-        mNeedWavHeader = false;
-        auto event = parseWavHeader(dpr);
-        if (event) {
-            return event;
+    if (!mInputBytesPerFrame) {
+        auto codec = outputFormat.codec().type;
+        if (codec == Codec::kCodecWav) {
+            auto event = parseWavHeader(dpr);
+            if (event) {
+                return event;
+            }
+        } else if (codec == Codec::kCodecPcm) {
+            if (!setupOutput()) {
+                return AudioNode::kErrDecode;
+            }
+        } else {
+            assert(false);
         }
-        printf("header parse completed, reading data\n");
+        assert(mInputBytesPerFrame);
     }
     dpr.size = mInputBytesPerFrame;
     auto event = mSrcNode.pullData(dpr);
@@ -165,12 +169,12 @@ AudioNode::StreamError DecoderWav::pullData(AudioNode::DataPullReq& dpr)
             dpr.buf = mSingleSampleBuf;
             dpr.size = mInputBytesPerSample;
             mNeedConfirmRead = false;
-            printf("received less than 1 sample\n");
         }
     }
 
     if (!mOutputFunc) {
         dpr.fmt = outputFormat;
+        assert(dpr.size);
         return AudioNode::kNoError;
     }
     (this->*mOutputFunc)(dpr);

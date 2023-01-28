@@ -66,6 +66,7 @@ struct Codec {
     static const char* numCodeToStr(uint8_t aNumCode) {
         Codec inst = { .numCode = aNumCode }; return inst.toString();
     }
+    void clear() { numCode = 0; }
 };
 
 struct StreamFormat
