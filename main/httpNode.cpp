@@ -83,7 +83,12 @@ StreamFormat HttpNode::parseLpcmContentType(const char* ctype, int bps)
         return Codec::kCodecUnknown;
     }
     auto chans = params.intVal("channels", 1);
-    return StreamFormat(Codec::kCodecPcm, sr, 16, chans);
+    StreamFormat fmt(Codec::kCodecPcm, sr, 16, chans);
+    auto endian = params.strVal("endianness");
+    if (!endian || strcasecmp(endian.str, "little-endian") != 0) {
+        fmt.setBigEndian(true);
+    }
+    return fmt;
 }
 bool HttpNode::isPlaylist()
 {

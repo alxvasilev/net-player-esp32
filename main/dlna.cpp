@@ -326,7 +326,8 @@ bool DlnaHandler::handleConnMgrCommand(httpd_req_t* req, const char* cmd, const 
             "http-get:*:audio/mp3:*,http-get:*:audio/mpeg:*,"
             "http-get:*:audio/aac:*,http-get:*:audio/x-aac:*,http-get:*:audio/aacp:*,"
             "http-get:*:audio/ogg:*,http-get:*:application/ogg:*,"
-            "http-get:*:audio/wav:*,http-get:*:audio/wave:*,http-get:*:audio/x-wav:*"
+            "http-get:*:audio/wav:*,http-get:*:audio/wave:*,http-get:*:audio/x-wav:*,"
+            "http-get:*:audio/L8:*,http-get:*:audio/L16:*,http-get:*:audio/L24:*,http-get:*:audio/L32:*"
             "</Sink>");
         return true;
     } else {

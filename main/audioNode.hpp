@@ -77,7 +77,7 @@ protected:
         uint8_t numChannels: 1;
         uint8_t bitsPerSample: 2;
         bool isLeftAligned: 1;
-        uint8_t reserved: 1;
+        bool isBigEndian: 1;
         Codec codec;
     };
     union {
@@ -129,6 +129,8 @@ public:
     uint8_t numChannels() const { return members.numChannels + 1; }
     bool isStereo() const { return members.numChannels != 0; }
     bool isLeftAligned() const { return members.isLeftAligned; }
+    bool isBigEndian() const { return members.isBigEndian; }
+    void setBigEndian(bool isBe) { members.isBigEndian = isBe; }
     void setIsLeftAligned(bool val) { members.isLeftAligned = val; }
     void setNumChannels(uint8_t ch) { members.numChannels = ch - 1; }
 };

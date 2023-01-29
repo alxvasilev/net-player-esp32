@@ -17,8 +17,10 @@ protected:
     AudioNode::StreamError fillBuf(AudioNode::DataPullReq& dpr, char* buf, int size);
     AudioNode::StreamError parseWavHeader(AudioNode::DataPullReq& dpr);
     bool setupOutput();
-    void output24to32(AudioNode::DataPullReq& dpr);
-    void output8to16(AudioNode::DataPullReq& dpr);
+    template <typename T, int Bps, bool BigEndian=false>
+    void transformAudioData(AudioNode::DataPullReq& audio);
+    void outputSwapBeToLe16(AudioNode::DataPullReq& audio);
+    void outputSwapBeToLe32(AudioNode::DataPullReq& audio);
 public:
     virtual Codec::Type type() const { return outputFormat.codec().type; }
     DecoderWav(DecoderNode& parent, AudioNode& src, StreamFormat fmt);

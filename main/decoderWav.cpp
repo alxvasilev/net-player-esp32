@@ -79,7 +79,6 @@ AudioNode::StreamError DecoderWav::parseWavHeader(AudioNode::DataPullReq& dpr)
     if (!setupOutput()) {
         return AudioNode::kErrDecode;
     }
-    ESP_LOGI(TAG, "Audio format: %d-bit, %.1f kHz", bps, (float)wfmt.sampleRate/1000);
     int extra = (int)wfmt.chunkHdr.size - 16;
     if (extra) {
         event = mSrcNode.readExact(dpr, extra, nullptr); // discard rest of fmt chunk
@@ -98,7 +97,6 @@ AudioNode::StreamError DecoderWav::parseWavHeader(AudioNode::DataPullReq& dpr)
             break;
         }
         // read and discard chunk
-        printf("reading chunk %.*s to discard (%u bytes)...\n", 4, chunkHdr->type, chunkHdr->size);
         auto event = mSrcNode.readExact(dpr, chunkHdr->size, nullptr); // discard chunk data
         if (event) {
             return event;
@@ -112,25 +110,35 @@ bool DecoderWav::setupOutput()
     int nChans = outputFormat.numChannels();
     mInputBytesPerFrame = kSamplesPerRequest * nChans * bps / 8;
     if (bps == 16 || bps == 32) {
-        mOutputBytesPerFrame = kSamplesPerRequest * nChans * bps / 8;
         mOutputBuf.freeBuf(); // must already be null
-        mOutputFunc = nullptr;
-        ESP_LOGI(TAG, "Forwarding PCM data without conversion");
+        mOutputBytesPerFrame = kSamplesPerRequest * nChans * bps / 8;
+        if (outputFormat.isBigEndian()) {
+            mOutputFunc = (bps == 16)
+                ? &DecoderWav::outputSwapBeToLe16
+                : &DecoderWav::outputSwapBeToLe32;
+            ESP_LOGI(TAG, "Converting PCM data from big-endian");
+        }
+        else {
+            mOutputFunc = nullptr;
+            ESP_LOGI(TAG, "Forwarding PCM data without conversion");
+        }
     }
     else if (bps == 24) {
         mOutputBytesPerFrame = kSamplesPerRequest * 4 * nChans;
         mOutputBuf.resize(mOutputBytesPerFrame);
-        mOutputFunc = &DecoderWav::output24to32;
+        mOutputFunc = outputFormat.isBigEndian()
+            ? &DecoderWav::transformAudioData<int32_t, 24, true>
+            : &DecoderWav::transformAudioData<int32_t, 24, false>;
     }
     else if (bps == 8) {
         mOutputBytesPerFrame = kSamplesPerRequest * 2 * nChans;
         mOutputBuf.resize(mOutputBytesPerFrame);
-        mOutputFunc = &DecoderWav::output8to16;
+        mOutputFunc = &DecoderWav::transformAudioData<int16_t, 8>;
     }
     else {
         return false;
     }
-    ESP_LOGI(TAG, "Configured for %d-bit %.1f kHz %s", bps, (float)outputFormat.sampleRate() / 1000,
+    ESP_LOGI(TAG, "Audio format: %d-bit %.1f kHz %s", bps, (float)outputFormat.sampleRate() / 1000,
         nChans == 1 ? "mono" : "stereo");
     return true;
 }
@@ -157,7 +165,7 @@ AudioNode::StreamError DecoderWav::pullData(AudioNode::DataPullReq& dpr)
     if (event) {
         return event;
     }
-    mNeedConfirmRead = (mOutputFunc == nullptr);
+    mNeedConfirmRead = !mOutputBuf;
     if (dpr.size != mInputBytesPerFrame) { // less returned, round to whole samples
         assert(dpr.size < mInputBytesPerFrame);
         dpr.size -= dpr.size % mInputBytesPerSample;
@@ -172,16 +180,17 @@ AudioNode::StreamError DecoderWav::pullData(AudioNode::DataPullReq& dpr)
         }
     }
 
-    if (!mOutputFunc) {
-        dpr.fmt = outputFormat;
-        assert(dpr.size);
-        return AudioNode::kNoError;
-    }
-    (this->*mOutputFunc)(dpr);
-    if (dpr.buf != mSingleSampleBuf) {
-        mSrcNode.confirmRead(dpr.size);
+    if (mOutputFunc) {
+        (this->*mOutputFunc)(dpr);
     }
     dpr.fmt = outputFormat;
+    assert(dpr.size);
+    if (!mOutputBuf) { // caller needs to confirm the read
+        return AudioNode::kNoError;
+    }
+    if (dpr.buf != mSingleSampleBuf) { // read to mSingleSampleBuf is auto-confirmed already
+        mSrcNode.confirmRead(dpr.size);
+    }
     dpr.buf = mOutputBuf.buf();
     dpr.size = mOutputBuf.dataSize();
     return AudioNode::kNoError;
@@ -191,25 +200,55 @@ void DecoderWav::confirmRead(int size) {
         mSrcNode.confirmRead(size);
     }
 }
-void DecoderWav::output24to32(AudioNode::DataPullReq& dpr)
+template<typename T, int Bps, bool BigEndian>
+T transformSample(uint8_t* input);
+
+template<>
+int32_t transformSample<int32_t, 24, false>(uint8_t* input)
 {
-    mOutputBuf.setDataSize(dpr.size * 4 / 3);
-    auto wptr = (int32_t*)mOutputBuf.buf();
-    uint8_t* end = (uint8_t*)dpr.buf + dpr.size;
-    for (auto rptr = (uint8_t*)dpr.buf; rptr < end;) {
-        int32_t sample = *rptr++ << 8;
-        sample |= *rptr++ << 16;
-        sample |= *rptr++ << 24;
-        *wptr++ = sample >> 8;
+    int32_t sample = *input << 8;
+    sample |= *(input+1) << 16;
+    sample |= *(input+2) << 24;
+    return sample >> 8;
+}
+
+template<>
+int32_t transformSample<int32_t, 24, true>(uint8_t* input)
+{
+    int32_t sample = *input << 24;
+    sample |= *(input+1) << 16;
+    sample |= *(input+2) << 8;
+    return sample >> 8;
+}
+
+template<>
+int16_t transformSample<int16_t, 8, false>(uint8_t* input)
+{
+    return (*input << 8) >> 8;
+}
+
+template <typename T, int Bps, bool BigEndian=false>
+void DecoderWav::transformAudioData(AudioNode::DataPullReq& audio)
+{
+    enum { kInputBytesPerSample = Bps / 8 };
+    mOutputBuf.setDataSize(audio.size * sizeof(T) / kInputBytesPerSample);
+    auto wptr = (T*)mOutputBuf.buf();
+    uint8_t* end = (uint8_t*)audio.buf + audio.size;
+    for (auto rptr = (uint8_t*)audio.buf; rptr < end; wptr++, rptr += kInputBytesPerSample) {
+        *wptr = transformSample<T, Bps, BigEndian>(rptr);
     }
 }
-void DecoderWav::output8to16(AudioNode::DataPullReq& dpr)
+void DecoderWav::outputSwapBeToLe16(AudioNode::DataPullReq& audio)
 {
-    mOutputBuf.setDataSize(dpr.size * 2);
-    auto wptr = (int16_t*)mOutputBuf.buf();
-    uint8_t* end = (uint8_t*)dpr.buf + dpr.size;
-    for (auto rptr = (uint8_t*)dpr.buf; rptr < end;) {
-        int16_t sample = *rptr++ << 8;
-        *wptr++ = sample >> 8;
+    auto end = (int16_t*)(audio.buf + audio.size);
+    for (int16_t* sample = (int16_t*)audio.buf; sample < end; sample++) {
+        *sample = ntohs(*sample);
+    }
+}
+void DecoderWav::outputSwapBeToLe32(AudioNode::DataPullReq& audio)
+{
+    auto end = (int32_t*)(audio.buf + audio.size);
+    for (int32_t* sample = (int32_t*)audio.buf; sample < end; sample++) {
+        *sample = ntohl(*sample);
     }
 }
