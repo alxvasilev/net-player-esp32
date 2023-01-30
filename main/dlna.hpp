@@ -15,23 +15,23 @@ namespace http {
 }
 class DlnaHandler {
 protected:
+    enum EventSrc: uint8_t { kEventsRendCtl = 1, kEventsAVTransport = 2 };
     struct EventSubscription
     {
-        enum: uint8_t { kServiceMediaRenderer = 1 };
     protected:
-        static constexpr const char* kSidPrefix = "uuid:564dc06e-4609-4f08-9430-7074"; //"uuid:00000000-0000-0000-0000-0000";
         uint32_t mSeqNo = 0;
     public:
+        static constexpr const char kSidPrefix[] = "uuid:00000000-0000-4000-8000-0000";
         static uint32_t sSidCounter;
         uint32_t sid;
         uint32_t tsTill;
         DynBuffer callbackUrl;
-        uint8_t service;
+        EventSrc service;
         static uint32_t parseSid(char* sid, int len=-1);
-        EventSubscription(uint8_t aService): sid(++sSidCounter), service(aService) {}
+        EventSubscription(EventSrc aService): sid(++sSidCounter), service(aService) {}
         const char* strSid(char* buf, size_t bufLen) const;
-        bool notify(const char* xml);
-        bool notifySubscribed();
+        bool notify(const std::string& xml);
+        bool notifySubscribed(AudioPlayer& player);
         ~EventSubscription();
     };
     static constexpr const char* kSsdpMulticastGroup = "239.255.255.250";
@@ -63,16 +63,21 @@ protected:
     static esp_err_t httpDlnaCommandHandler(httpd_req_t* req);
     static esp_err_t httpDlnaSubscribeHandler(httpd_req_t* req);
     static esp_err_t httpDlnaUnsubscribeHandler(httpd_req_t* req);
+    static const char* eventXmlFromType(EventSrc service);
+    static std::string createEventXml(EventSrc service, const std::string& inner);
     bool handleAvTransportCommand(httpd_req_t* req, const char* cmd, const tinyxml2::XMLElement& cmdNode, std::string& result);
     bool handleConnMgrCommand(httpd_req_t* req, const char* cmd, const tinyxml2::XMLElement& cmdNode, std::string& result);
     bool handleRenderCtlCommand(httpd_req_t* req, const char* cmd, const tinyxml2::XMLElement& cmdNode, std::string& result);
     EventSubscription* eventSubscriptionBySid(uint32_t sid);
-    void notifyEvent(const char* xml);
+    void notify(EventSrc service, std::string& xml);
+    void doNotify(EventSrc service, const std::string& innerXml);
 public:
     DlnaHandler(http::Server& httpServer, const char* hostPort, AudioPlayer& player);
     ~DlnaHandler();
     bool start();
     void notifyVolumeChange(int vol);
     void notifyMute(bool mute, int vol);
+    void notifyPlayStart();
+    void notifyPlayStop();
 };
 #endif

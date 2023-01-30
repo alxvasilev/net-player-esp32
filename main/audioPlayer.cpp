@@ -442,6 +442,9 @@ bool AudioPlayer::doPlayUrl(const char* url, PlayerMode playerMode, const char* 
     }
     lcdUpdateTrackDisplay();
     mStreamOut->run();
+    if (mDlna) {
+        mDlna->notifyPlayStart();
+    }
     return true;
 }
 bool AudioPlayer::playUrl(const char* url, PlayerMode playerMode, const char* record)
@@ -453,6 +456,20 @@ bool AudioPlayer::playUrl(TrackInfo* trackInfo, PlayerMode playerMode, const cha
 {
     mTrackInfo.reset(trackInfo);
     return doPlayUrl(trackInfo->url, playerMode, record);
+}
+std::string AudioPlayer::url() const
+{
+    if (!mStreamIn || mStreamIn->type() != AudioNode::kTypeHttpIn) {
+        return std::string();
+    }
+    if (mTrackInfo) {
+        return mTrackInfo->url;
+    } else {
+        auto& http = *static_cast<HttpNode*>(mStreamIn.get());
+        MutexLocker locker(http.mMutex);
+        auto url = http.url();
+        return url ? url : std::string();
+    }
 }
 esp_err_t AudioPlayer::playStation(const char* id)
 {
@@ -503,6 +520,9 @@ void AudioPlayer::play()
 {
     mStreamIn->run();
     mStreamOut->run();
+    if (mDlna) {
+        mDlna->notifyPlayStart();
+    }
 }
 
 void AudioPlayer::resume()
@@ -532,6 +552,9 @@ void AudioPlayer::stop(const char* caption)
         mVuLevelInterface->clearAudioLevels();
     }
     lcdUpdatePlayState(caption);
+    if (mDlna) {
+        mDlna->notifyPlayStop();
+    }
 }
 uint32_t AudioPlayer::positionTenthSec() const
 {

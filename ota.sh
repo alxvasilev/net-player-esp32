@@ -10,7 +10,7 @@ if [ "$ISRECOVERY" != "200" ]; then
     if [ "$1" == "make" ]; then
         RECOVERY_URL+="&flags=1"
 	fi
-	curl -s -S "$RECOVERY_URL"
+	curl -s -S $RETRY "$RECOVERY_URL"
     echo
     if [ "$1" == "make" ]; then
         make -j

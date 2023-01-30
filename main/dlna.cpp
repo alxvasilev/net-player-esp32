@@ -8,7 +8,8 @@
 #include <tinyxml2.h>
 #include "dlna-parse.hpp"
 #include "audioPlayer.hpp"
-#include <sstream>
+//#include <sstream>
+#include <functional>
 
 static const char* TAG = "dlna";
 static const char* TAG_NOTIFY = "dlna-notify";
@@ -35,6 +36,7 @@ static const char kRendCtl[] = "RenderingControl:1";
 static const char kSsdpRootDev[] = "ssdp:rootdevice";
 static const char kUpnpRootdevice[] = "upnp:rootdevice";
 static const char kServerHeader[] = "FreeRTOS/x UPnP/1.0 NetPlayer/x";
+
 #define kUuidPrefix "12345678-abcd-ef12-cafe-"
 
 static constexpr uint32_t kSsdpMulticastAddr = utils::ip4Addr(239,255,255,250);
@@ -366,8 +368,7 @@ bool DlnaHandler::handleRenderCtlCommand(httpd_req_t* req, const char* cmd, cons
     return false;
 }
 
-typedef char*(*GetPtrFunc)(void*, size_t);
-bool httpGetHeader(httpd_req_t* req, const char* hdrName, void* arg, GetPtrFunc cb)
+bool httpGetHeader(httpd_req_t* req, const char* hdrName, const std::function<char*(size_t)>& cb)
 {
     char errMsg[64];
     auto len = httpd_req_get_hdr_value_len(req, hdrName);
@@ -377,7 +378,7 @@ bool httpGetHeader(httpd_req_t* req, const char* hdrName, void* arg, GetPtrFunc 
         return false;
     }
     len++;
-    char* buf = cb(arg, len);
+    char* buf = cb(len);
     if (!buf) {
         return false;
     }
@@ -392,7 +393,7 @@ bool httpGetHeader(httpd_req_t* req, const char* hdrName, void* arg, GetPtrFunc 
 }
 const char* DlnaHandler::EventSubscription::strSid(char* buf, size_t bufLen) const
 {
-    return "uuid:00000000-0000-4000-8000-000000000001";
+//    return "uuid:00000000-0000-4000-8000-000000000001";
     vtsnprintf(buf, bufLen, kSidPrefix, fmtHex32(sid));
     return buf;
 }
@@ -409,16 +410,49 @@ uint32_t DlnaHandler::EventSubscription::parseSid(char* sid, int len)
     }
     return parseInt(sid + len - 8, 0, 16);
 }
-bool DlnaHandler::EventSubscription::notifySubscribed()
+bool DlnaHandler::EventSubscription::notifySubscribed(AudioPlayer& player)
 {
-    if (service == kServiceMediaRenderer) {
-        return notify("&lt;Event xmlns=&quot;urn:schemas-upnp-org:metadata-1-0/RCS/&quot;&gt;&lt;InstanceID val=&quot;0&quot;&gt;&lt;PresetNameList val=&quot;FactoryDefaults&quot; channel=&quot;Master&quot;/&gt;&lt;Mute val=&quot;1&quot; channel=&quot;Master&quot;/&gt;&lt;Volume val=&quot;0&quot; channel=&quot;Master&quot;/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;");
-    } else {
+    std::string xml;
+    {
+    MutexLocker locker(player.mutex);
+    if (service == kEventsRendCtl) {
+        xml.reserve(200);
+        xml = "&lt;PresetNameList val=&quot;FactoryDefaults&quot; channel=&quot;Master&quot;/&gt;&lt;Mute val=&quot;";
+        xml += player.isMuted() ? '1' : '0';
+        xml += "&quot; channel=&quot;Master&quot;/&gt;&lt;Volume val=&quot;";
+        appendAny(xml, player.volumeGet());
+        xml += "&quot; channel=&quot;Master&quot;/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;";
+    }
+    else if (service == kEventsAVTransport) {
+        xml.reserve(300);
+        xml = "&lt;TransportPlaySpeed val=&quot;1&quot;/&gt;"
+              "&lt;CurrentPlayMode val=&quot;NORMAL&quot;/&gt;&lt;TransportState val=&quot;";
+        const TrackInfo* trkInfo;
+        if (player.isPlaying()) {
+            trkInfo = player.trackInfo();
+            xml += "PLAYING";
+        } else {
+            trkInfo = nullptr;
+            xml += "STOPPED";
+        }
+        xml += "&quot;/&gt;&lt;AVTransportURI val=&quot;";
+        xml += trkInfo ? trkInfo->url : "";
+        xml += "&quot;/&gt;&lt;CurrentTrackDuration val=&quot;";
+        xml += trkInfo ? msToHmsString(trkInfo->durationMs) : kHmsZeroTime;
+        xml += "&quot;/&gt;&lt;CurrentTransportActions val=&quot;Play&quot;/&gt;";
+        xml += "&lt;CurrentTrack val=&quot;1&quot;/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;";
+    }
+    else {
         ESP_LOGW(TAG_NOTIFY, "notifySubscribed: Unsupported service %d", service);
         return false;
     }
+    }
+    auto fullXml = createEventXml(service, xml);
+    printf("NOTIFY subscribed: %s\n", fullXml.c_str());
+    return notify(fullXml);
 }
-bool DlnaHandler::EventSubscription::notify(const char* xml)
+
+bool DlnaHandler::EventSubscription::notify(const std::string& xml)
 {
     esp_http_client_config_t cfg = {};
     cfg.url = callbackUrl.buf();
@@ -438,29 +472,27 @@ bool DlnaHandler::EventSubscription::notify(const char* xml)
     esp_http_client_set_header(client, "SEQ", buf);
     esp_http_client_set_header(client, "Content-Type", "text/xml; charset=\"utf-8\"");
 
-    std::string body = "<?xml version=\"1.0\"?>"
-        "<e:propertyset xmlns:e=\"urn:schemas-upnp-org:event-1-0\"><e:property><LastChange>";
-    body.append(xml).append("</LastChange></e:property></e:propertyset>");
-    printf("NOTIFY tx: %s\n", body.c_str());
     bool success = false;
     do {
         esp_err_t err;
-        if ((err = esp_http_client_open(client, body.size())) != ESP_OK) {
+        if ((err = esp_http_client_open(client, xml.size())) != ESP_OK) {
             ESP_LOGW(TAG_NOTIFY, "Error connecting to target: %s", esp_err_to_name(err));
             break;
         }
-        if ((esp_http_client_write(client, body.c_str(), body.size())) < 0) {
+        if (esp_http_client_write(client, xml.c_str(), xml.size()) < 0) {
             ESP_LOGW(TAG_NOTIFY, "Error posting xml: %s", strerror(errno));
             break;
         }
         auto responseLen = esp_http_client_fetch_headers(client);
         if (responseLen < 0) {
-            ESP_LOGW(TAG_NOTIFY, "NOTIFY request: Got negative content-length %d in response, status is %d", responseLen, esp_http_client_get_status_code(client));
+            ESP_LOGW(TAG_NOTIFY, "NOTIFY request '%s': Got negative content-length %d in response, status is %d", cfg.url,
+                     responseLen, esp_http_client_get_status_code(client));
             break;
         }
         auto code = esp_http_client_get_status_code(client);
         if (code != 200) {
-            ESP_LOGW(TAG_NOTIFY, "NOTIFY request failed with code %d, response len: %d", code, responseLen);
+            ESP_LOGW(TAG_NOTIFY, "NOTIFY request '%s' failed with code %d, response len: %d",
+                     cfg.url, code, responseLen);
             break;
         }
         if (responseLen > 0) {
@@ -481,33 +513,66 @@ DlnaHandler::EventSubscription::~EventSubscription()
 {
     ESP_LOGI(TAG_NOTIFY, "Deleting event subscription %u", sid);
 }
-void DlnaHandler::notifyEvent(const char* xml)
+void DlnaHandler::notify(EventSrc service, std::string& xml)
 {
+    mHttpServer.queueWork([this, service, xml = std::move(xml)]() {
+        this->doNotify(service, xml);
+    });
+}
+void DlnaHandler::doNotify(EventSrc service, const std::string& innerXml)
+{
+    auto xml = createEventXml(service, innerXml);
+    printf("NOTIFY tx: %s\n", xml.c_str());
     uint32_t now = esp_timer_get_time() / 1000000;
     for (auto it = mEventSubs.begin(); it != mEventSubs.end();) {
         if (it->tsTill < now) {
             it = mEventSubs.erase(it);
             continue;
         }
-        it->notify(xml);
+        if (it->service == service) {
+            it->notify(xml);
+        }
         it++;
     }
 }
+const char* DlnaHandler::eventXmlFromType(EventSrc service)
+{
+    if (service == kEventsRendCtl) {
+        return "RCS";
+    } else if (service == kEventsAVTransport) {
+        return "AVT";
+    } else {
+        assert(false);
+        return nullptr;
+    }
+}
+std::string DlnaHandler::createEventXml(EventSrc service, const std::string& inner)
+{
+    std::string result;
+    result.reserve(inner.size() + 260);
+    result = "<?xml version=\"1.0\"?><e:propertyset xmlns:e=\"urn:schemas-upnp-org:event-1-0\"><e:property><LastChange>"
+             "&lt;Event xmlns=&quot;urn:schemas-upnp-org:metadata-1-0/";
+    result.append(eventXmlFromType(service)).append("/&quot;&gt;&lt;InstanceID val=&quot;0&quot;&gt;");
+    result.append(inner);
+    result.append("</LastChange></e:property></e:propertyset>");
+    return result;
+}
+
 void DlnaHandler::notifyVolumeChange(int vol)
 {
     std::string xml;
-    xml.reserve(210);
-    xml = "&lt;Event xmlns=&quot;urn:schemas-upnp-org:metadata-1-0/RCS/&quot;&gt;&lt;InstanceID val=&quot;0&quot;&gt;&lt;Volume val=&quot;";
+    xml.reserve(100);
+    xml = "&lt;Volume val=&quot;";
     appendAny(xml, vol);
     xml.append("&quot; channel=&quot;Master&quot;/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;");
-    notifyEvent(xml.c_str());
+    notify(kEventsRendCtl, xml);
 }
 
 void DlnaHandler::notifyMute(bool mute, int vol)
 {
     std::string xml;
-    xml.reserve(256);
-    xml = "&lt;Event xmlns=&quot;urn:schemas-upnp-org:metadata-1-0/RCS/&quot;&gt;&lt;InstanceID val=&quot;0&quot;&gt;&lt;Mute val=&quot;";
+    xml.reserve(128);
+    xml = "&lt;Mute val=&quot;";
     xml += (mute ? '1' : '0');
     xml.append("&quot; channel=&quot;Master&quot;/&gt;");
     if (!mute && vol > -1) {
@@ -515,7 +580,26 @@ void DlnaHandler::notifyMute(bool mute, int vol)
         appendAny(xml, vol);
         xml.append("&quot; channel=&quot;Master&quot;/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;");
     }
-    notifyEvent(xml.c_str());
+    notify(kEventsRendCtl, xml);
+}
+void DlnaHandler::notifyPlayStart()
+{
+    std::string xml;
+    xml.reserve(200);
+    std::string dur;
+    auto trkInfo = mPlayer.trackInfo();
+    dur = trkInfo ? msToHmsString(trkInfo->durationMs) : kZeroHmsTime;
+    xml.append("&lt;TransportState val=&quot;PLAYING&quot;/&gt;&lt;CurrentTrackURI val=&quot;")
+       .append(mPlayer.url())
+       .append("&quot;/&gt;&lt;CurrentMediaDuration val=&quot;").append(dur)
+       .append("&quot;/&gt;&lt;CurrentTrackDuration val=&quot;").append(dur)
+       .append("&quot;/&gt;&lt;CurrentTransportActions val=&quot;Stop&quot;/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;");
+    notify(kEventsAVTransport, xml);
+}
+void DlnaHandler::notifyPlayStop()
+{
+    std::string xml = "&lt;TransportState val=&quot;STOPPED&quot;/&gt;&lt;CurrentTransportActions val=&quot;Play&quot;/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;";
+    notify(kEventsAVTransport, xml);
 }
 DlnaHandler::EventSubscription* DlnaHandler::eventSubscriptionBySid(uint32_t sid)
 {
@@ -528,22 +612,30 @@ DlnaHandler::EventSubscription* DlnaHandler::eventSubscriptionBySid(uint32_t sid
 }
 esp_err_t DlnaHandler::httpDlnaSubscribeHandler(httpd_req_t* req)
 {
-    if (strcmp(req->uri, "/dlna/RenderingControl/event") != 0) {
+    EventSrc eventSrc;
+    if (strcmp(req->uri, "/dlna/RenderingControl/event") == 0) {
+        eventSrc = kEventsRendCtl;
+    }
+    else if (strcmp(req->uri, "/dlna/AVTransport/event") == 0) {
+        eventSrc = kEventsAVTransport;
+    }
+    else {
         ESP_LOGW(TAG_NOTIFY, "Refusing event subscribe request for '%s'", req->uri);
         httpd_resp_send_404(req);
         return ESP_FAIL;
     }
-    char buf[64];
+    printf("subscribe req: '%s'\n", req->uri);
+    char bufTout[36];
     uint32_t timeout;
-    if (!httpGetHeader(req, "TIMEOUT", buf, [](void* arg, size_t len) { return (char*)arg; }))
+    if (!httpGetHeader(req, "TIMEOUT", [&bufTout](size_t) { return bufTout; }))
     {
         return ESP_FAIL;
     }
-    if (strncasecmp(buf, "Second-", 7)) {
+    if (strncasecmp(bufTout, "Second-", 7)) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No 'second-' prefix in TIMEOUT header");
         return ESP_FAIL;
     }
-    const char* strTimeout = buf + 7;
+    const char* strTimeout = bufTout + 7;
     if (strcasecmp(strTimeout, "infinite") == 0) {
         timeout = 0xffffffff;
     } else {
@@ -553,35 +645,36 @@ esp_err_t DlnaHandler::httpDlnaSubscribeHandler(httpd_req_t* req)
             timeout = 600;
         }
     }
-    //timeout=300;
-    auto self = static_cast<DlnaHandler*>(req->user_ctx);
-    if (!httpGetHeader(req, "CALLBACK", self, [](void* arg, size_t urlLen) {
-        auto& self = *static_cast<DlnaHandler*>(arg);
-        auto& buf = self.mEventSubs.emplace_front(EventSubscription::kServiceMediaRenderer)
-                   .callbackUrl;
+    if (timeout > 300) {
+        timeout = 300;
+    }
+    auto& self = *static_cast<DlnaHandler*>(req->user_ctx);
+    if (!httpGetHeader(req, "CALLBACK", [&self, eventSrc](size_t urlLen) {
+        auto& buf = self.mEventSubs.emplace_front(eventSrc).callbackUrl;
         auto ptr = buf.getAppendPtr(urlLen);
         buf.expandDataSize(urlLen);
         return ptr;
     })) {
         return ESP_FAIL;
     }
-    auto& subscr = self->mEventSubs.front();
+    auto& subscr = self.mEventSubs.front();
     auto& url = subscr.callbackUrl;
     // remove <> brackets
     memmove(url.buf(), url.buf()+1, url.dataSize()-3);
     url.setDataSize(url.dataSize()-2);
     url.buf()[url.dataSize()-1] = 0;
     subscr.tsTill = esp_timer_get_time() / 1000000 + timeout;
-    vtsnprintf(buf, 64, "Second-", timeout);
-    httpd_resp_set_hdr(req, "TIMEOUT", buf);
-    httpd_resp_set_hdr(req, "SID", subscr.strSid(buf, sizeof(buf)));
+    vtsnprintf(bufTout, sizeof(bufTout), "Second-", timeout);
+    httpd_resp_set_hdr(req, "TIMEOUT", bufTout);
+    char bufSid[sizeof(EventSubscription::kSidPrefix) + 10];
+    httpd_resp_set_hdr(req, "SID", subscr.strSid(bufSid, sizeof(bufSid)));
     httpd_resp_send(req, nullptr, 0);
-    ESP_LOGW(TAG, "Subscribed to event: CALLBACK='%s', SID='%s', timeout=%u",
-        url.buf(), buf, timeout);
-    self->mHttpServer.queueWork([self, sid = subscr.sid]() {
-        EventSubscription* subscr = self->eventSubscriptionBySid(sid);
+    ESP_LOGW(TAG, "Subscribed to event: CALLBACK='%s', SID='%s', timeout='%s'",
+        url.buf(), bufSid, bufTout);
+    self.mHttpServer.queueWork([&self, sid = subscr.sid]() {
+        EventSubscription* subscr = self.eventSubscriptionBySid(sid);
         if (subscr) {
-            subscr->notifySubscribed();
+            subscr->notifySubscribed(self.mPlayer);
         }
     });
     return ESP_OK;
@@ -589,8 +682,8 @@ esp_err_t DlnaHandler::httpDlnaSubscribeHandler(httpd_req_t* req)
 esp_err_t DlnaHandler::httpDlnaUnsubscribeHandler(httpd_req_t* req)
 {
     char strSid[64];
-    if (!httpGetHeader(req, "SID", strSid, [](void* arg, size_t len) {
-        return (char*)arg;
+    if (!httpGetHeader(req, "SID", [&strSid](size_t) {
+        return strSid;
     })) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error getting SID header");
         return ESP_FAIL;
@@ -748,7 +841,7 @@ void DlnaHandler::sendNotifyAlive(const char* svcName, const char* prefix)
 }
 void DlnaHandler::sendPacket(int len, uint32_t ip)
 {
-    printf("sending: %.*s to %s\n", len, mMsgBuf, inet_ntoa(ip));
+    //printf("sending: %.*s to %s\n", len, mMsgBuf, inet_ntoa(ip));
     mAddr.sin_addr.s_addr = ip;
     int ret = sendto(mSsdpSocket, mMsgBuf, len, 0, (const sockaddr*)&mAddr, sizeof(mAddr));
     if (ret != len) {

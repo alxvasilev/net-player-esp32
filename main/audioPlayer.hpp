@@ -107,6 +107,7 @@ protected:
     void createOutputA2dp();
 //==
     bool createPipeline(AudioNode::Type inType, AudioNode::Type outType);
+    void pipelineStop();
     void destroyPipeline();
     void detectVolumeNode();
     std::string printPipeline();
@@ -117,7 +118,6 @@ protected:
     void equalizerSaveGains();
     void createDlnaHandler();
     void setPlayerMode(PlayerMode mode);
-    void pipelineStop();
     void onNewStream(StreamFormat fmt);
     bool streamIsCpuHeavy() const;
     // GUI stuff
@@ -168,6 +168,7 @@ public:
     void changeInput(PlayerMode playerMode);
     bool playUrl(const char* url, PlayerMode playerMode, const char* record=nullptr);
     bool playUrl(TrackInfo* trackInfo, PlayerMode playerMode, const char* record=nullptr);
+    std::string url() const;
     esp_err_t playStation(const char* id);
     bool isStopped() const;
     bool isPaused() const;

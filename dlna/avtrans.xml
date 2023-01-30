@@ -292,7 +292,7 @@
     </action>
   </actionList>
   <serviceStateTable>
-    <stateVariable sendEvents="no">
+    <stateVariable sendEvents="yes">
       <name>TransportState</name>
       <dataType>string</dataType>
       <defaultValue>NO_MEDIA_PRESENT</defaultValue>
