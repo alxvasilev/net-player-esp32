@@ -79,6 +79,7 @@ public:
     {
         mType = type;
         recalcCoeffs(freq, bandwidth, dbGain, srate);
+        clearHistorySamples();
     }
     bool hasOwnGain() const
     {
@@ -88,31 +89,31 @@ public:
     void setGainNoRecalc(Sample dbGain)
     {
         bqassert(!hasOwnGain());
-        mA = pow(10, dbGain / 20);
+        mA = pow(10, dbGain / 40);
     }
     double gainMultiplier() const { return mA; }
-    double dbGain() const { return log10(mA) * 20; }
+    double dbGain() const { return log10(mA) * 40; }
     void recalcCoeffs(Sample freq, Sample bw, Sample gain, Sample srate)
     {
         Sample omega, sn, cs, alpha, beta;
         Sample a0, a1, a2, b0, b1, b2;
 
         /* setup variables */
-        mA = pow(10, gain / 20);
+        mA = powf(10.0f, gain / 40.0f);
         omega = 2 * M_PI * freq / srate;
         sn = sin(omega);
         cs = cos(omega);
-        alpha = sn * sinh(M_LN2 /2 * bw * omega /sn);
+        alpha = sn * sinh(M_LN2 / 2.0f * bw * omega /sn);
         beta = sqrt(mA + mA);
 
         switch (mType) {
         case LPF:
-            b0 = (1 - cs) /2;
-            b1 = 1 - cs;
-            b2 = (1 - cs) /2;
-            a0 = 1 + alpha;
-            a1 = -2 * cs;
-            a2 = 1 - alpha;
+            b0 = (1.0f - cs) / 2.0f;
+            b1 = 1.0f - cs;
+            b2 = (1.0f - cs) / 2.0f;
+            a0 = 1.0f + alpha;
+            a1 = -2.0f * cs;
+            a2 = 1.0f - alpha;
             break;
         case HPF:
             b0 = (1 + cs) /2;
@@ -139,12 +140,12 @@ public:
             a2 = 1 - alpha;
             break;
         case PEQ:
-            b0 = 1 + (alpha * mA);
-            b1 = -2 * cs;
-            b2 = 1 - (alpha * mA);
-            a0 = 1 + (alpha /mA);
-            a1 = -2 * cs;
-            a2 = 1 - (alpha /mA);
+            b0 = 1.0f + (alpha * mA);
+            b1 = -2.0f * cs;
+            b2 = 1.0f - (alpha * mA);
+            a0 = 1.0f + (alpha /mA);
+            a1 = -2.0f * cs;
+            a2 = 1.0f - (alpha /mA);
             break;
         case LSH:
             b0 = mA * ((mA + 1) - (mA - 1) * cs + beta * sn);
@@ -173,7 +174,9 @@ public:
         ma2 = b2 /a0;
         ma3 = a1 /a0;
         ma4 = a2 /a0;
-
+    }
+    void clearHistorySamples()
+    {
         /* zero initial samples */
         mx1 = mx2 = 0;
         my1 = my2 = 0;

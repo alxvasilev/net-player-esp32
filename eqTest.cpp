@@ -12,7 +12,7 @@
 #include <termios.h>
 
 // gcc -o player ./eqTest.cpp ./main/equalizer.cpp -I ./main -lpulse -lpulse-simple -lmad -lm -g
-double gains[10] = {20, 20, 10, 0, -20, -20, -10, 0, 20, 20};
+double gains[10] = {20, 10, 10, 0, 0, 0, 0, 0, 16, 16};
 
 
 
@@ -161,7 +161,7 @@ uint16_t scale(mad_fixed_t sample) {
 */
 
 void output(struct mad_header const *header, struct mad_pcm *pcm) {
-    register int nsamples = pcm->length;
+//    int nsamples = pcm->length;
 //    printf("bitrate: %lu, samplerate: %d, nsamples: %d\n",
 //           header->bitrate, header->samplerate, nsamples);
     mad_fixed_t const *left_ch = pcm->samples[0], *right_ch = pcm->samples[1];
@@ -197,12 +197,12 @@ void output(struct mad_header const *header, struct mad_pcm *pcm) {
 
 void setEq(int band, int delta)
 {
-    auto gain = eqLeft.bandGain(band);
-    auto ngain = gain + delta;
-    eqLeft.setBandGain(band, ngain);
-    eqRight.setBandGain(band, ngain);
+    auto oldGain = eqLeft.bandGain(band);
+    auto newGain = oldGain + delta;
+    eqLeft.setBandGain(band, newGain);
+    eqRight.setBandGain(band, newGain);
     printf("Set band %d Hz (%d) %f --> %f\n", Equalizer::bandFreqs[band], band,
-        gain, ngain);
+        oldGain, newGain);
 }
 void pollKeyboard()
 {
@@ -216,6 +216,22 @@ void pollKeyboard()
         eqEnable = !eqEnable;
         printf("Equalizer %s\n", eqEnable ? "ENABLED":"DISABLED");
         break;
+    case 'r': {
+        for (int i = 0; i < 10; i++) {
+            eqLeft.setBandGain(i, gains[i]);
+            eqRight.setBandGain(i, gains[i]);
+        }
+        printf("Reset all bands to defaults\n");
+        break;
+    }
+    case 'R': {
+        for (int i = 0; i < 10; i++) {
+            eqLeft.setBandGain(i, 0);
+            eqRight.setBandGain(i, 0);
+        }
+        printf("Reset all bands to zero gain\n");
+        break;
+    }
     case 'a': setEq(0, step); break;
     case 'z': setEq(0, -step); break;
     case 's': setEq(1, step); break;
