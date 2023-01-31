@@ -11,7 +11,7 @@ void Equalizer::init(int sr, Sample* gains)
         gains = zeroGains;
     }
     mSampleRate = sr;
-    mFilters[0].init(BiQuadType::PEQ, gains[0], bandFreqs[0], sr, 1);
+    mFilters[0].init(BiQuadType::LSH, gains[0], bandFreqs[0], sr, 1);
     mFilters[1].init(BiQuadType::PEQ, gains[1], bandFreqs[1], sr, 0.8);
     mFilters[2].init(BiQuadType::PEQ, gains[2], bandFreqs[2], sr, 0.8);
     mFilters[3].init(BiQuadType::PEQ, gains[3], bandFreqs[3], sr, 0.8);
@@ -20,7 +20,7 @@ void Equalizer::init(int sr, Sample* gains)
     mFilters[6].init(BiQuadType::PEQ, gains[6], bandFreqs[6], sr, 0.8);
     mFilters[7].init(BiQuadType::PEQ, gains[7], bandFreqs[7], sr, 0.5);
     mFilters[8].init(BiQuadType::PEQ, gains[8], bandFreqs[8], sr, 0.5);
-    mFilters[9].init(BiQuadType::PEQ, gains[9], bandFreqs[9], sr, 1);
+    mFilters[9].init(BiQuadType::HSH, gains[9], bandFreqs[9], sr, 1);
     mHighestBand = 9;
 }
 Equalizer::Sample Equalizer::process(Sample in)

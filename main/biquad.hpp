@@ -94,7 +94,7 @@ public:
         Float a0, a1, a2, b0, b1, b2;
 
         /* setup variables */
-        float A = usesGain() ? powf(10.0f, dbGain / 40.0f) : 0;
+        float A = usesGain() ? powf(10.0f, dbGain / 20.0f) : 0;
         Float omega = 2.0 * M_PI * freq / srate;
         Float sn = sin(omega);
         Float cs = cos(omega);
