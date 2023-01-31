@@ -38,75 +38,70 @@ enum BiQuadType: uint8_t {
     HSH /* High shelf filter */
 };
 
-template <class S>
+template <typename S>
 class BiQuad
 {
 public:
-/* whatever sample type you want */
     typedef S Sample;
 protected:
-/* filter types */
-    BiQuadType mType;
-    Sample ma0, ma1, ma2, ma3, ma4;
-    Sample mx1, mx2, my1, my2;
-    Sample mA;
+    typedef float Float; // floating-point type for coefficient calculation
+    typedef typename std::conditional<sizeof(S) <= 2, uint32_t, uint64_t>::type WideInt;
+    BiQuadType m_type;
+    /* filter types */
+    Sample m_a0, m_a1, m_a2, m_a3, m_a4;
+    Sample m_x1, m_x2, m_y1, m_y2;
+    float m_dbGain;
 public:
-    BiQuadType type() const { return mType; }
-/* Computes a BiQuad filter on a sample */
+    BiQuadType type() const { return m_type; }
+    bool usesGain()
+    {
+        return (m_type == BiQuadType::HSH || m_type == BiQuadType::LSH ||
+                m_type == BiQuadType::PEQ);
+    }
+    /** Process one sample */
     Sample process(Sample sample)
     {
         Sample result;
 
         /* compute result */
-        result = ma0 * sample + ma1 * mx1 + ma2 * mx2 -
-                ma3 * my1 - ma4 * my2;
+        result = m_a0 * sample + m_a1 * m_x1 + m_a2 * m_x2 -
+                m_a3 * m_y1 - m_a4 * m_y2;
 
         /* shift x1 to x2, sample to x1 */
-        mx2 = mx1;
-        mx1 = sample;
+        m_x2 = m_x1;
+        m_x1 = sample;
 
         /* shift y1 to y2, result to y1 */
-        my2 = my1;
-        my1 = result;
+        m_y2 = m_y1;
+        m_y1 = result;
 
         return result;
     }
-    void init(BiQuadType type,
+    void init(BiQuadType type,         /* type of filter */
               Sample dbGain,           /* gain of filter in dB */
               Sample freq,             /* center frequency */
               Sample srate,            /* sampling rate */
               Sample bandwidth)        /* bandwidth in octaves */
     {
-        mType = type;
-        recalcCoeffs(freq, bandwidth, dbGain, srate);
+        m_type = type;
+        setup(freq, bandwidth, dbGain, srate);
         clearHistorySamples();
     }
-    bool hasOwnGain() const
+    double dbGain() const { return m_dbGain; }
+    void setup(Sample freq, Sample bw, Float dbGain, Sample srate)
     {
-        return (mType == BiQuadType::HSH || mType == BiQuadType::LSH ||
-                mType == BiQuadType::PEQ);
-    }
-    void setGainNoRecalc(Sample dbGain)
-    {
-        bqassert(!hasOwnGain());
-        mA = pow(10, dbGain / 40);
-    }
-    double gainMultiplier() const { return mA; }
-    double dbGain() const { return log10(mA) * 40; }
-    void recalcCoeffs(Sample freq, Sample bw, Sample gain, Sample srate)
-    {
-        Sample omega, sn, cs, alpha, beta;
-        Sample a0, a1, a2, b0, b1, b2;
+        m_dbGain = dbGain;
+        Float a0, a1, a2, b0, b1, b2;
 
         /* setup variables */
-        mA = powf(10.0f, gain / 40.0f);
-        omega = 2 * M_PI * freq / srate;
-        sn = sin(omega);
-        cs = cos(omega);
-        alpha = sn * sinh(M_LN2 / 2.0f * bw * omega /sn);
-        beta = sqrt(mA + mA);
+        float A = usesGain() ? powf(10.0f, dbGain / 40.0f) : 0;
+        Float omega = 2.0 * M_PI * freq / srate;
+        Float sn = sin(omega);
+        Float cs = cos(omega);
+        Float alpha = sn * sinh(M_LN2 / 2.0 * bw * omega /sn);
+        Float beta = sqrt(A + A);
 
-        switch (mType) {
+        switch (m_type) {
         case LPF:
             b0 = (1.0f - cs) / 2.0f;
             b1 = 1.0f - cs;
@@ -140,28 +135,28 @@ public:
             a2 = 1 - alpha;
             break;
         case PEQ:
-            b0 = 1.0f + (alpha * mA);
-            b1 = -2.0f * cs;
-            b2 = 1.0f - (alpha * mA);
-            a0 = 1.0f + (alpha /mA);
-            a1 = -2.0f * cs;
-            a2 = 1.0f - (alpha /mA);
+            b0 = 1.0 + (alpha * A);
+            b1 = -2.0 * cs;
+            b2 = 1.0 - (alpha * A);
+            a0 = 1.0 + (alpha / A);
+            a1 = -2.0 * cs;
+            a2 = 1.0 - (alpha / A);
             break;
         case LSH:
-            b0 = mA * ((mA + 1) - (mA - 1) * cs + beta * sn);
-            b1 = 2 * mA * ((mA - 1) - (mA + 1) * cs);
-            b2 = mA * ((mA + 1) - (mA - 1) * cs - beta * sn);
-            a0 = (mA + 1) + (mA - 1) * cs + beta * sn;
-            a1 = -2 * ((mA - 1) + (mA + 1) * cs);
-            a2 = (mA + 1) + (mA - 1) * cs - beta * sn;
+            b0 = A * ((A + 1) - (A - 1) * cs + beta * sn);
+            b1 = 2 * A * ((A - 1) - (A + 1) * cs);
+            b2 = A * ((A + 1) - (A - 1) * cs - beta * sn);
+            a0 = (A + 1) + (A - 1) * cs + beta * sn;
+            a1 = -2 * ((A - 1) + (A + 1) * cs);
+            a2 = (A + 1) + (A - 1) * cs - beta * sn;
             break;
         case HSH:
-            b0 = mA * ((mA + 1) + (mA - 1) * cs + beta * sn);
-            b1 = -2 * mA * ((mA - 1) + (mA + 1) * cs);
-            b2 = mA * ((mA + 1) + (mA - 1) * cs - beta * sn);
-            a0 = (mA + 1) - (mA - 1) * cs + beta * sn;
-            a1 = 2 * ((mA - 1) - (mA + 1) * cs);
-            a2 = (mA + 1) - (mA - 1) * cs - beta * sn;
+            b0 = A * ((A + 1) + (A - 1) * cs + beta * sn);
+            b1 = -2 * A * ((A - 1) + (A + 1) * cs);
+            b2 = A * ((A + 1) + (A - 1) * cs - beta * sn);
+            a0 = (A + 1) - (A - 1) * cs + beta * sn;
+            a1 = 2 * ((A - 1) - (A + 1) * cs);
+            a2 = (A + 1) - (A - 1) * cs - beta * sn;
             break;
         default:
             b0=b1=b2=a0=a1=a2=0; //suppress may be used uninitialized warning
@@ -169,17 +164,18 @@ public:
         }
 
         /* precompute the coefficients */
-        ma0 = b0 /a0;
-        ma1 = b1 /a0;
-        ma2 = b2 /a0;
-        ma3 = a1 /a0;
-        ma4 = a2 /a0;
+        m_a0 = b0 / a0;
+        m_a1 = b1 / a0;
+        m_a2 = b2 / a0;
+        m_a3 = a1 / a0;
+        m_a4 = a2 / a0;
+        printf("a0=%f, a1=%f, a2=%f, a3=%f, a4=%f\n", m_a0, m_a1, m_a2, m_a3, m_a4);
     }
     void clearHistorySamples()
     {
         /* zero initial samples */
-        mx1 = mx2 = 0;
-        my1 = my2 = 0;
+        m_x1 = m_x2 = 0;
+        m_y1 = m_y2 = 0;
     }
 };
 #endif

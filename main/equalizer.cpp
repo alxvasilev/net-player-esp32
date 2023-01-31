@@ -36,12 +36,7 @@ void Equalizer::setBandGain(uint8_t band, Sample dbGain)
     if (band > 9) {
         return;
     }
-    auto& filter = mFilters[band];
-    if (filter.hasOwnGain()) {
-        filter.recalcCoeffs(bandFreqs[band], 1, dbGain, mSampleRate);
-    } else {
-        filter.setGainNoRecalc(dbGain);
-    }
+    mFilters[band].setup(bandFreqs[band], 1, dbGain, mSampleRate);
 }
 
 void Equalizer::dumpAllGains(Sample *gains)
