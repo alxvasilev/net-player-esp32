@@ -5,6 +5,7 @@
 #include <mad.h>
 #include <pulse/simple.h>
 #include <pulse/error.h>
+#define BQ_DEBUG
 #include <equalizer.hpp>
 #include <limits>
 #include <unistd.h>
@@ -12,7 +13,7 @@
 #include <termios.h>
 
 // gcc -o player ./eqTest.cpp ./main/equalizer.cpp -I ./main -lpulse -lpulse-simple -lmad -lm -g
-double gains[10] = {20, 10, 10, 0, 0, 0, 0, 0, 16, 16};
+float gains[10] = {14, 0, 0, 0, 0, 0, 0, 0, 12, 14};
 
 
 
@@ -26,8 +27,8 @@ struct mad_frame mad_frame;
 struct mad_synth mad_synth;
 
 void output(struct mad_header const *header, struct mad_pcm *pcm);
-Equalizer eqLeft;
-Equalizer eqRight;
+Equalizer<10, int32_t> eqLeft(EqBandConfig::kPresetTenBand);
+Equalizer<10, int32_t> eqRight(EqBandConfig::kPresetTenBand);
 bool eqEnable = true;
 char pollInput() {
     char ch;
@@ -134,59 +135,27 @@ int main(int argc, char **argv) {
     return EXIT_SUCCESS;
 }
 
-// Some helper functions, to be cleaned up in the future
-uint16_t scale(mad_fixed_t sample) {
-    if (sample > 0xfffffff) {
-        printf("high: %d\n", sample >> 28);
-        double whole = (float)sample / 0xfffffff;
-        printf("whole: %f\n", whole);
-        printf("hex: 0x%x\n", sample);
-    } else if (sample < -0xfffffff) {
-        printf("low: hex=0x%x\n", sample);
-    }
-    auto isNeg = sample & 0x80000000;
-    sample >>= (29 - 15);
-    return (isNeg) ? (sample | 0x8000) : (sample & 0x7fff);
+int16_t scale(mad_fixed_t sample) {
+    return sample >> (29 - 15);
 }
-/*
-     // round
-     sample += (1L << (MAD_F_FRACBITS - 16));
-     // clip
-     if (sample >= MAD_F_ONE)
-         sample = MAD_F_ONE - 1;
-     else if (sample < -MAD_F_ONE)
-         sample = -MAD_F_ONE;
-     // quantize
-     return sample >> (MAD_F_FRACBITS + 1 - 16);
-*/
-
+int32_t preampVol = 128;
 void output(struct mad_header const *header, struct mad_pcm *pcm) {
 //    int nsamples = pcm->length;
 //    printf("bitrate: %lu, samplerate: %d, nsamples: %d\n",
 //           header->bitrate, header->samplerate, nsamples);
     mad_fixed_t const *left_ch = pcm->samples[0], *right_ch = pcm->samples[1];
-    static char stream[1152*4];
+    static int16_t stream[1152*2];
     if (pcm->channels != 2) {
         printf("Mono not supported\n");
         return;
     }
-    auto bufEnd = stream + sizeof(stream);
-    for (char* sbytes = stream; sbytes < bufEnd;) {
-        signed int sample;
-        if (eqEnable) {
-            sample = eqLeft.processInt((int16_t)scale(*left_ch++));
-        } else {
-            sample = scale(*left_ch++);
-        }
-        *(sbytes++) = ((sample >> 0) & 0xff);
-        *(sbytes++) = ((sample >> 8) & 0xff);
-        if (eqEnable) {
-            sample = eqRight.processInt((int16_t)scale(*right_ch++));
-        } else {
-            sample = scale(*right_ch++);
-        }
-        *(sbytes++) = ((sample >> 0) & 0xff);
-        *(sbytes++) = ((sample >> 8) & 0xff);
+    auto bufEnd = stream + sizeof(stream) / sizeof(int16_t);
+    for (int16_t* wptr = stream; wptr < bufEnd;) {
+        int16_t sample = (preampVol * scale(*left_ch++)) >> 8;
+        *wptr++ = eqEnable ? eqLeft.processAndNarrow(sample) : sample;
+
+        sample = (preampVol * scale(*right_ch++)) >> 8;
+        *wptr++ = eqEnable ? eqRight.processAndNarrow(sample) : sample;
     }
     if (pa_simple_write(device, stream, (size_t)1152*4, &error) < 0) {
         fprintf(stderr, "pa_simple_write() failed: %s\n", pa_strerror(error));
@@ -201,7 +170,7 @@ void setEq(int band, int delta)
     auto newGain = oldGain + delta;
     eqLeft.setBandGain(band, newGain);
     eqRight.setBandGain(band, newGain);
-    printf("Set band %d Hz (%d) %f --> %f\n", Equalizer::bandFreqs[band], band,
+    printf("Set band %d Hz (%d) %f --> %f\n", eqLeft.bandConfig(band).freq, band,
         oldGain, newGain);
 }
 void pollKeyboard()
@@ -225,10 +194,8 @@ void pollKeyboard()
         break;
     }
     case 'R': {
-        for (int i = 0; i < 10; i++) {
-            eqLeft.setBandGain(i, 0);
-            eqRight.setBandGain(i, 0);
-        }
+        eqLeft.zeroAllGains();
+        eqRight.zeroAllGains();
         printf("Reset all bands to zero gain\n");
         break;
     }

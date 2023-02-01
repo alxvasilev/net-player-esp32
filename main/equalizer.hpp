@@ -1,27 +1,64 @@
 #ifndef EQUALIZER_AV_HPP
 #define EQUALIZER_AV_HPP
 #include "biquad.hpp"
-#include <limits>
+#include <array>
 
+struct EqBandConfig {
+    int freq;
+    float width;
+    static const std::array<EqBandConfig, 10> kPresetTenBand;
+};
+
+template <int N, typename S>
 class Equalizer
 {
 public:
-    typedef double Sample;
-    static const int bandFreqs[10];
+    typedef S Sample;
+    enum { kBandCount = N };
 protected:
-    BiQuad<Sample> mFilters[10];
-    Sample mSampleRate;
-    uint8_t mHighestBand;
+    const std::array<EqBandConfig, kBandCount>& mBandConfigs;
+    BiQuad<Sample> mFilters[kBandCount];
+    int mSampleRate;
 public:
+    Equalizer(const std::array<EqBandConfig, kBandCount>& cfg)
+        : mBandConfigs(cfg){}
+    const EqBandConfig& bandConfig(int n) const { return mBandConfigs[n]; }
     const BiQuad<Sample>& filter(uint8_t band) const
     {
-        bqassert(band <= 9);
+        bqassert(band < kBandCount);
         return mFilters[band];
     }
-    void init(int samplerate, Sample* gains=nullptr);
-    Sample process(Sample sample);
+    void initBand(int n, BiQuadType type, float dbGain)
+    {
+        bqassert(n < kBandCount);
+        auto& cfg = mBandConfigs[n];
+        mFilters[n].init(type, cfg.freq, cfg.width, mSampleRate, dbGain);
+    }
+    void init(int sr, float* gains)
+    {
+        mSampleRate = sr;
+        initBand(0, BiQuadType::LSH, gains ? gains[0] : 0);
+        int last = kBandCount - 1;
+        if (gains) {
+            for (int i = 1; i < last; i++) {
+                initBand(i, BiQuadType::PEQ, gains[i]);
+            }
+        } else {
+            for (int i = 1; i < last; i++) {
+                initBand(i, BiQuadType::PEQ, 0);
+            }
+        }
+        initBand(last, BiQuadType::HSH, gains ? gains[last] : 0);
+    }
+    Equalizer::Sample process(Sample sample)
+    {
+        for (int i = 0; i < kBandCount; i++) {
+            sample = mFilters[i].process(sample);
+        }
+        return sample;
+    }
     template<typename T>
-    T processInt(T sample) {
+    T processAndNarrow(T sample) {
         Sample s = process(sample);
         if (s > std::numeric_limits<T>::max()) {
             s = std::numeric_limits<T>::max();
@@ -30,8 +67,28 @@ public:
         }
         return s;
     }
-    void setBandGain(uint8_t band, Sample gain);
-    Sample bandGain(uint8_t band) { return filter(band).dbGain(); }
-    void dumpAllGains(Sample* gains);
+    void setBandGain(uint8_t band, float dbGain, bool clearState=false)
+    {
+        bqassert(band < kBandCount);
+        auto& filter = mFilters[band];
+        auto& cfg = mBandConfigs[band];
+        filter.setup(cfg.freq, cfg.width, mSampleRate, dbGain);
+        if (clearState) {
+            filter.clearHistorySamples();
+        }
+    }
+    void dumpAllGains(Sample *gains)
+    {
+        for (int i = 0; i < kBandCount; i++) {
+            gains[i] = mFilters[i].dbGain();
+        }
+    }
+    void zeroAllGains()
+    {
+        for (int i = 0; i < kBandCount; i++) {
+            setBandGain(i, 0, true);
+        }
+    }
+    float bandGain(uint8_t band) { return filter(band).dbGain(); }
 };
 #endif // EQUALIZERNODE_HPP

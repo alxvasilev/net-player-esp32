@@ -25,8 +25,14 @@ http://www.smartelectronix.com/musicdsp/text/filters005.txt
 #include <stdlib.h>
 #include <stdio.h>
 
-#define bqassert(cond) \
-    if (!(cond)) { printf("Assertion failed: %s at %s:%d\n", #cond, __FILE__, __LINE__); }
+#ifdef BQ_DEBUG
+    #define bqassert(cond) \
+        if (!(cond)) { printf("Assertion failed: %s at %s:%d\n", #cond, __FILE__, __LINE__); }
+    #define BQ_LOGD(fmt,...) printf(fmt "\n", ##__VA_ARGS__)
+#else
+    #define bqassert(cond)
+    #define BQ_LOGD(fmt,...)
+#endif
 
 enum BiQuadType: uint8_t {
     LPF, /* low pass filter */
@@ -38,6 +44,18 @@ enum BiQuadType: uint8_t {
     HSH /* High shelf filter */
 };
 
+struct MulTraits16
+{
+    typedef int32_t WideInt;
+    enum { kCoefDecimalBits = 11 };
+};
+
+struct MulTraits32
+{
+    typedef int64_t WideInt;
+    enum { kCoefDecimalBits = 25 }; // 18 is the minimum for stable operation
+};
+
 template <typename S>
 class BiQuad
 {
@@ -45,7 +63,9 @@ public:
     typedef S Sample;
 protected:
     typedef float Float; // floating-point type for coefficient calculation
-    typedef typename std::conditional<sizeof(S) <= 2, uint32_t, uint64_t>::type WideInt;
+    typedef typename std::conditional<sizeof(S) <= 2, MulTraits16, MulTraits32>::type MulTraits;
+    typedef typename MulTraits::WideInt WideInt;
+    enum: int32_t { kCoefDecimalMul = 1 << MulTraits::kCoefDecimalBits };
     BiQuadType m_type;
     /* filter types */
     Sample m_a0, m_a1, m_a2, m_a3, m_a4;
@@ -61,34 +81,36 @@ public:
     /** Process one sample */
     Sample process(Sample sample)
     {
-        Sample result;
-
         /* compute result */
-        result = m_a0 * sample + m_a1 * m_x1 + m_a2 * m_x2 -
-                m_a3 * m_y1 - m_a4 * m_y2;
-
+        WideInt result = (WideInt)m_a0 * sample + (WideInt)m_a1 * m_x1 + (WideInt)m_a2 * m_x2 -
+                (WideInt)m_a3 * m_y1 - (WideInt)m_a4 * m_y2;
+        result  = (result + kCoefDecimalMul / 2 ) >> MulTraits::kCoefDecimalBits;
         /* shift x1 to x2, sample to x1 */
         m_x2 = m_x1;
         m_x1 = sample;
 
         /* shift y1 to y2, result to y1 */
         m_y2 = m_y1;
-        m_y1 = result;
+        m_y1 = (Sample)result;
 
-        return result;
+        return (Sample)result;
     }
-    void init(BiQuadType type,         /* type of filter */
-              Sample dbGain,           /* gain of filter in dB */
-              Sample freq,             /* center frequency */
-              Sample srate,            /* sampling rate */
-              Sample bandwidth)        /* bandwidth in octaves */
+    /** Initialize the  biquad filter:
+     *  @param type The type of filter
+     *  @param freq The center/cutoff frequency, depending on filter type
+     *  @param bw The bandwidth of the filter (if applicable), in octaves
+     *  @param srate The sample rate of the stream, in Hz
+     *  @param dbGain The gain of the filter, in dB
+     */
+    void init(BiQuadType type, int freq, float bw, int srate, float dbGain)
     {
         m_type = type;
-        setup(freq, bandwidth, dbGain, srate);
+        setup(freq, bw, srate, dbGain);
         clearHistorySamples();
     }
-    double dbGain() const { return m_dbGain; }
-    void setup(Sample freq, Sample bw, Float dbGain, Sample srate)
+    float dbGain() const { return m_dbGain; }
+    /** Reconfigure the filter, usually used for adjusting the gain during operation */
+    void setup(int freq, float bw, int srate, float dbGain)
     {
         m_dbGain = dbGain;
         Float a0, a1, a2, b0, b1, b2;
@@ -164,12 +186,12 @@ public:
         }
 
         /* precompute the coefficients */
-        m_a0 = b0 / a0;
-        m_a1 = b1 / a0;
-        m_a2 = b2 / a0;
-        m_a3 = a1 / a0;
-        m_a4 = a2 / a0;
-        printf("a0=%f, a1=%f, a2=%f, a3=%f, a4=%f\n", m_a0, m_a1, m_a2, m_a3, m_a4);
+        m_a0 = round(b0 * kCoefDecimalMul / a0);
+        m_a1 = round(b1 * kCoefDecimalMul / a0);
+        m_a2 = round(b2 * kCoefDecimalMul / a0);
+        m_a3 = round(a1 * kCoefDecimalMul / a0);
+        m_a4 = round(a2 * kCoefDecimalMul / a0);
+        BQ_LOGD("Config band %d Hz, bw: %f, gain: %f, sr: %d", freq, bw, dbGain, srate);
     }
     void clearHistorySamples()
     {
