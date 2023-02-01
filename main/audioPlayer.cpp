@@ -378,12 +378,12 @@ void AudioPlayer::loadSettings()
     if (mEqualizer) {
         int8_t gains[10];
         size_t len = sizeof(gains);
-        if (mNvsHandle.readBlob("eqGains", gains, len) == ESP_OK
-          && len == sizeof(gains)) {
+        if (mNvsHandle.readBlob("eqGains", gains, len) == ESP_OK && len == sizeof(gains)) {
             ESP_LOGI(TAG, "Loaded equalizer gains from NVS:");
             for (int i = 0; i < 10; i++) {
-                ESP_LOGI("band", "%d Hz -> %.1f", mEqualizer->bandFreqs[i], (float)gains[i] / kEqGainPrecisionDiv);
-                mEqualizer->setBandGain(i, (float)gains[i] / kEqGainPrecisionDiv);
+                float gain = (float)gains[i] / kEqGainPrecisionDiv;
+                ESP_LOGI("band", "%d Hz -> %.1f", mEqualizer->bandCfg(i).freq, gain);
+                mEqualizer->setBandGain(i, gain);
             }
         }
     }
@@ -858,7 +858,7 @@ esp_err_t AudioPlayer::equalizerDumpUrlHandler(httpd_req_t *req)
     DynBuffer buf(240);
     buf.printf("[");
     for (int i = 0; i < 10; i++) {
-        buf.printf("[%d,%.1f],", self->mEqualizer->bandFreqs[i], levels[i]);
+        buf.printf("[%d,%.1f],", self->mEqualizer->bandCfg(i).freq, levels[i]);
     }
     buf[buf.dataSize()-2] = ']';
     httpd_resp_send(req, buf.buf(), buf.dataSize()-1);

@@ -8,15 +8,18 @@ class EqualizerNode: public AudioNode, public DefaultVolumeImpl
 {
 public:
     enum: uint8_t { kBandCount = 10 };
-    static const uint16_t bandFreqs[kBandCount];
 protected:
     Mutex mMutex;
     StreamFormat mFormat;
     int mSampleRate = 0; // cached from mFormat, for performance
     uint8_t mChanCount = 0; // cached from mFormat, for performance
-    void* mEqualizer = nullptr;
+    Equalizer<10, int32_t> mEqualizerLeft;
+    Equalizer<10, int32_t> mEqualizerRight;
     float mGains[kBandCount];
     bool mBypass = false;
+    void (EqualizerNode::*mProcessFunc)(AudioNode::DataPullReq& req) = nullptr;
+    void process16bitStereo(AudioNode::DataPullReq&);
+    void process32bitStereo(AudioNode::DataPullReq&);
     void equalizerReinit(StreamFormat fmt);
     void setFormat(StreamFormat fmt);
     void updateBandGain(uint8_t band);
@@ -30,6 +33,7 @@ public:
     void zeroAllGains();
     float bandGain(uint8_t band);
     const float* allGains() { return mGains; }
+    const EqBandConfig& bandCfg(int n) const { return mEqualizerLeft.bandConfig(n); }
     virtual IAudioVolume* volumeInterface() override { return this; }
 };
 

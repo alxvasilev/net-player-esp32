@@ -1,12 +1,9 @@
 #include "equalizerNode.hpp"
 #include <esp_equalizer.h>
 
-const uint16_t EqualizerNode::bandFreqs[kBandCount] = {
-    31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000
-};
-
 EqualizerNode::EqualizerNode(IAudioPipeline& parent, const float *gains)
-: AudioNode(parent, "equalizer")
+: AudioNode(parent, "equalizer"),
+  mEqualizerLeft(EqBandConfig::kPresetTenBand), mEqualizerRight(EqBandConfig::kPresetTenBand)
 {
     if (gains) {
         memcpy(mGains, gains, sizeof(mGains));
@@ -17,9 +14,9 @@ EqualizerNode::EqualizerNode(IAudioPipeline& parent, const float *gains)
 
 void EqualizerNode::updateBandGain(uint8_t band)
 {
-    float  gain = mGains[band];
-    esp_equalizer_set_band_value(mEqualizer, gain, band, 0);
-    esp_equalizer_set_band_value(mEqualizer, gain, band, 1);
+    float gain = mGains[band];
+    mEqualizerLeft.setBandGain(band, gain);
+    mEqualizerRight.setBandGain(band, gain);
 }
 
 void EqualizerNode::equalizerReinit(StreamFormat fmt)
@@ -28,12 +25,15 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt)
     mFormat = fmt;
     mChanCount = fmt.numChannels();
     mSampleRate = fmt.sampleRate();
-    if (mEqualizer) {
-        esp_equalizer_uninit(mEqualizer);
-    }
-    mEqualizer = esp_equalizer_init(mChanCount, mSampleRate, kBandCount, 0);
-    for (int i = 0; i < kBandCount; i++) {
-        updateBandGain(i);
+    mEqualizerLeft.init(mSampleRate, mGains);
+    mEqualizerRight.init(mSampleRate, mGains);
+    auto bps = fmt.bitsPerSample();
+    if (bps == 16) {
+        mProcessFunc = &EqualizerNode::process16bitStereo;
+    } else if (bps == 24 || bps == 32) {
+        mProcessFunc = &EqualizerNode::process32bitStereo;
+    } else {
+        ESP_LOGW(mTag, "Unsupported bits per sample %d", bps);
     }
 }
 
@@ -41,29 +41,23 @@ void EqualizerNode::setBandGain(uint8_t band, float dbGain)
 {
     MutexLocker locker(mMutex);
     mGains[band] = dbGain;
-    if (mEqualizer) {
-        updateBandGain(band);
-    }
+    updateBandGain(band);
 }
 
 void EqualizerNode::setAllGains(const float* gains)
 {
     MutexLocker locker(mMutex);
     memcpy(mGains, gains, sizeof(mGains));
-    if (mEqualizer) {
-        for (int i = 0; i < kBandCount; i++) {
-            updateBandGain(i);
-        }
+    for (int i = 0; i < kBandCount; i++) {
+        updateBandGain(i);
     }
 }
 void EqualizerNode::zeroAllGains()
 {
     MutexLocker locker(mMutex);
     memset(mGains, 0, sizeof(mGains));
-    if (mEqualizer) {
-        for (int i = 0; i < kBandCount; i++) {
-            updateBandGain(i);
-        }
+    for (int i = 0; i < kBandCount; i++) {
+        updateBandGain(i);
     }
 }
 
@@ -76,6 +70,7 @@ void EqualizerNode::setFormat(StreamFormat fmt)
 {
     mFormat = fmt; // so that we can detect the next change
     auto sr = fmt.sampleRate();
+    /*
     if (fmt.bitsPerSample() != 16) {
         ESP_LOGW(mTag, "Only 16 bits per sample supported, but stream is %d-bit. Disabling equalizer", fmt.bitsPerSample());
         mBypass = true;
@@ -84,8 +79,26 @@ void EqualizerNode::setFormat(StreamFormat fmt)
         ESP_LOGE(mTag, "Unsupported samplerate of %d Hz", sr);
         mBypass = true;
     } else {
-        mBypass = false;
-        equalizerReinit(fmt);
+    */
+    mBypass = false;
+    equalizerReinit(fmt);
+}
+void EqualizerNode::process16bitStereo(DataPullReq& dpr) {
+    auto end = (int16_t*)(dpr.buf + dpr.size);
+    for (auto sample = (int16_t*)dpr.buf; sample < end;) {
+        *sample = mEqualizerLeft.processAndNarrow(*sample);
+        sample++;
+        *sample = mEqualizerRight.processAndNarrow(*sample);
+        sample++;
+    }
+}
+void EqualizerNode::process32bitStereo(DataPullReq& dpr) {
+    auto end = (int32_t*)(dpr.buf + dpr.size);
+    for (auto sample = (int32_t*)dpr.buf; sample < end;) {
+        *sample = mEqualizerLeft.process(*sample);
+        sample++;
+        *sample = mEqualizerRight.process(*sample);
+        sample++;
     }
 }
 
@@ -107,7 +120,7 @@ AudioNode::StreamError EqualizerNode::pullData(DataPullReq &dpr)
         volumeProcess(dpr);
     }
     if (!mBypass) {
-        esp_equalizer_process(mEqualizer, (unsigned char*)dpr.buf, dpr.size, mSampleRate, mChanCount);
+        (this->*mProcessFunc)(dpr);
     }
     return kNoError;
 }
