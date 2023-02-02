@@ -53,8 +53,9 @@ public:
     }
     Equalizer::Sample process(Sample sample)
     {
-        for (int i = 0; i < kBandCount; i++) {
-            sample = mFilters[i].process(sample);
+        auto end = mFilters + kBandCount;
+        for (auto filter = mFilters; filter < end; filter++) {
+            sample = filter->process(sample);
         }
         return sample;
     }

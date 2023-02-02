@@ -5,5 +5,5 @@ const std::array<EqBandConfig, 10> EqBandConfig::kPresetTenBand = {{
 }};
 
 const std::array<EqBandConfig, 5> EqBandConfig::kPresetFiveBand = {{
-    {50, 1.0}, {250, 1.0}, {4000, 4.0}, {8000, 1.0}, {16000, 1.0}
+    {50, 1.0}, {100, 2.0}, {4000, 4.0}, {8000, 2.0}, {15000, 1.0}
 }};

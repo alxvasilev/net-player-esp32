@@ -28,6 +28,7 @@ static constexpr const char* const TAG = "AudioPlayer";
 
 const float AudioPlayer::sDefaultEqGains[EqualizerNode::kBandCount] = {
     8, 8, 4, 0, -2, -4, -4, -2, 4, 6
+//  8, 0, -2, 4, 6
 };
 
 void AudioPlayer::setLogLevel(esp_log_level_t level)
@@ -376,11 +377,11 @@ void AudioPlayer::loadSettings()
         mVolumeInterface->setVolume(vol);
     }
     if (mEqualizer) {
-        int8_t gains[10];
+        int8_t gains[EqualizerNode::kBandCount];
         size_t len = sizeof(gains);
-        if (mNvsHandle.readBlob("eqGains", gains, len) == ESP_OK && len == sizeof(gains)) {
+        if (mNvsHandle.readBlob("eq5Gains", gains, len) == ESP_OK && len == sizeof(gains)) {
             ESP_LOGI(TAG, "Loaded equalizer gains from NVS:");
-            for (int i = 0; i < 10; i++) {
+            for (int i = 0; i < EqualizerNode::kBandCount; i++) {
                 float gain = (float)gains[i] / kEqGainPrecisionDiv;
                 ESP_LOGI("band", "%d Hz -> %.1f", mEqualizer->bandCfg(i).freq, gain);
                 mEqualizer->setBandGain(i, gain);
@@ -716,11 +717,11 @@ void AudioPlayer::equalizerSaveGains()
         return;
     }
     auto fGains = mEqualizer->allGains();
-    int8_t gains[10];
-    for (int i = 0; i < 10; i++) {
+    int8_t gains[EqualizerNode::kBandCount];
+    for (int i = 0; i < EqualizerNode::kBandCount; i++) {
         gains[i] = roundf(fGains[i] * kEqGainPrecisionDiv);
     }
-    mNvsHandle.writeBlob("eqGains", gains, sizeof(gains));
+    mNvsHandle.writeBlob("eq5Gains", gains, sizeof(gains));
 }
 AudioPlayer::~AudioPlayer()
 {
@@ -832,8 +833,14 @@ esp_err_t AudioPlayer::equalizerSetUrlHandler(httpd_req_t *req)
         httpd_resp_sendstr(req, "ok");
         return ESP_OK;
     }
+    auto enable = params.intVal("enable", -1);
+    if (enable != -1) {
+        self->mEqualizer->disable(!enable);
+        httpd_resp_sendstr(req, "ok");
+        return ESP_OK;
+    }
     auto band = params.intVal("band", -1);
-    if (band < 0 || band > 9) {
+    if (band < 0 || band >= EqualizerNode::kBandCount) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid 'band' parameter");
         return ESP_OK;
     }
@@ -857,7 +864,7 @@ esp_err_t AudioPlayer::equalizerDumpUrlHandler(httpd_req_t *req)
     auto levels = self->equalizerGains();
     DynBuffer buf(240);
     buf.printf("[");
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < EqualizerNode::kBandCount; i++) {
         buf.printf("[%d,%.1f],", self->mEqualizer->bandCfg(i).freq, levels[i]);
     }
     buf[buf.dataSize()-2] = ']';

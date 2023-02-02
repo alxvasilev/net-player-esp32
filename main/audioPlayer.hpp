@@ -53,7 +53,7 @@ protected:
     enum {
         kI2sStackSize = 9000, kI2sCpuCore = 1,
         kI2sDmaBufCntInternalRam = 2, kI2sDmaBufCntSpiRam = 9, // 1 buffer is 1024 samples
-        kLcdTaskStackSize = 2200, kLcdTaskPrio = 10, kLcdTaskCore = 1
+        kLcdTaskStackSize = 2200, kLcdTaskPrio = 10, kLcdTaskCore = 0
     };
     enum {
         kLcdArtistNameLineY = 38, kLcdPlayStateLineY = 76, kLcdTrackTitleY = 106

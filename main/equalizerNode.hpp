@@ -1,5 +1,6 @@
 #ifndef EQUALIZERNODE_HPP
 #define EQUALIZERNODE_HPP
+#define BQ_DEBUG
 #include "equalizer.hpp"
 #include "audioNode.hpp"
 #include "volume.hpp"
@@ -10,13 +11,13 @@ public:
     enum: uint8_t { kBandCount = 10 };
 protected:
     Mutex mMutex;
+    bool mBypass = false;
     StreamFormat mFormat;
     int mSampleRate = 0; // cached from mFormat, for performance
     uint8_t mChanCount = 0; // cached from mFormat, for performance
-    Equalizer<10, int32_t> mEqualizerLeft;
-    Equalizer<10, int32_t> mEqualizerRight;
+    Equalizer<kBandCount, float> mEqualizerLeft;
+    Equalizer<kBandCount, float> mEqualizerRight;
     float mGains[kBandCount];
-    bool mBypass = false;
     void (EqualizerNode::*mProcessFunc)(AudioNode::DataPullReq& req) = nullptr;
     void process16bitStereo(AudioNode::DataPullReq&);
     void process32bitStereo(AudioNode::DataPullReq&);
@@ -28,6 +29,7 @@ public:
     virtual Type type() const { return kTypeEqualizer; }
     virtual StreamError pullData(DataPullReq &dpr) override;
     virtual void confirmRead(int size) override { mPrev->confirmRead(size); }
+    void disable(bool disabled) { mBypass = disabled; }
     void setBandGain(uint8_t band, float dbGain);
     void setAllGains(const float* gains);
     void zeroAllGains();
