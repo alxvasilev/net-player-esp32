@@ -28,7 +28,7 @@ static constexpr const char* const TAG = "AudioPlayer";
 
 const float AudioPlayer::sDefaultEqGains[EqualizerNode::kBandCount] = {
     8, 8, 4, 0, -2, -4, -4, -2, 4, 6
-//  8, 0, -2, 4, 6
+//  8, 0,-2, 4, 6
 };
 
 void AudioPlayer::setLogLevel(esp_log_level_t level)
