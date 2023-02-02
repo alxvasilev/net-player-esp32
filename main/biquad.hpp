@@ -44,16 +44,42 @@ enum BiQuadType: uint8_t {
     HSH /* High shelf filter */
 };
 
-struct MulTraits16
+template <typename S, bool IsInt=std::is_integral<S>::value>
+struct MulTraitsFor;
+
+template<typename S>
+struct MulTraitsFor<S, false>
 {
-    typedef int32_t WideInt;
-    enum { kCoefDecimalBits = 11 };
+    enum { kIsFloat = true };
+    typedef S Sample;
+    typedef S Wide;
+    static Wide prepareCoeff(const double& coeff, const double& a0)
+    {
+        return coeff / a0;
+    }
+    static Sample normalizeResult(Wide result)
+    {
+        return (Sample)result;
+    }
 };
 
-struct MulTraits32
+template<typename S>
+struct MulTraitsFor<S, true>
 {
-    typedef int64_t WideInt;
-    enum { kCoefDecimalBits = 26 }; // 18 is the minimum for stable operation
+    enum { kIsFloat = false };
+    typedef S Sample;
+    enum: bool { kIs32bit = sizeof(S) > 2 };
+    typedef typename std::conditional<kIs32bit, int64_t, int32_t>::type Wide;
+    enum { kCoefDecimalBits = kIs32bit ? 30 : 12 }; // 18 is the minimum for stable operation
+    enum { kCoefDecimalMul = 1 << kCoefDecimalBits };
+    static Wide prepareCoeff(double coeff, double a0)
+    {
+        return round(coeff * kCoefDecimalMul / a0);
+    }
+    static Sample normalizeResult(Wide result)
+    {
+        return (result + kCoefDecimalMul / 2 ) >> kCoefDecimalBits;
+    }
 };
 
 template <typename S>
@@ -63,12 +89,11 @@ public:
     typedef S Sample;
 protected:
     typedef float Float; // floating-point type for coefficient calculation
-    typedef typename std::conditional<sizeof(S) <= 2, MulTraits16, MulTraits32>::type MulTraits;
-    typedef typename MulTraits::WideInt WideInt;
-    enum: int32_t { kCoefDecimalMul = 1 << MulTraits::kCoefDecimalBits };
+    typedef MulTraitsFor<Sample> Mul;
+    typedef typename Mul::Wide Wide;
     BiQuadType m_type;
     /* filter types */
-    Sample m_a0, m_a1, m_a2, m_a3, m_a4;
+    Wide m_a0, m_a1, m_a2, m_a3, m_a4;
     Sample m_x1, m_x2, m_y1, m_y2;
     float m_dbGain;
 public:
@@ -82,18 +107,15 @@ public:
     Sample process(Sample sample)
     {
         /* compute result */
-        WideInt result = (WideInt)m_a0 * sample + (WideInt)m_a1 * m_x1 + (WideInt)m_a2 * m_x2 -
-                (WideInt)m_a3 * m_y1 - (WideInt)m_a4 * m_y2;
-        result  = (result + kCoefDecimalMul / 2 ) >> MulTraits::kCoefDecimalBits;
+        Wide result = m_a0 * sample + m_a1 * m_x1 + m_a2 * m_x2 -
+                m_a3 * m_y1 - m_a4 * m_y2;
         /* shift x1 to x2, sample to x1 */
         m_x2 = m_x1;
         m_x1 = sample;
-
         /* shift y1 to y2, result to y1 */
         m_y2 = m_y1;
-        m_y1 = (Sample)result;
-
-        return (Sample)result;
+        m_y1 = Mul::normalizeResult(result);
+        return m_y1;
     }
     /** Initialize the  biquad filter:
      *  @param type The type of filter
@@ -113,15 +135,14 @@ public:
     void setup(int freq, float bw, int srate, float dbGain)
     {
         m_dbGain = dbGain;
-        Float a0, a1, a2, b0, b1, b2;
-
+        double a0, a1, a2, b0, b1, b2;
         /* setup variables */
-        float A = usesGain() ? powf(10.0f, dbGain / 20.0f) : 0;
-        Float omega = 2.0 * M_PI * freq / srate;
-        Float sn = sin(omega);
-        Float cs = cos(omega);
-        Float alpha = sn * sinh(M_LN2 / 2.0 * bw * omega /sn);
-        Float beta = sqrt(A + A);
+        double A = usesGain() ? powf(10.0f, dbGain / 20.0f) : 0;
+        double omega = 2.0 * M_PI * freq / srate;
+        double sn = sin(omega);
+        double cs = cos(omega);
+        double alpha = sn * sinh(M_LN2 / 2.0 * bw * omega /sn);
+        double beta = sqrt(A + A);
 
         switch (m_type) {
         case LPF:
@@ -186,12 +207,13 @@ public:
         }
 
         /* precompute the coefficients */
-        m_a0 = round(b0 * kCoefDecimalMul / a0);
-        m_a1 = round(b1 * kCoefDecimalMul / a0);
-        m_a2 = round(b2 * kCoefDecimalMul / a0);
-        m_a3 = round(a1 * kCoefDecimalMul / a0);
-        m_a4 = round(a2 * kCoefDecimalMul / a0);
-        BQ_LOGD("Config band %d Hz, bw: %f, gain: %f, sr: %d", freq, bw, dbGain, srate);
+        m_a0 = Mul::prepareCoeff(b0, a0);
+        m_a1 = Mul::prepareCoeff(b1, a0);
+        m_a2 = Mul::prepareCoeff(b2, a0);
+        m_a3 = Mul::prepareCoeff(a1, a0);
+        m_a4 = Mul::prepareCoeff(a2, a0);
+        BQ_LOGD("Config band %d Hz, bw: %f, gain: %f (%s)", freq, bw, dbGain, Mul::kIsFloat ? "fp" : "int");
+        BQ_LOGD("a0=%f, a1=%f, a2=%f, a3=%f, a4=%f", b0/a0, b1/a0, b2/a0, a1/a0, a2/a0);
     }
     void clearHistorySamples()
     {
