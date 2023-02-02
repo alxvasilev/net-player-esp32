@@ -7,6 +7,7 @@ struct EqBandConfig {
     int freq;
     float width;
     static const std::array<EqBandConfig, 10> kPresetTenBand;
+    static const std::array<EqBandConfig, 5> kPresetFiveBand;
 };
 
 template <int N, typename S>

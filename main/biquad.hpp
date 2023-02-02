@@ -27,8 +27,8 @@ http://www.smartelectronix.com/musicdsp/text/filters005.txt
 
 #ifdef BQ_DEBUG
     #define bqassert(cond) \
-        if (!(cond)) { printf("Assertion failed: %s at %s:%d\n", #cond, __FILE__, __LINE__); }
-    #define BQ_LOGD(fmt,...) printf(fmt "\n", ##__VA_ARGS__)
+        if (!(cond)) { fprintf(stderr, "Assertion failed: %s at %s:%d\n", #cond, __FILE__, __LINE__); }
+    #define BQ_LOGD(fmt,...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
 #else
     #define bqassert(cond)
     #define BQ_LOGD(fmt,...)
@@ -53,7 +53,7 @@ struct MulTraits16
 struct MulTraits32
 {
     typedef int64_t WideInt;
-    enum { kCoefDecimalBits = 25 }; // 18 is the minimum for stable operation
+    enum { kCoefDecimalBits = 26 }; // 18 is the minimum for stable operation
 };
 
 template <typename S>
