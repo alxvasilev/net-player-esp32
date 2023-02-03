@@ -95,7 +95,6 @@ protected:
     /* filter types */
     Wide m_a0, m_a1, m_a2, m_a3, m_a4;
     Sample m_x1, m_x2, m_y1, m_y2;
-    float m_dbGain;
 public:
     BiQuadType type() const { return m_type; }
     bool usesGain()
@@ -107,8 +106,11 @@ public:
     Sample process(Sample sample)
     {
         /* compute result */
-        Wide result = m_a0 * sample + m_a1 * m_x1 + m_a2 * m_x2 -
-                m_a3 * m_y1 - m_a4 * m_y2;
+        Wide result = m_a0 * sample;
+        result += m_a1 * m_x1;
+        result += m_a2 * m_x2;
+        result += m_a3 * m_y1;
+        result += m_a4 * m_y2;
         /* shift x1 to x2, sample to x1 */
         m_x2 = m_x1;
         m_x1 = sample;
@@ -130,11 +132,9 @@ public:
         setup(freq, bw, srate, dbGain);
         clearHistorySamples();
     }
-    float dbGain() const { return m_dbGain; }
     /** Reconfigure the filter, usually used for adjusting the gain during operation */
     void setup(int freq, float bw, int srate, float dbGain)
     {
-        m_dbGain = dbGain;
         double a0, a1, a2, b0, b1, b2;
         /* setup variables */
         double A = usesGain() ? powf(10.0f, dbGain / 20.0f) : 0;
@@ -210,8 +210,8 @@ public:
         m_a0 = Mul::prepareCoeff(b0, a0);
         m_a1 = Mul::prepareCoeff(b1, a0);
         m_a2 = Mul::prepareCoeff(b2, a0);
-        m_a3 = Mul::prepareCoeff(a1, a0);
-        m_a4 = Mul::prepareCoeff(a2, a0);
+        m_a3 = -Mul::prepareCoeff(a1, a0);
+        m_a4 = -Mul::prepareCoeff(a2, a0);
         BQ_LOGD("Config band %d Hz, bw: %f, gain: %f (%s)", freq, bw, dbGain, Mul::kIsFloat ? "fp" : "int");
         BQ_LOGD("a0=%f, a1=%f, a2=%f, a3=%f, a4=%f", b0/a0, b1/a0, b2/a0, a1/a0, a2/a0);
     }

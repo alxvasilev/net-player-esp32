@@ -6,8 +6,10 @@
 struct EqBandConfig {
     int freq;
     float width;
-    static const std::array<EqBandConfig, 10> kPresetTenBand;
-    static const std::array<EqBandConfig, 5> kPresetFiveBand;
+    static const std::array<EqBandConfig, 10> kPreset10Band;
+    static const std::array<EqBandConfig, 8> kPreset8Band;
+    static const std::array<EqBandConfig, 6> kPreset6Band;
+    static const std::array<EqBandConfig, 5> kPreset5Band;
 };
 
 template <int N, typename S>
@@ -20,6 +22,12 @@ protected:
     const std::array<EqBandConfig, kBandCount>& mBandConfigs;
     BiQuad<Sample> mFilters[kBandCount];
     int mSampleRate;
+    void initBand(int n, BiQuadType type, float dbGain)
+    {
+        bqassert(n < kBandCount);
+        auto& cfg = mBandConfigs[n];
+        mFilters[n].init(type, cfg.freq, cfg.width, mSampleRate, dbGain);
+    }
 public:
     Equalizer(const std::array<EqBandConfig, kBandCount>& cfg)
         : mBandConfigs(cfg){}
@@ -28,12 +36,6 @@ public:
     {
         bqassert(band < kBandCount);
         return mFilters[band];
-    }
-    void initBand(int n, BiQuadType type, float dbGain)
-    {
-        bqassert(n < kBandCount);
-        auto& cfg = mBandConfigs[n];
-        mFilters[n].init(type, cfg.freq, cfg.width, mSampleRate, dbGain);
     }
     void init(int sr, float* gains)
     {
@@ -66,6 +68,8 @@ public:
             s = std::numeric_limits<T>::max();
         } else if (s < std::numeric_limits<T>::min()) {
             s = std::numeric_limits<T>::min();
+        } else if (std::is_integral_v<T> && !std::is_integral_v<Sample>) {
+            s = roundf(s);
         }
         return s;
     }
@@ -79,10 +83,11 @@ public:
             filter.clearHistorySamples();
         }
     }
-    void dumpAllGains(Sample *gains)
+    void setAllGains(float* gains)
     {
         for (int i = 0; i < kBandCount; i++) {
-            gains[i] = mFilters[i].dbGain();
+            auto& cfg = mBandConfigs[i];
+            mFilters[i].setup(cfg.freq, cfg.width, mSampleRate, gains[i]);
         }
     }
     void zeroAllGains()
@@ -91,6 +96,5 @@ public:
             setBandGain(i, 0, true);
         }
     }
-    float bandGain(uint8_t band) { return filter(band).dbGain(); }
 };
 #endif // EQUALIZERNODE_HPP
