@@ -22,15 +22,16 @@ protected:
     const std::array<EqBandConfig, kBandCount>& mBandConfigs;
     BiQuad<Sample> mFilters[kBandCount];
     int mSampleRate;
-    void initBand(int n, BiQuadType type, float dbGain)
-    {
-        bqassert(n < kBandCount);
-        auto& cfg = mBandConfigs[n];
-        mFilters[n].init(type, cfg.freq, cfg.width, mSampleRate, dbGain);
-    }
 public:
     Equalizer(const std::array<EqBandConfig, kBandCount>& cfg)
-        : mBandConfigs(cfg){}
+        : mBandConfigs(cfg)
+    {
+        mFilters[0].init(BiQuadType::LSH);
+        mFilters[kBandCount - 1].init(BiQuadType::HSH);
+        for (int i = 1; i < kBandCount - 1; i++) {
+            mFilters[i].init(BiQuadType::PEQ);
+        }
+    }
     const EqBandConfig& bandConfig(int n) const { return mBandConfigs[n]; }
     const BiQuad<Sample>& filter(uint8_t band) const
     {
@@ -40,24 +41,21 @@ public:
     void init(int sr, float* gains)
     {
         mSampleRate = sr;
-        initBand(0, BiQuadType::LSH, gains ? gains[0] : 0);
-        int last = kBandCount - 1;
         if (gains) {
-            for (int i = 1; i < last; i++) {
-                initBand(i, BiQuadType::PEQ, gains[i]);
+            for (int i = 0; i < kBandCount; i++) {
+                setBandGain(i,  gains[i], true);
             }
         } else {
-            for (int i = 1; i < last; i++) {
-                initBand(i, BiQuadType::PEQ, 0);
+            for (int i = 0; i < kBandCount; i++) {
+                setBandGain(i, 0, true);
             }
         }
-        initBand(last, BiQuadType::HSH, gains ? gains[last] : 0);
     }
     Equalizer::Sample process(Sample sample)
     {
-        auto end = mFilters + kBandCount;
-        for (auto filter = mFilters; filter < end; filter++) {
-            sample = filter->process(sample);
+#pragma GCC unroll 16
+        for (int i = 0; i< kBandCount; i++) {
+            sample = mFilters[i].process(sample);
         }
         return sample;
     }
@@ -78,7 +76,7 @@ public:
         bqassert(band < kBandCount);
         auto& filter = mFilters[band];
         auto& cfg = mBandConfigs[band];
-        filter.setup(cfg.freq, cfg.width, mSampleRate, dbGain);
+        filter.set(cfg.freq, cfg.width, mSampleRate, dbGain);
         if (clearState) {
             filter.clearHistorySamples();
         }
@@ -87,7 +85,7 @@ public:
     {
         for (int i = 0; i < kBandCount; i++) {
             auto& cfg = mBandConfigs[i];
-            mFilters[i].setup(cfg.freq, cfg.width, mSampleRate, gains[i]);
+            mFilters[i].set(cfg.freq, cfg.width, mSampleRate, gains[i]);
         }
     }
     void zeroAllGains()

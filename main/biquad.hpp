@@ -126,14 +126,13 @@ public:
      *  @param srate The sample rate of the stream, in Hz
      *  @param dbGain The gain of the filter, in dB
      */
-    void init(BiQuadType type, int freq, float bw, int srate, float dbGain)
+    void init(BiQuadType type)
     {
         m_type = type;
-        setup(freq, bw, srate, dbGain);
         clearHistorySamples();
     }
     /** Reconfigure the filter, usually used for adjusting the gain during operation */
-    void setup(int freq, float bw, int srate, float dbGain)
+    void set(int freq, float bw, int srate, float dbGain)
     {
         double a0, a1, a2, b0, b1, b2;
         /* setup variables */
