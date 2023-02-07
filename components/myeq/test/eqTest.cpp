@@ -13,7 +13,7 @@
 #include <termios.h>
 
 // gcc -o player ./eqTest.cpp ./main/equalizer.cpp -I ./main -lpulse -lpulse-simple -lmad -lm -g
-float gains[10] = {14, 0, 0, 0, 0, 0, 0, 0, 12, 14};
+float gains[10] = {14, 0, 0, 12, 14};
 
 
 
@@ -27,8 +27,8 @@ struct mad_frame mad_frame;
 struct mad_synth mad_synth;
 
 void output(struct mad_header const *header, struct mad_pcm *pcm);
-Equalizer<10, int32_t> eqLeft(EqBandConfig::kPresetTenBand);
-Equalizer<10, int32_t> eqRight(EqBandConfig::kPresetTenBand);
+Equalizer<5, int32_t> eqLeft(EqBandConfig::kPresetFiveBand);
+Equalizer<5, int32_t> eqRight(EqBandConfig::kPresetFiveBand);
 bool eqEnable = true;
 char pollInput() {
     char ch;
@@ -209,17 +209,18 @@ void pollKeyboard()
     case 'v': setEq(3, -step); break;
     case 'g': setEq(4, step); break;
     case 'b': setEq(4, -step); break;
+/*
     case 'h': setEq(5, step); break;
     case 'n': setEq(5, -step); break;
     case 'j': setEq(6, step); break;
     case 'm': setEq(6, -step); break;
     case 'k': setEq(7, step); break;
     case ',': setEq(7, -step); break;
-
     case 'l': setEq(8, step); break;
     case '.': setEq(8, -step); break;
     case ';': setEq(9, step); break;
     case '/': setEq(9, -step); break;
+*/
     default: break;
     }
 }
