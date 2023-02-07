@@ -98,8 +98,7 @@ AudioNode::StreamError DecoderFlac::pullData(AudioNode::DataPullReq& dpr)
     dpr.fmt = outputFormat;
     dpr.buf = (char*)mOutputBuf;
     if (mOutputChunkSize) {
-        dpr.size = mOutputChunkSize;
-        mOutputReadOfs = dpr.size;
+        mOutputReadOfs = dpr.size = mOutputChunkSize;
     } else {
         dpr.size = mOutputLen;
         mOutputReadOfs = 0;
@@ -191,8 +190,9 @@ FLAC__StreamDecoderWriteStatus DecoderFlac::writeCb(const FLAC__StreamDecoder *d
             ESP_LOGE(TAG, "Unsupported number of channels: %d", nChans);
             return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
         }
-        self.mOutputChunkSize = 0; //((bps <= 16) ? 2 : 4) * nChans * header.sample_rate / 38;
-        printf("outChunkSize = %d\n", self.mOutputChunkSize);
+        int sampleSize = ((bps <= 16) ? 2 : 4) * nChans;
+        self.mOutputChunkSize = (nSamples / 2) * sampleSize;
+        printf("blockSize: %d, outChunkSize = %d\n", nSamples, self.mOutputChunkSize);
     }
     if ((self.*self.mOutputFunc)(nSamples, buffer) == false) {
         ESP_LOGE(TAG, "Output of FLAC codec is too large to fit into output buffer, aborting decode");
