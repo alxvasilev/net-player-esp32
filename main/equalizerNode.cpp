@@ -1,95 +1,119 @@
 #include "equalizerNode.hpp"
-#include <esp_equalizer.h>
+#include <nvsHandle.hpp>
+//#include <esp_equalizer.h>
 
-EqualizerNode::EqualizerNode(IAudioPipeline& parent, const float *gains)
-: AudioNode(parent, "equalizer"),
-  mEqualizerLeft(EqBandConfig::kPreset8Band), mEqualizerRight(EqBandConfig::kPreset8Band)
+template <int N>
+MyEqualizerCore<N>::MyEqualizerCore(const EqBandConfig* cfg)
+: mEqualizerLeft(cfg), mEqualizerRight(cfg)
+{}
+
+EqualizerNode::EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs)
+: AudioNode(parent, "equalizer"), mNvsHandle(nvs)
 {
-    if (gains) {
-        memcpy(mGains, gains, sizeof(mGains));
-    } else {
-        memset(mGains, 0, sizeof(mGains));
+    mNumBands = mNvsHandle.readDefault("eq.nbands", 10);
+}
+
+#define CASE_N_BANDS(n) \
+    case n: mCore.reset(new MyEqualizerCore<n>(nullptr)); break
+
+void EqualizerNode::createCoreForNBands(int n, StreamFormat fmt)
+{
+    switch(n) {
+        CASE_N_BANDS(10);
+        CASE_N_BANDS(9);
+        CASE_N_BANDS(8);
+        CASE_N_BANDS(7);
+        CASE_N_BANDS(6);
+        CASE_N_BANDS(5);
+        CASE_N_BANDS(4);
+        default: assert(false);
     }
+    mGains.reset(new int8_t[n]);
 }
-
-void EqualizerNode::updateBandGain(uint8_t band)
+std::string EqualizerNode::eqName()
 {
-    float gain = mGains[band];
-    mEqualizerLeft.setBandGain(band, gain);
-    mEqualizerRight.setBandGain(band, gain);
+    std::string result = "eq.";
+    appendAny(result, mNumBands);
+    result += ".g";
+    return result;
 }
-
 void EqualizerNode::equalizerReinit(StreamFormat fmt)
 {
     ESP_LOGI(mTag, "Equalizer reinit");
     mFormat = fmt;
-    mChanCount = fmt.numChannels();
-    mSampleRate = fmt.sampleRate();
-    mEqualizerLeft.init(mSampleRate, mGains);
-    mEqualizerRight.init(mSampleRate, mGains);
-    auto bps = fmt.bitsPerSample();
-    if (bps == 16) {
-        mProcessFunc = &EqualizerNode::process16bitStereo;
-    } else if (bps == 24 || bps == 32) {
-        mProcessFunc = &EqualizerNode::process32bitStereo;
-    } else {
-        ESP_LOGW(mTag, "Unsupported bits per sample %d", bps);
+    if (!mCore || mCore->bandCount() != mNumBands) {
+        createCoreForNBands(mNumBands, fmt);
+        size_t len = mNumBands;
+        if (mNvsHandle.readBlob(eqName().c_str(), mGains.get(), len) == ESP_OK && len == mNumBands) {
+            ESP_LOGI(mTag, "Loaded equalizer gains from NVS");
+        } else {
+            memset(mGains.get(), 0, mNumBands);
+        }
     }
+    mCore->init(fmt.sampleRate(), mGains.get());
+    mProcessFunc = mCore->getProcessFunc(fmt, mProcFuncArg);
 }
-
-void EqualizerNode::setBandGain(uint8_t band, float dbGain)
+bool EqualizerNode::setNumBands(uint8_t n) {
+    if (n < kMinBands || n > kMaxBands) {
+        return false;
+    }
+    MutexLocker locker(mMutex);
+    mNumBands = n;
+    equalizerReinit(mFormat);
+    return true;
+}
+void EqualizerNode::setBandGain(uint8_t band, int8_t dbGain)
 {
     MutexLocker locker(mMutex);
+    assert(mCore);
     mGains[band] = dbGain;
-    updateBandGain(band);
+    mCore->setBandGain(band, dbGain);
 }
 
-void EqualizerNode::setAllGains(const float* gains)
+void EqualizerNode::setAllGains(const int8_t* gains, int len)
 {
     MutexLocker locker(mMutex);
-    memcpy(mGains, gains, sizeof(mGains));
-    for (int i = 0; i < kBandCount; i++) {
-        updateBandGain(i);
+    if (gains) {
+        assert(len == mNumBands);
+        memcpy(mGains.get(), gains, mNumBands);
+    } else {
+        memset(mGains.get(), 0, mNumBands);
     }
+    mCore->setAllGains(mGains.get());
 }
-void EqualizerNode::zeroAllGains()
+bool EqualizerNode::saveGains()
 {
     MutexLocker locker(mMutex);
-    memset(mGains, 0, sizeof(mGains));
-    for (int i = 0; i < kBandCount; i++) {
-        updateBandGain(i);
-    }
+    return mNvsHandle.writeBlob(eqName().c_str(), mGains.get(), mNumBands) == ESP_OK;
 }
-
-float EqualizerNode::bandGain(uint8_t band)
-{
-    MutexLocker locker(mMutex);
-    return mGains[band];
-}
-void EqualizerNode::setFormat(StreamFormat fmt)
-{
-    mFormat = fmt; // so that we can detect the next change
-    equalizerReinit(fmt);
-}
-void EqualizerNode::process16bitStereo(DataPullReq& dpr) {
+template<int N>
+void MyEqualizerCore<N>::process16bitStereo(AudioNode::DataPullReq& dpr, void* arg) {
+    auto& self = *static_cast<MyEqualizerCore<N>*>(arg);
     auto end = (int16_t*)(dpr.buf + dpr.size);
     for (auto sample = (int16_t*)dpr.buf; sample < end;) {
-        *sample = mEqualizerLeft.processAndNarrow(*sample);
+        *sample = self.mEqualizerLeft.processAndNarrow(*sample);
         sample++;
-        *sample = mEqualizerRight.processAndNarrow(*sample);
+        *sample = self.mEqualizerRight.processAndNarrow(*sample);
         sample++;
     }
 }
-void EqualizerNode::process32bitStereo(DataPullReq& dpr) {
+template<int N>
+void MyEqualizerCore<N>::process32bitStereo(AudioNode::DataPullReq& dpr, void* arg) {
+    auto& self = *static_cast<MyEqualizerCore<N>*>(arg);
     auto end = (int32_t*)(dpr.buf + dpr.size);
     for (auto sample = (int32_t*)dpr.buf; sample < end;) {
-        *sample = mEqualizerLeft.process(*sample);
+        *sample = self.mEqualizerLeft.process(*sample);
         sample++;
-        *sample = mEqualizerRight.process(*sample);
+        *sample = self.mEqualizerRight.process(*sample);
         sample++;
     }
 }
-
+template<int N>
+IEqualizerCore::ProcessFunc MyEqualizerCore<N>::getProcessFunc(StreamFormat fmt, void*& arg)
+{
+    arg = this;
+    return(fmt.bitsPerSample() <= 16) ? process16bitStereo : process32bitStereo;
+}
 AudioNode::StreamError EqualizerNode::pullData(DataPullReq &dpr)
 {
     auto event = mPrev->pullData(dpr);
@@ -98,7 +122,7 @@ AudioNode::StreamError EqualizerNode::pullData(DataPullReq &dpr)
     }
     MutexLocker locker(mMutex);
     if (dpr.fmt != mFormat) {
-        setFormat(dpr.fmt);
+        equalizerReinit(dpr.fmt);
     }
     if (volLevelEnabled()) {
         volumeNotifyLevelCallback(); // notify previous levels to compensate output buffering delay
@@ -108,7 +132,7 @@ AudioNode::StreamError EqualizerNode::pullData(DataPullReq &dpr)
         volumeProcess(dpr);
     }
     if (!mBypass) {
-        (this->*mProcessFunc)(dpr);
+        mProcessFunc(dpr, this->mProcFuncArg);
     }
     return kNoError;
 }

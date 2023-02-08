@@ -54,6 +54,10 @@
 function byId(id) {
     return document.getElementById(id);
 }
+function niceFreq(freq) {
+    return (freq < 1000) ? freq : (freq / 1000).toFixed(0) + 'K';
+}
+
 function htmlToElement(html) {
     var template = document.createElement('template');
     html = html.trim(); // Never return a text node of whitespace as the result
@@ -82,24 +86,24 @@ Slider.prototype.load = function(db) {
     this.label.innerHTML = db;
 };
 
-function Equalizer(cont) {
+function Equalizer(cont, bands) {
     this.sliders = [];
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < bands.length; i++) {
         cont.appendChild(htmlToElement(
-            '<div class="eq-slider-cont">' + Equalizer.freqs[i] +
+            '<div class="eq-slider-cont">' + niceFreq(bands[i][0]) +
             '<input type="range" id="eqSlider' + i + '" band="' + i +
-            '" min="-40" max="40" value="0" step="0.5" list="tickmarks"><div class="dblabel" id="dbLabel'+ i +
+            '" min="-40" max="40" value="0" step="1" list="tickmarks"><div class="dblabel" id="dbLabel'+ i +
             '">db</div></div>'));
         this.sliders.push(new Slider(this, i, byId('eqSlider' + i), byId('dbLabel' + i)));
     }
+    this.load(bands);
 }
 
-Equalizer.freqs = ['31', '62', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'];
 Equalizer.kThrottleInterval = 100;
 
-Equalizer.prototype.load = function(data) {
-    for (let i = 0; i < 10; i++) {
-        let slider = this.sliders[i].load(data[i][1]);
+Equalizer.prototype.load = function(bands) {
+    for (let i = 0; i < bands.length; i++) {
+        let slider = this.sliders[i].load(bands[i][1]);
     }
 }
 Equalizer.prototype.onSlide = function() {
@@ -135,11 +139,8 @@ Equalizer.prototype.onThrottleTimer = function() {
 }
 
 async function init() {
-    let eq = new Equalizer(byId("equalizer"));
-    //var data = [[0, 10], [1, 8], [2, 0], [3, -5], [4, -10], [5, -10], [6, -10], [7, -10], [8, 10], [9, 12]];
-    var response = await fetch("/eqget");
-    var text = await response.text();
-    eq.load(JSON.parse(text));
+    var bands = await(await fetch("/eqget")).json();
+    let eq = new Equalizer(byId("equalizer"), bands);
 }
 window.onload = init;
 </script>

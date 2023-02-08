@@ -65,7 +65,7 @@ protected:
         kSymRecording = 34
     };
     static constexpr const Font& kPictoFont = font_Icons22;
-    enum { kEqGainPrecisionDiv = 2, kDefaultVolume = 15 };
+    enum { kDefaultVolume = 15 };
     static const float sDefaultEqGains[];
     Flags mFlags;
     std::unique_ptr<AudioNodeWithState> mStreamIn;
@@ -114,8 +114,6 @@ protected:
     void loadSettings();
     void init(PlayerMode mode, AudioNode::Type outType);
     PlayerMode initFromNvs();
-    float equalizerDoSetBandGain(int band, float dbGain);
-    void equalizerSaveGains();
     void createDlnaHandler();
     void setPlayerMode(PlayerMode mode);
     void onNewStream(StreamFormat fmt);
@@ -186,10 +184,9 @@ public:
     bool isMuted() const { return mMuteVolume >= 0; }
     void mute();
     void unmute();
-    const float *equalizerGains(); // requies player lock while accessing the gains array
-    bool equalizerSetBand(int band, float dbGain);
+    const int8_t* equalizerGains(); // requies player lock while accessing the gains array
     // format is: bandIdx1=gain1;bandIdx2=gain2....
-    bool equalizerSetGainsBulk(char* str, size_t len);
+    bool equalizerSetGainsFromString(char* str, size_t len);
     void registerUrlHanlers();
     // AudioNode::EventHandler interface
     virtual bool onNodeEvent(AudioNode& node, uint32_t type, size_t numArg, uintptr_t arg) override;

@@ -1,18 +1,38 @@
 #include "equalizer.hpp"
-const std::array<EqBandConfig, 10> EqBandConfig::kPreset10Band = {{
-    {50, .33}, {70, 0.33}, {125, .33}, {250, .33}, {500, .33},
-    {1000, .33}, {2000, .33}, {4000, .33}, {8000, .33}, {16000, .33}
-}};
+const EqBandConfig EqBandConfig::kPreset10Band[10] = {
+    {60, -1}, {70, 3}, {125, 3}, {250, 3}, {500, 3},
+    {1000, 3}, {2000, 3}, {4000, 3}, {8000, 3}, {15000, -1}
+};
 
-const std::array<EqBandConfig, 8> EqBandConfig::kPreset8Band = {{
-    {50, 1.0}, {250, 1.0}, {500, 1.0}, {1000, 1.0}, {2000, 1.0},
-    {4000, 1.0}, {8000, 1.0}, {16000, 1.0}
-}};
+const EqBandConfig EqBandConfig::kPreset9Band[9] = {
+    {45, -1}, {62, 3}, {125, 3}, {250, 3}, {500, 3},
+    {1500, 3}, {4000, 3}, {8000, 3}, {16000, -1}
+};
 
-const std::array<EqBandConfig, 6> EqBandConfig::kPreset6Band = {{
-    {50, 1.0}, {100, 0.33}, {1000, 1.0}, {3000, 1.0}, {8000, 1.0}, {15000, 1.0}
-}};
+const EqBandConfig EqBandConfig::kPreset8Band[8] = {
+    {50, -1}, {250, 10}, {500, 10}, {1000, 10}, {2000, 10},
+    {4000, 10}, {8000, 10}, {16000, -1}
+};
 
-const std::array<EqBandConfig, 5> EqBandConfig::kPreset5Band = {{
-    {50, 1.0}, {100, 2.0}, {4000, 4.0}, {8000, 2.0}, {16000, 1.0}
-}};
+const EqBandConfig EqBandConfig::kPreset7Band[7] = {
+    {50, -1}, {250, 10}, {750, 10}, {2000, 10}, {4000, 10}, {8000, 10}, {16000, -1}
+};
+
+const EqBandConfig EqBandConfig::kPreset6Band[6] = {
+    {50, -1}, {100, 3}, {1000, 10}, {3000, 10}, {8000, 10}, {15000, 10}
+};
+
+const EqBandConfig EqBandConfig::kPreset5Band[5] = {
+    {50, -1}, {100, 20}, {4000, 40}, {8000, 20}, {15000, 10}
+};
+const EqBandConfig EqBandConfig::kPreset4Band[4] = {
+    {50, 3}, {1000, 20}, {3500, 40}, {15000, 10}
+};
+const EqBandConfig EqBandConfig::kPreset3Band[3] = {
+    {50, 5}, {4000, 30}, {15000, 10}
+};
+const EqBandConfig* EqBandConfig::kBandPresets[8] = {
+    EqBandConfig::kPreset3Band, EqBandConfig::kPreset4Band, EqBandConfig::kPreset5Band,
+    EqBandConfig::kPreset6Band, EqBandConfig::kPreset7Band, EqBandConfig::kPreset8Band,
+    EqBandConfig::kPreset9Band, EqBandConfig::kPreset10Band
+};

@@ -26,11 +26,6 @@ const auto kLcdColorNetSpeed_Underrun = ST77XX_RED;
 
 static constexpr const char* const TAG = "AudioPlayer";
 
-const float AudioPlayer::sDefaultEqGains[EqualizerNode::kBandCount] = {
-    8, 8, 4, 0, -2, -2, 4, 6
-//  8, 0,-2, 4, 6
-};
-
 void AudioPlayer::setLogLevel(esp_log_level_t level)
 {
     esp_log_level_set(TAG, level);
@@ -177,7 +172,7 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         return false;
     }
     if (mFlags & kFlagUseEqualizer) {
-        mEqualizer.reset(new EqualizerNode(*this, sDefaultEqGains));
+        mEqualizer.reset(new EqualizerNode(*this, mNvsHandle));
         mEqualizer->linkToPrev(pcmSource);
         pcmSource = mEqualizer.get();
     }
@@ -375,18 +370,6 @@ void AudioPlayer::loadSettings()
         auto vol = mNvsHandle.readDefault<uint8_t>("volume", kDefaultVolume);
         ESP_LOGI(TAG, "Setting volume to %u", vol);
         mVolumeInterface->setVolume(vol);
-    }
-    if (mEqualizer) {
-        int8_t gains[EqualizerNode::kBandCount];
-        size_t len = sizeof(gains);
-        if (mNvsHandle.readBlob("eq5Gains", gains, len) == ESP_OK && len == sizeof(gains)) {
-            ESP_LOGI(TAG, "Loaded equalizer gains from NVS:");
-            for (int i = 0; i < EqualizerNode::kBandCount; i++) {
-                float gain = (float)gains[i] / kEqGainPrecisionDiv;
-                ESP_LOGI("band", "%d Hz -> %.1f", mEqualizer->bandCfg(i).freq, gain);
-                mEqualizer->setBandGain(i, gain);
-            }
-        }
     }
 }
 
@@ -651,33 +634,11 @@ int AudioPlayer::volumeChange(int step)
     return newVol;
 }
 
-bool AudioPlayer::equalizerSetBand(int band, float dbGain)
-{
-    if (!mEqualizer) {
-        return false;
-    }
-    equalizerDoSetBandGain(band, dbGain);
-    equalizerSaveGains();
-    return true;
-}
-
-float AudioPlayer::equalizerDoSetBandGain(int band, float dbGain)
-{
-    if (dbGain < -40) {
-        dbGain = -40;
-    } else if (dbGain > 40) {
-        dbGain = 40;
-    }
-    dbGain = roundf(dbGain * kEqGainPrecisionDiv) / kEqGainPrecisionDiv; // encode to int and decode back
-    mEqualizer->setBandGain(band, dbGain);
-    return dbGain;
-}
-
-bool AudioPlayer::equalizerSetGainsBulk(char* str, size_t len)
+bool AudioPlayer::equalizerSetGainsFromString(char* str, size_t len)
 {
     if (!str) {
-        mEqualizer->zeroAllGains();
-        equalizerSaveGains();
+        mEqualizer->setAllGains(nullptr, 0);
+        mEqualizer->saveGains();
         return true;
     }
     KeyValParser vals(str, len + 1);
@@ -690,39 +651,19 @@ bool AudioPlayer::equalizerSetGainsBulk(char* str, size_t len)
             ok = false;
             continue;
         }
-        auto gain = kv.val.toFloat(INFINITY);
-        if (gain == INFINITY) {
+        int gain = kv.val.toInt(-127);
+        if (gain == -127) {
             ESP_LOGW(TAG, "Invalid gain '%s'", kv.val.str);
             ok = false;
             continue;
         }
-        ESP_LOGI(TAG, "Setting band %d gain %.1f", band, gain);
-        equalizerDoSetBandGain(band, gain);
+        ESP_LOGI(TAG, "Setting band %d gain %d", band, gain);
+        mEqualizer->setBandGain(band, gain);
     }
-    equalizerSaveGains();
+    mEqualizer->saveGains();
     return ok;
 }
 
-const float* AudioPlayer::equalizerGains()
-{
-    if (!mEqualizer) {
-        return nullptr;
-    }
-    return mEqualizer->allGains();
-}
-
-void AudioPlayer::equalizerSaveGains()
-{
-    if (!mEqualizer) {
-        return;
-    }
-    auto fGains = mEqualizer->allGains();
-    int8_t gains[EqualizerNode::kBandCount];
-    for (int i = 0; i < EqualizerNode::kBandCount; i++) {
-        gains[i] = roundf(fGains[i] * kEqGainPrecisionDiv);
-    }
-    mNvsHandle.writeBlob("eq5Gains", gains, sizeof(gains));
-}
 AudioPlayer::~AudioPlayer()
 {
     destroyPipeline();
@@ -816,56 +757,72 @@ esp_err_t AudioPlayer::volumeUrlHandler(httpd_req_t *req)
     httpd_resp_send(req, buf.buf(), buf.dataSize());
     return ESP_OK;
 }
-
+esp_err_t respondOkOrFail(bool ok, httpd_req_t* req)
+{
+    if (ok) {
+        httpd_resp_sendstr(req, "ok");
+        return ESP_OK;
+    } else {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+}
 esp_err_t AudioPlayer::equalizerSetUrlHandler(httpd_req_t *req)
 {
     auto self = static_cast<AudioPlayer*>(req->user_ctx);
     MutexLocker locker(self->mutex);
+    if (!self->mEqualizer) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No equalizer node");
+        return ESP_FAIL;
+    }
+    auto& eq = *self->mEqualizer;
     UrlParams params(req);
+    auto nbands = params.intVal("nbands", -1);
+    if (nbands != -1) {
+        return respondOkOrFail(eq.setNumBands(nbands), req);
+    }
     auto data = params.strVal("vals");
     if (data.str) {
-        self->equalizerSetGainsBulk(data.str, data.len);
-        httpd_resp_sendstr(req, "ok");
-        return ESP_OK;
+        return respondOkOrFail(self->equalizerSetGainsFromString(data.str, data.len), req);
     }
     if (params.strVal("reset").str) {
-        self->equalizerSetGainsBulk(nullptr, 0);
-        httpd_resp_sendstr(req, "ok");
-        return ESP_OK;
+        return respondOkOrFail(self->equalizerSetGainsFromString(nullptr, 0), req);
     }
     auto enable = params.intVal("enable", -1);
     if (enable != -1) {
-        self->mEqualizer->disable(!enable);
+        eq.disable(!enable);
         httpd_resp_sendstr(req, "ok");
         return ESP_OK;
     }
     auto band = params.intVal("band", -1);
-    if (band < 0 || band >= EqualizerNode::kBandCount) {
+    if (band < 0 || band >= eq.numBands()) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid 'band' parameter");
-        return ESP_OK;
+        return ESP_FAIL;
     }
-    auto level = params.floatVal("level", INFINITY);
-    if (level == INFINITY) {
+    auto level = params.intVal("level", -127);
+    if (level == -127) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid 'level' parameter");
         return ESP_OK;
     }
-    if (self->equalizerSetBand(band, level)) {
-        httpd_resp_sendstr(req, "ok");
-    } else {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed setting equalizer band");
-    }
-    return ESP_OK;
+    eq.setBandGain(band, level);
+    return respondOkOrFail(eq.saveGains(), req);
 }
 
 esp_err_t AudioPlayer::equalizerDumpUrlHandler(httpd_req_t *req)
 {
     auto self = static_cast<AudioPlayer*>(req->user_ctx);
     MutexLocker locker(self->mutex);
-    auto levels = self->equalizerGains();
+    if (!self->mEqualizer) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No equalizer node");
+        return ESP_FAIL;
+    }
+    auto& eq = *self->mEqualizer;
+    MutexLocker eqLocker(eq.mMutex);
+    auto levels = eq.gains();
     DynBuffer buf(240);
     buf.printf("[");
-    for (int i = 0; i < EqualizerNode::kBandCount; i++) {
-        buf.printf("[%d,%.1f],", self->mEqualizer->bandCfg(i).freq, levels[i]);
+    for (int i = 0; i < eq.numBands(); i++) {
+        buf.printf("[%d,%d],", eq.bandCfg(i).freq, levels[i]);
     }
     buf[buf.dataSize()-2] = ']';
     httpd_resp_send(req, buf.buf(), buf.dataSize()-1);

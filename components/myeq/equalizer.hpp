@@ -4,12 +4,20 @@
 #include <array>
 
 struct EqBandConfig {
-    int freq;
-    float width;
-    static const std::array<EqBandConfig, 10> kPreset10Band;
-    static const std::array<EqBandConfig, 8> kPreset8Band;
-    static const std::array<EqBandConfig, 6> kPreset6Band;
-    static const std::array<EqBandConfig, 5> kPreset5Band;
+    int16_t freq;
+    int8_t width; // in 0.1x octaves: 10 means 1 octave
+    static const EqBandConfig kPreset10Band[10];
+    static const EqBandConfig kPreset9Band[9];
+    static const EqBandConfig kPreset8Band[8];
+    static const EqBandConfig kPreset7Band[7];
+    static const EqBandConfig kPreset6Band[6];
+    static const EqBandConfig kPreset5Band[5];
+    static const EqBandConfig kPreset4Band[4];
+    static const EqBandConfig kPreset3Band[3];
+    static const EqBandConfig* kBandPresets[8];
+    static const EqBandConfig* defaultForNBands(int n) {
+        return (n < 3 || n > 10) ? nullptr : kBandPresets[n - 3];
+    }
 };
 
 template <int N, typename S>
@@ -19,26 +27,26 @@ public:
     typedef S Sample;
     enum { kBandCount = N };
 protected:
-    const std::array<EqBandConfig, kBandCount>& mBandConfigs;
+    const EqBandConfig* mBandConfigs;
     BiQuad<Sample> mFilters[kBandCount];
     int mSampleRate;
 public:
-    Equalizer(const std::array<EqBandConfig, kBandCount>& cfg)
-        : mBandConfigs(cfg)
+    Equalizer(const EqBandConfig* cfg)
+        : mBandConfigs(cfg ? cfg : EqBandConfig::defaultForNBands(kBandCount))
     {
-        mFilters[0].init(BiQuadType::LSH);
-        mFilters[kBandCount - 1].init(BiQuadType::HSH);
+        mFilters[0].init((mBandConfigs[0].width < 0) ? BiQuadType::LSH : BiQuadType::PEQ);
+        mFilters[kBandCount - 1].init((mBandConfigs[kBandCount - 1].width < 0) ? BiQuadType::HSH : BiQuadType::PEQ);
         for (int i = 1; i < kBandCount - 1; i++) {
             mFilters[i].init(BiQuadType::PEQ);
         }
     }
-    const EqBandConfig& bandConfig(int n) const { return mBandConfigs[n]; }
+    const EqBandConfig* bandConfigs() const { return mBandConfigs; }
     const BiQuad<Sample>& filter(uint8_t band) const
     {
         bqassert(band < kBandCount);
         return mFilters[band];
     }
-    void init(int sr, float* gains)
+    void init(int sr, int8_t* gains)
     {
         mSampleRate = sr;
         if (gains) {
@@ -49,6 +57,12 @@ public:
             for (int i = 0; i < kBandCount; i++) {
                 setBandGain(i, 0, true);
             }
+        }
+    }
+    void resetState()
+    {
+        for (int i = 0; i < kBandCount; i++) {
+            mFilters[i].clearState();
         }
     }
     Equalizer::Sample process(Sample sample)
@@ -71,27 +85,27 @@ public:
         }
         return s;
     }
-    void setBandGain(uint8_t band, float dbGain, bool clearState=false)
+    void setBandGain(uint8_t band, int8_t dbGain, bool clearState=false)
     {
         bqassert(band < kBandCount);
         auto& filter = mFilters[band];
         auto& cfg = mBandConfigs[band];
-        filter.set(cfg.freq, cfg.width, mSampleRate, dbGain);
+        filter.set(cfg.freq, (float)cfg.width / 10, mSampleRate, dbGain);
         if (clearState) {
-            filter.clearHistorySamples();
+            filter.clearState();
         }
     }
-    void setAllGains(float* gains)
+    void setAllGains(const int8_t* gains)
     {
-        for (int i = 0; i < kBandCount; i++) {
-            auto& cfg = mBandConfigs[i];
-            mFilters[i].set(cfg.freq, cfg.width, mSampleRate, gains[i]);
-        }
-    }
-    void zeroAllGains()
-    {
-        for (int i = 0; i < kBandCount; i++) {
-            setBandGain(i, 0, true);
+        if (gains) {
+            for (int i = 0; i < kBandCount; i++) {
+                auto& cfg = mBandConfigs[i];
+                mFilters[i].set(cfg.freq, (float)cfg.width / 10, mSampleRate, gains[i]);
+            }
+        } else {
+            for (int i = 0; i < kBandCount; i++) {
+                setBandGain(i, 0, true);
+            }
         }
     }
 };

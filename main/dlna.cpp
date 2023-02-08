@@ -186,16 +186,16 @@ esp_err_t DlnaHandler::httpDlnaCommandHandler(httpd_req_t* req)
         return ESP_FAIL;
     }
     unique_ptr_mfree<char> strXml((char*)utils::mallocTrySpiram(contentLen + 1));
-    auto recvLen = httpd_req_recv(req, strXml.get(), contentLen);
-    if (recvLen != contentLen) {
-        ESP_LOGW(TAG, "Ctrl command: error receiving postdata: %s",
-            recvLen < 0 ? esp_err_to_name(recvLen) : "received less than expected");
-        if (recvLen > 0) {
-            strXml.get()[recvLen] = 0; // just in case
-            ESP_LOGW(TAG, "Incomplete postdata: '%s'", strXml.get());
+    int total = 0;
+    do {
+        auto recvLen = httpd_req_recv(req, strXml.get() + total, contentLen - total);
+        if (recvLen <= 0) {
+            ESP_LOGW(TAG, "Ctrl command: error receiving postdata: %s",
+                (recvLen < 0) ? esp_err_to_name(recvLen) : "incomplete data");
+            return ESP_FAIL;
         }
-        return ESP_FAIL;
-    }
+        total += recvLen;
+    } while(total < contentLen);
     strXml.get()[contentLen] = 0; // null-terminate postdata string
     //printf("rx XML cmd: %s\n", xml.get());
     tinyxml2::XMLDocument xml;

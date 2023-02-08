@@ -129,7 +129,7 @@ public:
     void init(BiQuadType type)
     {
         m_type = type;
-        clearHistorySamples();
+        clearState();
     }
     /** Reconfigure the filter, usually used for adjusting the gain during operation */
     void set(int freq, float bw, int srate, float dbGain)
@@ -214,7 +214,7 @@ public:
         BQ_LOGD("Config band %d Hz, bw: %f, gain: %f (%s)", freq, bw, dbGain, Mul::kIsFloat ? "fp" : "int");
         BQ_LOGD("a0=%f, a1=%f, a2=%f, a3=%f, a4=%f", b0/a0, b1/a0, b2/a0, a1/a0, a2/a0);
     }
-    void clearHistorySamples()
+    void clearState()
     {
         /* zero initial samples */
         m_x1 = m_x2 = 0;
