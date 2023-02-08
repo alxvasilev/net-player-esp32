@@ -3,7 +3,7 @@
 
 EqualizerNode::EqualizerNode(IAudioPipeline& parent, const float *gains)
 : AudioNode(parent, "equalizer"),
-  mEqualizerLeft(EqBandConfig::kPresetTenBand), mEqualizerRight(EqBandConfig::kPresetTenBand)
+  mEqualizerLeft(EqBandConfig::kPreset8Band), mEqualizerRight(EqBandConfig::kPreset8Band)
 {
     if (gains) {
         memcpy(mGains, gains, sizeof(mGains));

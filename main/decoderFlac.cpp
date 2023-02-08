@@ -97,7 +97,7 @@ AudioNode::StreamError DecoderFlac::pullData(AudioNode::DataPullReq& dpr)
     }
     dpr.fmt = outputFormat;
     dpr.buf = (char*)mOutputBuf;
-    if (mOutputChunkSize) {
+    if (mOutputChunkSize && mOutputChunkSize < mOutputLen) {
         mOutputReadOfs = dpr.size = mOutputChunkSize;
     } else {
         dpr.size = mOutputLen;

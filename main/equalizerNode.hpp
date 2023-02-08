@@ -8,7 +8,7 @@
 class EqualizerNode: public AudioNode, public DefaultVolumeImpl
 {
 public:
-    enum: uint8_t { kBandCount = 10 };
+    enum: uint8_t { kBandCount = 8 };
 protected:
     Mutex mMutex;
     bool mBypass = false;
