@@ -27,6 +27,8 @@ protected:
     static void process16bitStereo(AudioNode::DataPullReq&, void* arg);
     static void process32bitStereo(AudioNode::DataPullReq&, void* arg);
 public:
+    void* operator new(size_t size) { printf("eq core malloc %zu\n", size); return heap_caps_malloc(size, MALLOC_CAP_DMA); }
+    void operator delete(void* ptr) noexcept { free(ptr); }
     MyEqualizerCore(const EqBandConfig* cfg);
     virtual int bandCount() const { return N; }
     virtual void init(int sampleRate, int8_t* gains) override {

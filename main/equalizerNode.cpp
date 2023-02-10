@@ -10,7 +10,8 @@ MyEqualizerCore<N>::MyEqualizerCore(const EqBandConfig* cfg)
 EqualizerNode::EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs)
 : AudioNode(parent, "equalizer"), mNvsHandle(nvs)
 {
-    mNumBands = mNvsHandle.readDefault("eq.nbands", 10);
+    mNumBands = mNvsHandle.readDefault<uint8_t>("eq.nbands", 10);
+    equalizerReinit(StreamFormat(44100, 16, 2));
 }
 
 #define CASE_N_BANDS(n) \
@@ -60,6 +61,7 @@ bool EqualizerNode::setNumBands(uint8_t n) {
     MutexLocker locker(mMutex);
     mNumBands = n;
     equalizerReinit(mFormat);
+    mNvsHandle.write("eq.nbands", (uint8_t)n);
     return true;
 }
 void EqualizerNode::setBandGain(uint8_t band, int8_t dbGain)
