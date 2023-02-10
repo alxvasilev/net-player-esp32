@@ -4,7 +4,7 @@
 #include <array>
 
 struct EqBandConfig {
-    int16_t freq;
+    uint16_t freq;
     int8_t width; // in 0.1x octaves: 10 means 1 octave
     static const EqBandConfig kPreset10Band[10];
     static const EqBandConfig kPreset9Band[9];

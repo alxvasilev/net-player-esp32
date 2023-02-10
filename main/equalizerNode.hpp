@@ -7,9 +7,11 @@
 
 struct IEqualizerCore
 {
+    enum Type { kTypeUnknown = 0, kTypeEsp = 1, kTypeCustom = 2 };
     typedef void(*ProcessFunc)(AudioNode::DataPullReq&, void* arg);
-    virtual int bandCount() const = 0;
-    virtual void init(int sampleRate, int8_t* gains) = 0;
+    virtual Type type() const = 0;
+    virtual uint8_t numBands() const = 0;
+    virtual void init(StreamFormat fmt, int8_t* gains) = 0;
     virtual ProcessFunc getProcessFunc(StreamFormat fmt, void*& arg) = 0;
     virtual void setBandGain(uint8_t band, int8_t dbGain) = 0;
     virtual void setAllGains(const int8_t* gains=nullptr) = 0;
@@ -27,12 +29,15 @@ protected:
     static void process16bitStereo(AudioNode::DataPullReq&, void* arg);
     static void process32bitStereo(AudioNode::DataPullReq&, void* arg);
 public:
+    MyEqualizerCore();
+    Type type() const override { return kTypeCustom; }
     void* operator new(size_t size) { printf("eq core malloc %zu\n", size); return heap_caps_malloc(size, MALLOC_CAP_DMA); }
     void operator delete(void* ptr) noexcept { free(ptr); }
     MyEqualizerCore(const EqBandConfig* cfg);
-    virtual int bandCount() const { return N; }
-    virtual void init(int sampleRate, int8_t* gains) override {
-        mEqualizerLeft.init(sampleRate, gains); mEqualizerRight.init(sampleRate, gains);
+    virtual uint8_t numBands() const override { return N; }
+    virtual void init(StreamFormat fmt, int8_t* gains) override {
+        auto sr = fmt.sampleRate();
+        mEqualizerLeft.init(sr, gains); mEqualizerRight.init(sr, gains);
     }
     virtual ProcessFunc getProcessFunc(StreamFormat fmt, void*& arg) override;
     virtual void setBandGain(uint8_t band, int8_t dbGain) override {
@@ -45,35 +50,63 @@ public:
         return mEqualizerLeft.bandConfigs()[n];
     }
 };
+class EspEqualizerCore: public IEqualizerCore
+{
+protected:
+    void* mEqualizer = nullptr;
+    int mSampleRate = 0; // cache these because the esp eq wants them passed for each process() call
+    int8_t mChanCount = 0;
+    static void process16bitStereo(AudioNode::DataPullReq&, void* arg);
+public:
+    Type type() const override { return kTypeEsp; }
+    uint8_t numBands() const { return 10; }
+    EspEqualizerCore();
+    void init(StreamFormat fmt, int8_t* gains) override;
+    void setBandGain(uint8_t band, int8_t dbGain) override;
+    void setAllGains(const int8_t *gains) override;
+    EqBandConfig bandConfig(uint8_t n) const override;
+    ProcessFunc getProcessFunc(StreamFormat fmt, void*& arg) override {
+        assert(fmt.bitsPerSample() == 16);
+        arg = this;
+        return process16bitStereo;
+    }
+    virtual ~EspEqualizerCore();
+};
+
 class NvsHandle;
 class EqualizerNode: public AudioNode, public DefaultVolumeImpl
 {
 protected:
-    enum { kMinBands = 4, kMaxBands = 10 };
+    enum { kMyEqMinBands = 4, kMyEqMaxBands = 10, kMyEqDefaultNumBands = 8 };
     NvsHandle& mNvsHandle;
     StreamFormat mFormat;
     int mSampleRate = 0; // cached from mFormat, for performance
     std::unique_ptr<IEqualizerCore> mCore;
     IEqualizerCore::ProcessFunc mProcessFunc = nullptr;
     void* mProcFuncArg = nullptr;
-    uint8_t mNumBands;
-    uint8_t mChanCount = 0; // cached from mFormat, for performance
+    bool mUseEspEq;
+    uint8_t mMyEqDefaultNumBands;
     bool mBypass = false;
     std::unique_ptr<int8_t[]> mGains;
-    std::string eqName();
-    void equalizerReinit(StreamFormat fmt);
+    char mEqName[10] = {};
+    std::string eqNameKey() const;
+    void equalizerReinit(StreamFormat fmt, bool forceLoadGains=false);
     void updateBandGain(uint8_t band);
-    void createCoreForNBands(int n, StreamFormat fmt);
+    void createCustomCore(uint8_t nBands, StreamFormat fmt);
 public:
     Mutex mMutex;
     EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs);
     virtual Type type() const { return kTypeEqualizer; }
     virtual StreamError pullData(DataPullReq &dpr) override;
     virtual void confirmRead(int size) override { mPrev->confirmRead(size); }
-    int numBands() const { return mNumBands; }
-    bool setNumBands(uint8_t n);
+    int numBands() const { return mCore->numBands(); }
+    bool setMyEqNumBands(uint8_t n);
+    IEqualizerCore::Type eqType() const { return mCore->type(); }
+    const char* presetName() const { return mEqName; }
+    bool switchPreset(const char* name);
+    void useEspEqualizer(bool use);
     void disable(bool disabled) { mBypass = disabled; }
-    void setBandGain(uint8_t band, int8_t dbGain);
+    bool setBandGain(uint8_t band, int8_t dbGain);
     void setAllGains(const int8_t* gains, int len);
     const int8_t* gains() { return mGains.get(); }
     bool saveGains();

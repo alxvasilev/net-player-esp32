@@ -779,7 +779,17 @@ esp_err_t AudioPlayer::equalizerSetUrlHandler(httpd_req_t *req)
     UrlParams params(req);
     auto nbands = params.intVal("nbands", -1);
     if (nbands != -1) {
-        return respondOkOrFail(eq.setNumBands(nbands), req);
+        return respondOkOrFail(eq.setMyEqNumBands(nbands), req);
+    }
+    auto preset = params.strVal("preset");
+    if (preset.str) {
+        return respondOkOrFail(eq.switchPreset(preset.str), req);
+    }
+    int useEsp = params.intVal("esp", -1);
+    if (useEsp != -1) {
+        eq.useEspEqualizer(useEsp);
+        httpd_resp_sendstr(req, "ok");
+        return ESP_OK;
     }
     auto data = params.strVal("vals");
     if (data.str) {
@@ -820,11 +830,12 @@ esp_err_t AudioPlayer::equalizerDumpUrlHandler(httpd_req_t *req)
     MutexLocker eqLocker(eq.mMutex);
     auto levels = eq.gains();
     DynBuffer buf(240);
-    buf.printf("[");
+    buf.printf("{\"t\":%d,\"n\":\"%s\",\"b\":[", eq.eqType(), eq.presetName());
     for (int i = 0; i < eq.numBands(); i++) {
         buf.printf("[%d,%d],", eq.bandCfg(i).freq, levels[i]);
     }
-    buf[buf.dataSize()-2] = ']';
+    buf.setDataSize(buf.dataSize() - 2); // remove terminating null
+    buf.appendStr("]}", true);
     httpd_resp_send(req, buf.buf(), buf.dataSize()-1);
     return ESP_OK;
 }
@@ -875,11 +886,6 @@ esp_err_t AudioPlayer::nvsSetParamUrlHandler(httpd_req_t* req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No 'key' param specified");
         return ESP_FAIL;
     }
-    auto type = params.strVal("type");
-    if (!type.str) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No 'type' param specified");
-        return ESP_FAIL;
-    }
     auto strVal = params.strVal("val");
     auto self = static_cast<AudioPlayer*>(req->user_ctx);
     MutexLocker locker(self->mutex);
@@ -892,6 +898,11 @@ esp_err_t AudioPlayer::nvsSetParamUrlHandler(httpd_req_t* req)
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, esp_err_to_name(err));
             return ESP_FAIL;
         }
+    }
+    auto type = params.strVal("type");
+    if (!type.str) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No 'type' param specified");
+        return ESP_FAIL;
     }
     auto err = self->mNvsHandle.writeValueFromString(key.str, type.str, strVal.str);
     if (err == ESP_OK) {
@@ -919,6 +930,7 @@ esp_err_t AudioPlayer::nvsGetParamUrlHandler(httpd_req_t* req)
         ns = "aplayer";
         nvs = &self->mNvsHandle;
     }
+    httpd_resp_set_type(req, "text/json");
     DynBuffer buf(128);
     MutexLocker locker(self->mutex);
     httpd_resp_send_chunk(req, "{", 1);
@@ -940,7 +952,7 @@ esp_err_t AudioPlayer::nvsGetParamUrlHandler(httpd_req_t* req)
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "NvsHandle::valToString error %s, key: '%s'", esp_err_to_name(err), info.key);
         }
-        httpd_resp_send_chunk(req, buf.buf(), buf.dataSize());
+        httpd_resp_send_chunk(req, buf.buf(), buf.dataSize()); // don't send null terminator
     }
     nvs_release_iterator(it);
     httpd_resp_send_chunk(req, "}", 1);

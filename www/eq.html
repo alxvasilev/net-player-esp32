@@ -26,27 +26,6 @@
 </head>
 <body>
     <datalist id="tickmarks">
-        <option value="-40"></option>
-        <option value="-36"></option>
-        <option value="-32"></option>
-        <option value="-28"></option>
-        <option value="-24"></option>
-        <option value="-20"></option>
-        <option value="-16"></option>
-        <option value="-12"></option>
-        <option value="-8"></option>
-        <option value="-4"></option>
-        <option value="0"></option>
-        <option value="4"></option>
-        <option value="8"></option>
-        <option value="12"></option>
-        <option value="16"></option>
-        <option value="20"></option>
-        <option value="24"></option>
-        <option value="28"></option>
-        <option value="32"></option>
-        <option value="36"></option>
-        <option value="40"></option>
     </datalist>
     <div id=equalizer>
     </div>
@@ -64,83 +43,94 @@ function htmlToElement(html) {
     template.innerHTML = html;
     return template.content.firstChild;
 }
-function Slider(parent, band, slider, label) {
-    this.parent = parent;
-    this.band = band;
-    this.slider = slider;
-    this.label = label;
-    slider.addEventListener('input', this.onSlide.bind(this));
-};
-
-Slider.prototype.onSlide = function(event) {
-    let db = this.label.innerHTML = this.slider.value;
-    if (this.dirty) {
-        return;
+class Slider {
+    constructor(parent, band, slider, label) {
+        this.parent = parent;
+        this.band = band;
+        this.slider = slider;
+        this.label = label;
+        slider.addEventListener('input', this.onSlide.bind(this));
     }
-    this.dirty = Date.now();
-    this.parent.onSlide();
-};
 
-Slider.prototype.load = function(db) {
-    this.slider.value = db;
-    this.label.innerHTML = db;
-};
-
-function Equalizer(cont, bands) {
-    this.sliders = [];
-    for (let i = 0; i < bands.length; i++) {
-        cont.appendChild(htmlToElement(
-            '<div class="eq-slider-cont">' + niceFreq(bands[i][0]) +
-            '<input type="range" id="eqSlider' + i + '" band="' + i +
-            '" min="-40" max="40" value="0" step="1" list="tickmarks"><div class="dblabel" id="dbLabel'+ i +
-            '">db</div></div>'));
-        this.sliders.push(new Slider(this, i, byId('eqSlider' + i), byId('dbLabel' + i)));
+    onSlide = function(event) {
+        let db = this.label.innerHTML = this.slider.value;
+        if (this.dirty) {
+            return;
+        }
+        this.dirty = Date.now();
+        this.parent.onSlide();
     }
-    this.load(bands);
-}
 
-Equalizer.kThrottleInterval = 100;
-
-Equalizer.prototype.load = function(bands) {
-    for (let i = 0; i < bands.length; i++) {
-        let slider = this.sliders[i].load(bands[i][1]);
+    load = function(db) {
+        this.slider.value = db;
+        this.label.innerHTML = db;
     }
 }
-Equalizer.prototype.onSlide = function() {
-    if (!this.throttleTimer) {
-        this.throttleTimer = setInterval(this.onThrottleTimer.bind(this), Equalizer.kThrottleInterval);
+
+class Equalizer {
+    static kThrottleInterval = 100;
+    constructor(cont, bands) {
+        this.generateTickMarks();
+        this.sliders = [];
+        for (let i = 0; i < bands.length; i++) {
+            cont.appendChild(htmlToElement(
+                '<div class="eq-slider-cont">' + niceFreq(bands[i][0]) +
+                '<input type="range" id="eqSlider' + i + '" band="' + i +
+                '" min="-40" max="40" value="0" step="1" list="tickmarks"><div class="dblabel" id="dbLabel'+ i +
+                '">db</div></div>'));
+                this.sliders.push(new Slider(this, i, byId('eqSlider' + i), byId('dbLabel' + i)));
+        }
+        this.load(bands);
     }
-}
-Equalizer.prototype.onThrottleTimer = function() {
-    let now = Date.now();
-    let commit = "";
-    remain = false;
-    for (let slider of this.sliders) {
-        if (slider.dirty) {
-            if(now - slider.dirty >= Equalizer.kThrottleInterval) {
-                if (commit) {
-                    commit += ';';
-                }
-                commit += slider.band + '=' + slider.slider.value;
-                delete slider.dirty;
-            } else {
-                remain = true;
-            }
+    generateTickMarks() {
+        let cont = byId("tickmarks");
+        for (let i = -40; i <= 40; i += 1) {
+            let item = document.createElement("option");
+            item.setAttribute("value", i);
+            cont.appendChild(item);
         }
     }
-    if (!commit) {
-        return;
+    load(bands) {
+        for (let i = 0; i < bands.length; i++) {
+            let slider = this.sliders[i].load(bands[i][1]);
+        }
     }
-    fetch('/eqset?vals=' + commit);
-    if (!remain) {
-        clearInterval(this.throttleTimer);
-        delete this.throttleTimer;
+    onSlide() {
+        if (!this.throttleTimer) {
+            this.throttleTimer = setInterval(this.onThrottleTimer.bind(this), Equalizer.kThrottleInterval);
+        }
+    }
+    onThrottleTimer() {
+        let now = Date.now();
+        let commit = "";
+        let remain = false;
+        for (let slider of this.sliders) {
+            if (slider.dirty) {
+                if(now - slider.dirty >= Equalizer.kThrottleInterval) {
+                    if (commit) {
+                        commit += ';';
+                    }
+                    commit += slider.band + '=' + slider.slider.value;
+                    delete slider.dirty;
+                } else {
+                    remain = true;
+                }
+            }
+        }
+        if (!commit) {
+            return;
+        }
+        fetch('/eqset?vals=' + commit);
+        if (!remain) {
+            clearInterval(this.throttleTimer);
+            delete this.throttleTimer;
+        }
     }
 }
 
 async function init() {
-    var bands = await(await fetch("/eqget")).json();
-    let eq = new Equalizer(byId("equalizer"), bands);
+    var data = await(await fetch("/eqget")).json();
+    let eq = new Equalizer(byId("equalizer"), data.b);
 }
 window.onload = init;
 </script>
