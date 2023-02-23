@@ -87,9 +87,12 @@ protected:
     bool mUseEspEq;
     uint8_t mMyEqDefaultNumBands;
     bool mBypass = false;
+    std::unique_ptr<EqBandConfig[]> mBandConfigs;
     std::unique_ptr<int8_t[]> mGains;
     char mEqName[10] = {};
     std::string eqNameKey() const;
+    std::string eqConfigKey(uint8_t nBands) const;
+    void loadEqConfig(uint8_t nBands);
     void equalizerReinit(StreamFormat fmt, bool forceLoadGains=false);
     void updateBandGain(uint8_t band);
     void createCustomCore(uint8_t nBands, StreamFormat fmt);
@@ -110,6 +113,7 @@ public:
     void setAllGains(const int8_t* gains, int len);
     const int8_t* gains() { return mGains.get(); }
     bool saveGains();
+    bool reconfigEqBand(uint8_t band, uint16_t freq, int8_t bw);
     const EqBandConfig bandCfg(uint8_t n) const { return mCore->bandConfig(n); }
     virtual IAudioVolume* volumeInterface() override { return this; }
 };

@@ -7,7 +7,9 @@ static const char* TAG = "eq";
 template <int N>
 MyEqualizerCore<N>::MyEqualizerCore(const EqBandConfig* cfg)
 : mEqualizerLeft(cfg), mEqualizerRight(cfg)
-{}
+{
+    ESP_LOGI("eq", "Created %d-band custom equalizer", N);
+}
 
 EqualizerNode::EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs)
 : AudioNode(parent, "equalizer"), mNvsHandle(nvs)
@@ -16,7 +18,7 @@ EqualizerNode::EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs)
     if (mMyEqDefaultNumBands < kMyEqMinBands || mMyEqDefaultNumBands > kMyEqMaxBands) {
         mMyEqDefaultNumBands = kMyEqDefaultNumBands;
     }
-    mUseEspEq = mNvsHandle.readDefault("eq.useStock", 1);
+    mUseEspEq = mNvsHandle.readDefault("eq.useStock", (uint8_t)1);
     size_t len = sizeof(mEqName);
     if (mNvsHandle.readString("eq.default", mEqName, len) == ESP_OK) {
         mEqName[len] = 0;
@@ -36,11 +38,29 @@ std::string EqualizerNode::eqNameKey() const
     }
     return result;
 }
+std::string EqualizerNode::eqConfigKey(uint8_t nBands) const {
+    std::string result = "eq.";
+    result += mEqName;
+    appendAny(result, nBands);
+    result += ".cfg";
+    return result;
+}
+void EqualizerNode::loadEqConfig(uint8_t nBands)
+{
+    mBandConfigs.reset(new EqBandConfig[nBands]);
+    size_t len = nBands * sizeof(EqBandConfig);
+    if (mNvsHandle.readBlob(eqConfigKey(nBands).c_str(), mBandConfigs.get(), len) != ESP_OK || len != nBands * sizeof(EqBandConfig)) {
+        mBandConfigs.reset();
+    } else {
+        ESP_LOGW(TAG, "Loaded custom band-config for %d-band equalizer '%s'", nBands, mEqName);
+    }
+}
 #define CASE_N_BANDS(n) \
-    case n: mCore.reset(new MyEqualizerCore<n>(nullptr)); break
+    case n: mCore.reset(new MyEqualizerCore<n>(mBandConfigs.get())); break
 
 void EqualizerNode::createCustomCore(uint8_t nBands, StreamFormat fmt)
 {
+    loadEqConfig(nBands);
     switch(nBands) {
         CASE_N_BANDS(10);
         CASE_N_BANDS(9);
@@ -86,6 +106,7 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
         if ((mNvsHandle.readBlob(eqNameKey().c_str(), mGains.get(), len) == ESP_OK) && (len == nBands)) {
             ESP_LOGI(TAG, "Loaded equalizer gains from NVS for '%s'", mEqName);
         } else {
+            printf("============ error loading gains for '%s', len=%d, bands=%d\n", eqNameKey().c_str(), len, nBands);
             memset(mGains.get(), 0, nBands);
         }
     }
@@ -131,6 +152,36 @@ bool EqualizerNode::saveGains()
     MutexLocker locker(mMutex);
     return mNvsHandle.writeBlob(eqNameKey().c_str(), mGains.get(), mCore->numBands()) == ESP_OK;
 }
+bool EqualizerNode::reconfigEqBand(uint8_t band, uint16_t freq, int8_t bw)
+{
+    MutexLocker locker(mMutex);
+    if (!mCore || mCore->type() != IEqualizerCore::kTypeCustom) {
+        return false;
+    }
+    uint8_t nBands = mCore->numBands();
+    auto len = nBands * sizeof(EqBandConfig);
+    EqBandConfig* cfg;
+    if (mBandConfigs) {
+        cfg = mBandConfigs.get();
+    } else {
+        cfg = (EqBandConfig*)alloca(len);
+        memcpy(cfg, EqBandConfig::defaultForNBands(nBands), len);
+    }
+    auto bandCfg = cfg + band;
+    if (freq) {
+        bandCfg->freq = freq;
+    }
+    if (bw) {
+        bandCfg->width = bw;
+    }
+    ESP_LOGI(TAG, "Reconfiguring band %d: freq=%d, bw=%d", band, bandCfg->freq, bandCfg->width);
+    if (mNvsHandle.writeBlob(eqConfigKey(nBands).c_str(), cfg, len) == ESP_OK) {
+        mCore.reset();
+        equalizerReinit(mFormat);
+        return true;
+    }
+    return false;
+}
 bool EqualizerNode::switchPreset(const char *name)
 {
     auto len = strlen(name);
@@ -149,14 +200,10 @@ void EqualizerNode::useEspEqualizer(bool use)
         return;
     }
     mUseEspEq = use;
+    mNvsHandle.write("eq.useStock", (uint8_t)mUseEspEq);
     equalizerReinit(mFormat, true);
 }
 
-template<int N>
-MyEqualizerCore<N>::MyEqualizerCore()
-{
-    ESP_LOGI("eq", "Created %d-band custom equalizer", N);
-}
 template<int N>
 void MyEqualizerCore<N>::process16bitStereo(AudioNode::DataPullReq& dpr, void* arg) {
     auto& self = *static_cast<MyEqualizerCore<N>*>(arg);

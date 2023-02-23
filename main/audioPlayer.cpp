@@ -791,6 +791,13 @@ esp_err_t AudioPlayer::equalizerSetUrlHandler(httpd_req_t *req)
         httpd_resp_sendstr(req, "ok");
         return ESP_OK;
     }
+    auto cfgBand = params.intVal("cfgband", -1);
+    if (cfgBand > -1) {
+        auto freq = params.intVal("freq", 0);
+        auto bw = params.intVal("bw", 0);
+        return respondOkOrFail(eq.reconfigEqBand(cfgBand, freq, bw), req);
+    }
+
     auto data = params.strVal("vals");
     if (data.str) {
         return respondOkOrFail(self->equalizerSetGainsFromString(data.str, data.len), req);
@@ -832,7 +839,8 @@ esp_err_t AudioPlayer::equalizerDumpUrlHandler(httpd_req_t *req)
     DynBuffer buf(240);
     buf.printf("{\"t\":%d,\"n\":\"%s\",\"b\":[", eq.eqType(), eq.presetName());
     for (int i = 0; i < eq.numBands(); i++) {
-        buf.printf("[%d,%d],", eq.bandCfg(i).freq, levels[i]);
+        auto cfg = eq.bandCfg(i);
+        buf.printf("[%d,%d],", cfg.freq, levels[i]);
     }
     buf.setDataSize(buf.dataSize() - 2); // remove terminating null
     buf.appendStr("]}", true);
@@ -1223,7 +1231,7 @@ void AudioPlayer::onNewStream(StreamFormat fmt)
             prefill = 400 * 1024;
             mBufLowThreshold = 100 * 1024;
         } else {
-            prefill = 800 * 1024;
+            prefill = 500 * 1024;
             mBufLowThreshold = 200 * 1024;
         }
     } else {
