@@ -68,6 +68,7 @@
   #if (__INTEL_COMPILER >= 1000) /* Intel C++ Compiler 10.0 */
     #define FLAC__SSSE3_SUPPORTED 1
     #define FLAC__SSE4_1_SUPPORTED 1
+    #define FLAC__SSE4_2_SUPPORTED 1
   #endif
   #ifdef FLAC__USE_AVX
     #if (__INTEL_COMPILER >= 1110) /* Intel C++ Compiler 11.1 */
@@ -84,6 +85,7 @@
   #define FLAC__SSE2_SUPPORTED 1
   #define FLAC__SSSE3_SUPPORTED 1
   #define FLAC__SSE4_1_SUPPORTED 1
+  #define FLAC__SSE4_2_SUPPORTED 1
   #ifdef FLAC__USE_AVX
     #define FLAC__AVX_SUPPORTED 1
     #define FLAC__AVX2_SUPPORTED 1
@@ -95,6 +97,7 @@
   #define FLAC__SSE2_SUPPORTED 1
   #define FLAC__SSSE3_SUPPORTED 1
   #define FLAC__SSE4_1_SUPPORTED 1
+  #define FLAC__SSE4_2_SUPPORTED 1
   #ifdef FLAC__USE_AVX
     #define FLAC__AVX_SUPPORTED 1
     #define FLAC__AVX2_SUPPORTED 1
@@ -107,6 +110,7 @@
   #if (_MSC_VER >= 1500) /* MS Visual Studio 2008 */
     #define FLAC__SSSE3_SUPPORTED 1
     #define FLAC__SSE4_1_SUPPORTED 1
+    #define FLAC__SSE4_2_SUPPORTED 1
   #endif
   #ifdef FLAC__USE_AVX
     #if (_MSC_FULL_VER >= 160040219) /* MS Visual Studio 2010 SP1 */
@@ -131,6 +135,9 @@
   #ifdef __SSE4_1__
     #define FLAC__SSE4_1_SUPPORTED 1
   #endif
+  #ifdef __SSE4_2__
+    #define FLAC__SSE4_2_SUPPORTED 1
+  #endif
   #ifdef FLAC__USE_AVX
     #ifdef __AVX__
       #define FLAC__AVX_SUPPORTED 1
@@ -153,7 +160,6 @@
 typedef enum {
 	FLAC__CPUINFO_TYPE_IA32,
 	FLAC__CPUINFO_TYPE_X86_64,
-	FLAC__CPUINFO_TYPE_PPC,
 	FLAC__CPUINFO_TYPE_UNKNOWN
 } FLAC__CPUInfo_Type;
 
@@ -175,15 +181,9 @@ typedef struct {
 } FLAC__CPUInfo_x86;
 
 typedef struct {
-	FLAC__bool arch_3_00;
-	FLAC__bool arch_2_07;
-} FLAC__CPUInfo_ppc;
-
-typedef struct {
 	FLAC__bool use_asm;
 	FLAC__CPUInfo_Type type;
 	FLAC__CPUInfo_x86 x86;
-	FLAC__CPUInfo_ppc ppc;
 } FLAC__CPUInfo;
 
 void FLAC__cpu_info(FLAC__CPUInfo *info);

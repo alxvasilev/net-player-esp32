@@ -1008,7 +1008,6 @@ FLAC_API FLAC__bool FLAC__stream_decoder_process_single(FLAC__StreamDecoder *dec
 			case FLAC__STREAM_DECODER_ABORTED:
 				return true;
 			default:
-				FLAC__ASSERT(0);
 				return false;
 		}
 	}
@@ -1035,7 +1034,6 @@ FLAC_API FLAC__bool FLAC__stream_decoder_process_until_end_of_metadata(FLAC__Str
 			case FLAC__STREAM_DECODER_ABORTED:
 				return true;
 			default:
-				FLAC__ASSERT(0);
 				return false;
 		}
 	}
@@ -1069,7 +1067,6 @@ FLAC_API FLAC__bool FLAC__stream_decoder_process_until_end_of_stream(FLAC__Strea
 			case FLAC__STREAM_DECODER_ABORTED:
 				return true;
 			default:
-				FLAC__ASSERT(0);
 				return false;
 		}
 	}
@@ -1100,7 +1097,6 @@ FLAC_API FLAC__bool FLAC__stream_decoder_skip_single_frame(FLAC__StreamDecoder *
 			case FLAC__STREAM_DECODER_ABORTED:
 				return true;
 			default:
-				FLAC__ASSERT(0);
 				return false;
 		}
 	}
@@ -1649,6 +1645,11 @@ FLAC__bool read_metadata_seektable_(FLAC__StreamDecoder *decoder, FLAC__bool is_
 	decoder->private_->seek_table.is_last = is_last;
 	decoder->private_->seek_table.length = length;
 
+	if(length % FLAC__STREAM_METADATA_SEEKPOINT_LENGTH) {
+		FLAC__bitreader_limit_invalidate(decoder->private_->input);
+		return false;
+	}
+
 	decoder->private_->seek_table.data.seek_table.num_points = length / FLAC__STREAM_METADATA_SEEKPOINT_LENGTH;
 
 	/* use realloc since we may pass through here several times (e.g. after seeking) */
@@ -1670,12 +1671,8 @@ FLAC__bool read_metadata_seektable_(FLAC__StreamDecoder *decoder, FLAC__bool is_
 		decoder->private_->seek_table.data.seek_table.points[i].frame_samples = x;
 	}
 	length -= (decoder->private_->seek_table.data.seek_table.num_points * FLAC__STREAM_METADATA_SEEKPOINT_LENGTH);
-	/* if there is a partial point left, skip over it */
-	if(length > 0) {
-		/*@@@ do a send_error_to_client_() here?  there's an argument for either way */
-		if(!FLAC__bitreader_skip_byte_block_aligned_no_crc(decoder->private_->input, length))
-			return false; /* read_callback_ sets the state for us */
-	}
+
+	FLAC__ASSERT(length == 0);
 
 	return true;
 }
@@ -1747,7 +1744,8 @@ FLAC__bool read_metadata_vorbiscomment_(FLAC__StreamDecoder *decoder, FLAC__Stre
 				if (obj->comments[i].length > 0) {
 					if (length < obj->comments[i].length) {
 						obj->num_comments = i;
-						goto skip;
+						FLAC__bitreader_limit_invalidate(decoder->private_->input);
+						return false;
 					}
 					else
 						length -= obj->comments[i].length;
@@ -1771,6 +1769,10 @@ FLAC__bool read_metadata_vorbiscomment_(FLAC__StreamDecoder *decoder, FLAC__Stre
 			}
 		}
 	}
+	else {
+		FLAC__bitreader_limit_invalidate(decoder->private_->input);
+		return false;
+	}
 
   skip:
 	if (length > 0) {
@@ -1779,8 +1781,8 @@ FLAC__bool read_metadata_vorbiscomment_(FLAC__StreamDecoder *decoder, FLAC__Stre
 			free(obj->comments);
 			obj->comments = NULL;
 		}
-		if(!FLAC__bitreader_skip_byte_block_aligned_no_crc(decoder->private_->input, length))
-			return false; /* read_callback_ sets the state for us */
+		FLAC__bitreader_limit_invalidate(decoder->private_->input);
+		return false;
 	}
 
 	return true;
@@ -2579,8 +2581,11 @@ FLAC__bool read_subframe_(FLAC__StreamDecoder *decoder, uint32_t channel, uint32
 		if(!FLAC__bitreader_read_unary_unsigned(decoder->private_->input, &u))
 			return false; /* read_callback_ sets the state for us */
 		decoder->private_->frame.subframes[channel].wasted_bits = u+1;
-		if (decoder->private_->frame.subframes[channel].wasted_bits >= bps)
-			return false;
+		if (decoder->private_->frame.subframes[channel].wasted_bits >= bps) {
+			send_error_to_client_(decoder, FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC);
+			decoder->protected_->state = FLAC__STREAM_DECODER_SEARCH_FOR_FRAME_SYNC;
+			return true;
+		}
 		bps -= decoder->private_->frame.subframes[channel].wasted_bits;
 	}
 	else
@@ -3065,7 +3070,7 @@ FLAC__bool read_callback_(FLAC__byte buffer[], size_t *bytes, void *client_data)
 	 */
 }
 
-#ifdef FUZZING_BUILD_MODE_NO_SANITIZE_SIGNED_INTEGER_OVERFLOW
+#if defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION) && !defined(FUZZING_BUILD_MODE_FLAC_SANITIZE_SIGNED_INTEGER_OVERFLOW)
 /* The attribute below is to silence the undefined sanitizer of oss-fuzz.
  * Because fuzzing feeds bogus predictors and residual samples to the
  * decoder, having overflows in this section is unavoidable. Also,
