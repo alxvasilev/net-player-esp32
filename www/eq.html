@@ -74,10 +74,10 @@ class Equalizer {
         this.sliders = [];
         for (let i = 0; i < bands.length; i++) {
             cont.appendChild(htmlToElement(
-                '<div class="eq-slider-cont">' + niceFreq(bands[i][0]) +
-                '<input type="range" id="eqSlider' + i + '" band="' + i +
-                '" min="-40" max="40" value="0" step="1" list="tickmarks"><div class="dblabel" id="dbLabel'+ i +
-                '">db</div></div>'));
+                `<div class="eq-slider-cont" title="bandwidth: ${bands[i][1]/10} octaves">${niceFreq(bands[i][0])
+                }<input type="range" id="eqSlider${i}" band="${i
+                }" min="-40" max="40" value="0" step="1" list="tickmarks"><div class="dblabel" id="dbLabel${i
+                }">db</div></div>`));
                 this.sliders.push(new Slider(this, i, byId('eqSlider' + i), byId('dbLabel' + i)));
         }
         this.load(bands);
@@ -92,7 +92,7 @@ class Equalizer {
     }
     load(bands) {
         for (let i = 0; i < bands.length; i++) {
-            let slider = this.sliders[i].load(bands[i][1]);
+            let slider = this.sliders[i].load(bands[i][2]);
         }
     }
     onSlide() {

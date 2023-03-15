@@ -15,6 +15,7 @@ protected:
     uint16_t mOutputChunkSize = 0;
     int mOutputLen;
     int mOutputReadOfs = 0;
+    int mNumReads = 0;
     AudioNode::DataPullReq* mDprPtr = nullptr;
     FLAC__StreamDecoder* mDecoder = nullptr;
     OutputFunc mOutputFunc = nullptr;

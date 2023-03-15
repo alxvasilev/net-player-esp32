@@ -840,7 +840,7 @@ esp_err_t AudioPlayer::equalizerDumpUrlHandler(httpd_req_t *req)
     buf.printf("{\"t\":%d,\"n\":\"%s\",\"b\":[", eq.eqType(), eq.presetName());
     for (int i = 0; i < eq.numBands(); i++) {
         auto cfg = eq.bandCfg(i);
-        buf.printf("[%d,%d],", cfg.freq, levels[i]);
+        buf.printf("[%d,%d,%d],", cfg.freq, cfg.width, levels[i]);
     }
     buf.setDataSize(buf.dataSize() - 2); // remove terminating null
     buf.appendStr("]}", true);

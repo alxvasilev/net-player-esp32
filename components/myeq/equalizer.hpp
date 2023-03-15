@@ -68,7 +68,7 @@ public:
     Equalizer::Sample process(Sample sample)
     {
 #pragma GCC unroll 16
-        for (int i = 0; i< kBandCount; i++) {
+        for (int i = kBandCount-1; i >= 0; i--) {
             sample = mFilters[i].process(sample);
         }
         return sample;

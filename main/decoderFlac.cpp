@@ -48,6 +48,9 @@ FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *dec
         *bytes = dpr.size;
         memcpy(buffer, dpr.buf, dpr.size);
         self.mSrcNode.confirmRead(dpr.size);
+        if (++self.mNumReads > 20) {
+            ESP_LOGW(TAG, "Codec did %d reads without producing an output", self.mNumReads);
+        }
         return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
     }
     else if (event == AudioNode::kStreamChanged) {
@@ -80,6 +83,7 @@ AudioNode::StreamError DecoderFlac::pullData(AudioNode::DataPullReq& dpr)
     mDprPtr = &dpr;
     mOutputLen = 0;
     for (int i = 0; !mOutputLen && (i < 10); i++) {
+        mNumReads = 0;
         auto ok = FLAC__stream_decoder_process_single(mDecoder);
         if (!ok) {
             dpr.clearExceptStreamId();
