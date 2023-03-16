@@ -38,7 +38,7 @@ void DecoderFlac::reset()
 }
 FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void* userp)
 {
-//    printf("readCb\n");
+//  printf("readCb\n");
     auto& self = *static_cast<DecoderFlac*>(userp);
     assert(self.mDprPtr);
     auto& dpr = *self.mDprPtr;
@@ -53,10 +53,14 @@ FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *dec
         }
         return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
     }
-    else if (event == AudioNode::kStreamChanged) {
-        return FLAC__STREAM_DECODER_READ_STATUS_ABORT; //FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
-    } else {
+    else {
+        *bytes = 0;
         return FLAC__STREAM_DECODER_READ_STATUS_ABORT;
+        /*
+               (event == AudioNode::kStreamChanged)
+            ? FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM
+            : FLAC__STREAM_DECODER_READ_STATUS_ABORT;
+         */
     }
 }
 void DecoderFlac::errorCb(const FLAC__StreamDecoder *decoder, FLAC__StreamDecoderErrorStatus status, void *client_data)

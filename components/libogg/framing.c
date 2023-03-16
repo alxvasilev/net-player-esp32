@@ -779,7 +779,7 @@ int ogg_stream_pagein(ogg_stream_state *os, ogg_page *og){
   int bos=ogg_page_bos(og);
   int eos=ogg_page_eos(og);
   ogg_int64_t granulepos=ogg_page_granulepos(og);
-  int serialno=ogg_page_serialno(og);
+//int serialno=ogg_page_serialno(og);
   long pageno=ogg_page_pageno(og);
   int segments=header[26];
 
@@ -813,7 +813,8 @@ int ogg_stream_pagein(ogg_stream_state *os, ogg_page *og){
   }
 
   /* check the serial number */
-  if(serialno!=os->serialno)return(-1);
+  // av: This causes decoder to hang when song changes in some radio streams
+//if(serialno!=os->serialno)return(-1);
   if(version>0)return(-1);
 
   if(_os_lacing_expand(os,segments+1)) return -1;
