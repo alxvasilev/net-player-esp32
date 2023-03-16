@@ -26,10 +26,10 @@ const EqBandConfig EqBandConfig::kPreset5Band[5] = {
     {55, -1}, {100, 3}, {4000, 40}, {8000, 20}, {15000, 10}
 };
 const EqBandConfig EqBandConfig::kPreset4Band[4] = {
-    {50, 3}, {1000, 20}, {3500, 40}, {15000, 10}
+    {65, 3}, {1000, 20}, {4000, 40}, {15000, 10}
 };
 const EqBandConfig EqBandConfig::kPreset3Band[3] = {
-    {50, 3}, {4000, 30}, {15000, 10}
+    {65, 3}, {4000, 30}, {15000, 10}
 };
 const EqBandConfig* EqBandConfig::kBandPresets[8] = {
     EqBandConfig::kPreset3Band, EqBandConfig::kPreset4Band, EqBandConfig::kPreset5Band,

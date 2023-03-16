@@ -69,6 +69,7 @@ void EqualizerNode::createCustomCore(uint8_t nBands, StreamFormat fmt)
         CASE_N_BANDS(6);
         CASE_N_BANDS(5);
         CASE_N_BANDS(4);
+        CASE_N_BANDS(3);
         default:
             ESP_LOGW(TAG, "createCustomCore: Unsupported number of bands: %d", nBands);
             assert(false);

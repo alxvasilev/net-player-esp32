@@ -77,7 +77,7 @@ class NvsHandle;
 class EqualizerNode: public AudioNode, public DefaultVolumeImpl
 {
 protected:
-    enum { kMyEqMinBands = 4, kMyEqMaxBands = 10, kMyEqDefaultNumBands = 8 };
+    enum { kMyEqMinBands = 3, kMyEqMaxBands = 10, kMyEqDefaultNumBands = 8 };
     NvsHandle& mNvsHandle;
     StreamFormat mFormat;
     int mSampleRate = 0; // cached from mFormat, for performance
