@@ -475,7 +475,7 @@ HttpNode::~HttpNode()
 }
 
 HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize)
-    : AudioNodeWithTask(parent, "node-http", kStackSize, 5, 1),
+    : AudioNodeWithTask(parent, "node-http", kStackSize, 15, 0),
       mRingBuf(bufSize, utils::haveSpiRam()), mIcyParser(mMutex)
 {
 }
@@ -518,6 +518,7 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
         if (evt != kNoError) {
             return evt; // ringbuf is empty but there is an event, probably kStreamEnd
         }
+        printf("Underrun\n");
         setUnderrunState(true);
         int waitResult;
         {

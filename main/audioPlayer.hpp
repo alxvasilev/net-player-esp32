@@ -52,7 +52,7 @@ protected:
     { kEventTerminating = 1, kEventScroll = 2, kEventVolLevel = 4, kEventTerminated = 8 };
     enum {
         kI2sStackSize = 9000, kI2sCpuCore = 1,
-        kI2sDmaBufCntInternalRam = 2, kI2sDmaBufCntSpiRam = 11, // 1 buffer is 1024 samples
+        kI2sDmaBufCntInternalRam = 2, kI2sDmaBufCntSpiRam = 16, // 1 buffer is 1024 samples
         kLcdTaskStackSize = 2200, kLcdTaskPrio = 10, kLcdTaskCore = 0
     };
     enum {
