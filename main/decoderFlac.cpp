@@ -44,7 +44,7 @@ FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *dec
     auto& dpr = *self.mDprPtr;
     dpr.size = *bytes;
     auto event = self.mLastStreamEvent = self.mSrcNode.pullData(dpr);
-    if (event == AudioNode::kNoError) {
+    if (event == AudioNode::kStreamData) {
         *bytes = dpr.size;
         memcpy(buffer, dpr.buf, dpr.size);
         self.mSrcNode.confirmRead(dpr.size);

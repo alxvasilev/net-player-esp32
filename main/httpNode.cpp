@@ -10,7 +10,7 @@
 #include "esp_system.h"
 #include <esp_http_client.h>
 #include <strings.h>
-#include "ringbuf.hpp"
+#include "streamRingQueue.hpp"
 #include "queue.hpp"
 #include "utils.hpp"
 #include "httpNode.hpp"
@@ -164,7 +164,6 @@ void HttpNode::clearRingBufAndEventQueue()
 {
     ESP_LOGI(TAG, "Clearing ring buffer and event queue");
     mRingBuf.clear();
-    mStreamEventQueue.clear();
     mSpeedProbe.reset();
 }
 bool HttpNode::connect(bool isReconnect)
@@ -251,8 +250,8 @@ bool HttpNode::connect(bool isReconnect)
         }
         plSendEvent(kEventConnected, isReconnect);
         if (!isReconnect) {
-            ESP_LOGD(TAG, "Posting kStreamChange with codec %s and streamId %d\n", mInFormat.codec().toString(), mUrlInfo->streamId);
-            postStreamEvent_Lock(mStreamStartPos, kStreamChanged, mInFormat, mUrlInfo->streamId);
+            ESP_LOGD(TAG, "Posting kStreamStart with codec %s and streamId %d\n", mInFormat.codec().toString(), mUrlInfo->streamId);
+            mRingBuf.pushBack(StreamStartItem::create(mUrlInfo->streamId, mInFormat));
         }
         return true;
     }
@@ -306,25 +305,14 @@ bool HttpNode::isConnected() const
 bool HttpNode::recv()
 {
     for (int retries = 0; retries < 26; retries++) { // retry net errors
-        char* buf;
-        auto bufSize = mRingBuf.getWriteBuf(buf, kReadSize, kHttpRecvTimeoutMs);
-        if (bufSize <= 0) { // stop flag was set, or timeout
-            if (bufSize == 0) {
-                ESP_LOGW(TAG, "Ringbuf write timeout, consumer node is probably stuck");
-            }
-            return false;
-        }
-        if (bufSize > kReadSize) { // ringbuf will return max possible value, which may be more than the requested
-            bufSize = kReadSize;
-        }
-        int rlen = esp_http_client_read(mClient, buf, bufSize);
+        std::unique_ptr<StreamDataItem> chunk(StreamDataItem::create(kStreamChunkSize));
+        int rlen = esp_http_client_read(mClient, chunk->data, kStreamChunkSize);
         if (rlen <= 0) {
-            mRingBuf.abortWrite();
             if (rlen == 0) {
                 if (mContentLen && esp_http_client_is_complete_data_received(mClient)) {
                     // transfer complete, post end of stream
                     ESP_LOGI(TAG, "Transfer complete, posting kStreamEnd event (streamId=%d)", mUrlInfo->streamId);
-                    postStreamEvent_Lock(mRxByteCtr, kStreamEnd, mUrlInfo->streamId);
+                    mRingBuf.pushBack(StreamEndItem::create(mUrlInfo->streamId));
                     return false;
                 }
                 else if (errno == EAGAIN) { // just return, main loop will retry
@@ -349,28 +337,36 @@ bool HttpNode::recv()
         mSpeedProbe.onTraffic(rlen);
         if (mIcyParser.icyInterval()) {
             bool isFirst = !mIcyParser.trackName();
-            bool gotTitle = mIcyParser.processRecvData(buf, rlen);
+            bool gotTitle = mIcyParser.processRecvData(chunk->data, rlen);
             if (gotTitle) {
                 ESP_LOGW(TAG, "Track title changed to: '%s'", mIcyParser.trackName());
-                postStreamEvent_NoLock(
-                    isFirst ? mStreamStartPos : (mRxByteCtr + rlen - mIcyParser.bytesSinceLastMeta()),
-                    kTitleChanged, strdup(mIcyParser.trackName())
-                );
+                auto titleLen = strlen(mIcyParser.trackName());
+                int bytesBefore = isFirst ? 0 : (kStreamChunkSize - mIcyParser.bytesSinceLastMeta() - mIcyParser.icyDataSize());
+                if (bytesBefore < 0) {
+                    bytesBefore = 0;
+                }
 
+                // The title event is posted just before the data chunk where the ICY tag ends,
+                // and the bytesBeforeEvent denotes approx how many bytes precede the
+                // icy data in that chunk. If the ICY data started in the previous chunk,
+                // that value calculates to negative and is set to zero
+                if (!mRingBuf.pushBack(TitleChangedItem::create(mIcyParser.trackName(), titleLen, bytesBefore))) {
+                    return false;
+                }
                 if (mRecorder && !isFirst) { // start recording only on second icy track event - first track may be incomplete
                     bool ok = mRecorder->onNewTrack(mIcyParser.trackName(), mInFormat.codec());
                     plSendEvent(kEventRecording, ok);
                 }
             }
         }
-        mRingBuf.commitWrite(rlen);
+        chunk->dataSize = rlen;
         mRxByteCtr += rlen;
-        // First commit the write, only after that record to SD card,
-        // to avoid blocking the stream consumer
-        // Note: The buffer is still valid, even if it has been consumed
-        // before we reach the next line - ringbuf consumers are read-only
+        // Data write to SD card may block the thread for a moment
         if (mRecorder) {
-            mRecorder->onData(buf, rlen);
+            mRecorder->onData(chunk->data, rlen);
+        }
+        if (!mRingBuf.pushBack(chunk.release())) {
+            return false;
         }
         auto ringBufDataSize = mRingBuf.dataSize();
         ESP_LOGD(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, ringBufDataSize);
@@ -386,15 +382,26 @@ bool HttpNode::recv()
 void HttpNode::logStartOfRingBuf(const char* msg)
 {
     char hex[128];
-    char* tmpbuf = nullptr;
-    auto nread = mRingBuf.contigRead(tmpbuf, 20, -1);
-    if (nread <= 0) {
+    MutexLocker locker(mRingBuf.mMutex);
+    StreamDataItem* first = nullptr;
+    mRingBuf.iterate([&first](StreamItem* item) {
+        if (item->type == kStreamData) {
+            first = (StreamDataItem*)item;
+            return false;
+        }
+        return true;
+    });
+    if (!first) {
+        printf("%s: <buffer is empty>\n", msg);
+        return;
+    }
+    auto nbytes = std::min((uint16_t)20, first->dataSize);
+    if (nbytes <= 0) {
         hex[0] = 0;
     } else {
-        binToHex((uint8_t*)tmpbuf, nread, hex);
+        binToHex((uint8_t*)first->data, nbytes, hex);
     }
     printf("%s: %s\n", msg, hex);
-    mRingBuf.commitContigRead(0);
 }
 uint32_t HttpNode::pollSpeed() const
 {
@@ -475,8 +482,7 @@ HttpNode::~HttpNode()
 }
 
 HttpNode::HttpNode(IAudioPipeline& parent, size_t bufSize)
-    : AudioNodeWithTask(parent, "node-http", kStackSize, 15, 0),
-      mRingBuf(bufSize, utils::haveSpiRam()), mIcyParser(mMutex)
+    : AudioNodeWithTask(parent, "node-http", kStackSize, 15, 0), mIcyParser(mMutex)
 {
 }
 
@@ -499,14 +505,12 @@ uint32_t HttpNode::currentStreamId() const
         return 0;
     }
 }
-AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
+bool HttpNode::pullData(std::unique_ptr<StreamItem>& item)
 {
     if (mWaitingPrefill) {
         ESP_LOGI(TAG, "Waiting ringbuf prefill...");
         if (!waitForPrefill()) {
-            dp.clear();
-            dp.streamId = currentStreamId();
-            return kStreamStopped;
+            return false;
         }
     }
     LOCK(); // we may have been pre-filled, but cleared just before the lock, so check once again after locking
@@ -514,111 +518,12 @@ AudioNode::StreamError HttpNode::pullData(DataPullReq& dp)
     if (dataSize) {
         setUnderrunState(false);
     } else {
-        auto evt = dequeueStreamEvent(dp);
-        if (evt != kNoError) {
-            return evt; // ringbuf is empty but there is an event, probably kStreamEnd
-        }
         printf("Underrun\n");
         setUnderrunState(true);
-        int waitResult;
-        {
-            MutexUnlocker unlock(mMutex);
-            waitResult = mRingBuf.waitForData(-1);
-        }
-        if (waitResult < 0) {
-            dp.clear();
-            dp.streamId = currentStreamId();
-            return kStreamStopped;
-        }
     }
-    // First, process stream events that are due
-    auto evt = dequeueStreamEvent(dp);
-    if (evt != kNoError) {
-        return evt;
-    }
-    dp.fmt = mOutFormat;
-    if (dp.size == 0) { // there was no due stream change event, and this is a codec probe
-        return kNoError;
-    }
+    item.reset(mRingBuf.popFront());
+    return item.get() ? true : false;
     //printf("ringbuf: %d\n", mRingBuf.dataSize());
-    auto ret = mRingBuf.contigRead(dp.buf, dp.size, 0);
-    if (ret < 0) {
-        dp.size = 0;
-        dp.streamId = currentStreamId();
-        return kStreamStopped;
-    }
-    myassert(ret > 0); // no timeout
-    dp.size = ret;
-    return kNoError;
-}
-const char* HttpNode::peek(int len, char* buf)
-{
-    LOCK();
-    while (mRingBuf.dataSize() < len) {
-        MutexUnlocker unlocker(mMutex);
-        if (mRingBuf.waitForData(-1) <= 0) {
-            return nullptr;
-        }
-    }
-    if (!mStreamEventQueue.empty()) {
-        bool hasEvent = false;
-        mStreamEventQueue.iterate([this, &hasEvent, len](const QueuedStreamEvent& event) {
-            auto eventPos = event.streamPos;
-            auto readPos = mRxByteCtr - mRingBuf.dataSize();
-            if (eventPos < readPos + len) {
-                if (event.type == kTitleChanged) {
-                    return true; // skip
-                }
-                hasEvent = true;
-            }
-            return false;
-        });
-        if (hasEvent) {
-            return nullptr;
-        }
-    }
-    return mRingBuf.peek(len, buf, 0);
-}
-
-AudioNode::StreamError HttpNode::dequeueStreamEvent(DataPullReq& dp)
-{
-    while (!mStreamEventQueue.empty()) {
-        auto& event = *mStreamEventQueue.front();
-        auto eventPos = event.streamPos;
-        auto readPos = mRxByteCtr - mRingBuf.dataSize();
-        if (eventPos <= readPos) {
-            decltype(mStreamEventQueue)::Popper popper(mStreamEventQueue);
-            if (event.type == kStreamChanged) {
-                dp.fmt = mOutFormat = event.fmt;
-                dp.streamId = event.streamId;
-                dp.size = 0;
-                ESP_LOGI(TAG, "Returning kStreamChanged: codec %s, streamId: %u", event.fmt.codec().toString(), dp.streamId);
-                return kStreamChanged;
-            }
-            else if (event.type == kTitleChanged) {
-                plSendEvent(kEventTrackInfo, 0, (uintptr_t)event.data);
-                continue;
-            }
-            else if(event.type == kStreamEnd) {
-                dp.clear();
-                dp.streamId = event.streamId;
-                return kStreamEnd;
-            }
-        } else if (eventPos < readPos + dp.size) { // there is an event within the read window
-            // If we were called with zero size for a format probe, the previous 'if' will handle it
-            myassert(dp.size > 0);
-            dp.size = eventPos - readPos;
-            break;
-        } else {
-            break;
-        }
-    }
-    return kNoError;
-}
-
-void HttpNode::confirmRead(int size)
-{
-    mRingBuf.commitContigRead(size);
 }
 
 void HttpNode::setWaitingPrefill(int amount)

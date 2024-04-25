@@ -1033,7 +1033,11 @@ void AudioPlayer::registerUrlHanlers()
 
 void AudioPlayer::onNodeError(AudioNode& node, int error)
 {
-    asyncCall([this, error, nodeName = std::string((const char*)node.tag())]() {
+    asyncCall([this, error, streamId = mStreamSeqNo, nodeName = std::string((const char*)node.tag())]() {
+        if (streamId != mStreamSeqNo) {
+            ESP_LOGW(TAG, "Ignoring late error event for previous stream");
+            return;
+        }
         ESP_LOGW(TAG, "Error %d from node '%s', pausing pipeline", error, nodeName.c_str());
         LOCK_PLAYER();
         pause();

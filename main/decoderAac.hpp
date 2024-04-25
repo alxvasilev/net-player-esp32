@@ -23,7 +23,7 @@ public:
     virtual Codec::Type type() const { return Codec::kCodecAac; }
     DecoderAac(DecoderNode& parent, AudioNode& src);
     ~DecoderAac();
-    virtual AudioNode::StreamError pullData(AudioNode::DataPullReq& output);
+    virtual AudioNode::StreamEvent pullData(AudioNode::DataPullReq& output);
     virtual void reset() override;
 };
 

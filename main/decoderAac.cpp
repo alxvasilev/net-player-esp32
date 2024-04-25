@@ -44,7 +44,7 @@ void DecoderAac::reset()
     outputFormat.clear();
 }
 
-AudioNode::StreamError DecoderAac::pullData(AudioNode::DataPullReq& dpr)
+AudioNode::StreamEvent DecoderAac::pullData(AudioNode::DataPullReq& dpr)
 {
     bool needMoreData = (mInputLen == 0);
     for(;;) {

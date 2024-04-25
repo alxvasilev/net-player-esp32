@@ -13,14 +13,13 @@
 #include "esp_system.h"
 #include <esp_http_client.h>
 #include <strings.h>
-#include "ringbuf.hpp"
+#include "streamRingQueue.hpp"
 #include "queue.hpp"
 #include "utils.hpp"
 #include "audioNode.hpp"
 #include "playlist.hpp"
 #include "icyParser.hpp"
 #include "recorder.hpp"
-#include "staticQueue.hpp"
 
 class HttpNode: public AudioNodeWithTask
 {
@@ -29,7 +28,7 @@ public:
 protected:
     enum {
         kHttpRecvTimeoutMs = 2000, kHttpClientBufSize = 512,
-        kReadSize = 4096, kStackSize = 3600
+        kStackSize = 3600
     };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1 };
     // Read mode dictates how the pullData() caller behaves. Since it may
@@ -43,12 +42,12 @@ protected:
             void* data;
         };
         uint16_t streamId;
-        StreamError type;
-        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, StreamFormat aFmt, uint32_t aStreamId)
+        StreamEvent type;
+        QueuedStreamEvent(uint32_t aStreamPos, StreamEvent aType, StreamFormat aFmt, uint32_t aStreamId)
             :streamPos(aStreamPos), fmt(aFmt), streamId(aStreamId), type(aType) {}
-        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, void* aData)
+        QueuedStreamEvent(uint32_t aStreamPos, StreamEvent aType, void* aData)
             :streamPos(aStreamPos), data(aData), streamId(0), type(aType) {}
-        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, uint32_t aStreamId)
+        QueuedStreamEvent(uint32_t aStreamPos, StreamEvent aType, uint32_t aStreamId)
             :streamPos(aStreamPos), streamId(aStreamId), type(aType) {}
         ~QueuedStreamEvent() {
             if (type == kTitleChanged) {
@@ -62,8 +61,7 @@ protected:
     StreamFormat mOutFormat;
     uint32_t mOutStreamId = 0;
     Playlist mPlaylist; /* media playlist */
-    RingBuf mRingBuf;
-    StaticQueue<QueuedStreamEvent, 6> mStreamEventQueue;
+    StreamRingQueue<256> mRingBuf;
     int64_t mRxByteCtr = 0;
     int64_t mStreamStartPos = 0;
     int mContentLen;
@@ -89,10 +87,9 @@ protected:
     void destroyClient();
     bool recv();
     template <typename... Args>
-    bool postStreamEvent_Lock(int64_t streamPos, StreamError event, Args... args);
+    bool postStreamEvent_Lock(int64_t streamPos, StreamEvent event, Args... args);
     template <typename... Args>
-    bool postStreamEvent_NoLock(int64_t streamPos, StreamError event, Args... args);
-    StreamError dequeueStreamEvent(DataPullReq& dp);
+    bool postStreamEvent_NoLock(int64_t streamPos, StreamEvent event, Args... args);
     int delayFromRetryCnt(int tries);
     void nodeThreadFunc();
     virtual bool dispatchCommand(Command &cmd);
@@ -117,7 +114,7 @@ public:
     HttpNode(IAudioPipeline& parent, size_t bufSize);
     virtual ~HttpNode();
     virtual Type type() const { return kTypeHttpIn; }
-    virtual StreamError pullData(DataPullReq &dp);
+    virtual StreamError pullData(std::unique_ptr<StreamItem>& item);
     virtual void confirmRead(int size);
     virtual void onStopped() override { recordingCancelCurrent(); }
     virtual bool waitForPrefill() override;
@@ -181,7 +178,7 @@ public:
     const char* recStaName() const { return mUrlInfo ? mUrlInfo->recStaName : nullptr; }
 };
 template <typename... Args>
-bool HttpNode::postStreamEvent_Lock(int64_t streamPos, StreamError event, Args... args) {
+bool HttpNode::postStreamEvent_Lock(int64_t streamPos, StreamEvent event, Args... args) {
     for(;;) {
         bool ok;
         {
@@ -197,7 +194,7 @@ bool HttpNode::postStreamEvent_Lock(int64_t streamPos, StreamError event, Args..
     }
 }
 template <typename... Args>
-bool HttpNode::postStreamEvent_NoLock(int64_t streamPos, StreamError event, Args... args) {
+bool HttpNode::postStreamEvent_NoLock(int64_t streamPos, StreamEvent event, Args... args) {
     while (!mStreamEventQueue.emplaceBack(streamPos, event, args...)) {
         MutexUnlocker unlock(mMutex);
         if (mRingBuf.waitForReadOp(-1) < 0) {

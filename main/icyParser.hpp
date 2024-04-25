@@ -32,6 +32,7 @@ public:
     IcyParser(Mutex& infoMutex): IcyInfo(infoMutex) {}
     int32_t icyInterval() const { return mIcyInterval; }
     int32_t bytesSinceLastMeta() const { return mIcyCtr; }
+    int32_t icyDataSize() const { return mIcyMetaBuf.dataSize(); }
     void reset();
     bool parseHeader(const char* key, const char* value);
     bool processRecvData(char* buf, int& rlen);

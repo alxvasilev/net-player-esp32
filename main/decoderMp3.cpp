@@ -3,14 +3,13 @@
 
 static const char* TAG = "mp3dec";
 
-DecoderMp3::DecoderMp3(DecoderNode& parent, AudioNode& src): Decoder(parent, src)
+DecoderMp3::DecoderMp3(DecoderNode& parent, AudioNode& src, std::unique_ptr<StreamItem>& firstChunk)
+: Decoder(parent, src, firstChunk), mInputBuf(new char[kInputBufSize])
 {
-    mInputBuf = (unsigned char*)utils::mallocTrySpiram(kInputBufSize + kOutputBufSize);
-    if (!mInputBuf) {
+    if (!mInputBuf || !mOutputChunk.get()) {
         ESP_LOGE(TAG, "Out of memory allocating I/O buffers");
         abort();
     }
-    mOutputBuf = mInputBuf + kInputBufSize;
     initMadState();
 }
 DecoderMp3::~DecoderMp3()
@@ -37,9 +36,10 @@ void DecoderMp3::reset()
     freeMadState();
     initMadState();
     outputFormat.clear();
+    mOutputChunk.reset();
 }
 
-AudioNode::StreamError DecoderMp3::pullData(AudioNode::DataPullReq &dpr)
+StreamError DecoderMp3::pullData(std::unique_ptr<StreamItem>& item)
 {
     bool needMoreData = !mMadStream.buffer;
     for (;;) {
@@ -49,20 +49,23 @@ AudioNode::StreamError DecoderMp3::pullData(AudioNode::DataPullReq &dpr)
             if (currLen > 0) {
                 memmove(mInputBuf, mMadStream.next_frame, currLen);
             }
-            auto reqSize = kInputBufSize - currLen;
-            if (reqSize <= 0) {
+            if (currLen == kInputBufSize) {
                 ESP_LOGE(TAG, "Input buffer full, but can't decode frame");
-                return AudioNode::kErrDecode;
+                return kErrDecode;
             }
-            dpr.size = reqSize;
-            auto event = mSrcNode.pullData(dpr);
-            if (event) {
-                return event;
+            bool ok = mSrcNode.pullData(item);
+            if (!ok) {
+                return kErrUpstream;
             }
-            myassert(dpr.size && dpr.size <= reqSize);
-            mSrcNode.confirmRead(dpr.size);
-            memcpy(mInputBuf + currLen, dpr.buf, dpr.size);
-            mad_stream_buffer(&mMadStream, mInputBuf, currLen + dpr.size);
+            myassert(item.get());
+            if (item->type != kStreamData) {
+                return kNoError; // forward packet
+            }
+            auto& chunk = *static_cast<StreamDataItem*>(item.get());
+            myassert(chunk.dataSize <= kStreamChunkSize);
+            memcpy(mInputBuf + currLen, chunk.data, chunk.dataSize);
+            mad_stream_buffer(&mMadStream, mInputBuf, currLen + chunk.dataSize);
+            item.reset();
         }
         auto ret = mad_frame_decode(&mMadFrame, &mMadStream);
         if (ret) { // returns 0 on success, -1 on error
@@ -75,17 +78,16 @@ AudioNode::StreamError DecoderMp3::pullData(AudioNode::DataPullReq &dpr)
                 continue;
             } else { // unrecoverable error
                 ESP_LOGW(TAG, "mad_frame_decode: Unrecoverable '%s'", mad_stream_errorstr(&mMadStream));
-                return AudioNode::kErrDecode;
+                return kErrDecode;
             }
         } else {
             ESP_LOGD(TAG, "Successfully decoded frame of size %d\n", mMadStream.next_frame - mMadStream.buffer);
             mad_synth_frame(&mMadSynth, &mMadFrame);
-            auto slen = output(mMadSynth.pcm);
-            if (slen <= 0) {
-                return AudioNode::kErrDecode;
+            bool ok = output(mMadSynth.pcm);
+            if (!ok) {
+                return kErrDecode;
             }
-            dpr.buf = (char*)mOutputBuf;
-            dpr.size = slen;
+            item.reset(mOutputChunk.release());
             dpr.fmt = outputFormat;
             return AudioNode::kNoError;
         }
@@ -112,7 +114,7 @@ static inline uint16_t scale(mad_fixed_t sample) {
     return isNeg ? (sample | 0x8000) : (sample & 0x7fff);
 }
 
-int DecoderMp3::output(const mad_pcm& pcmData)
+bool DecoderMp3::output(const mad_pcm& pcmData)
 {
     int nsamples = pcmData.length;
     if (nsamples > kSamplesPerFrame) {
@@ -124,13 +126,13 @@ int DecoderMp3::output(const mad_pcm& pcmData)
         auto sr = pcmData.samplerate;
         if (sr != 11025 && sr != 22050 && sr != 44100 && sr != 48000) {
             ESP_LOGE(TAG, "Invalid/unsupported sample rate: %d\n", sr);
-            return AudioNode::kErrDecode;
+            return false;
         }
         outputFormat.setSampleRate(sr);
         auto chans = pcmData.channels;
         if (chans > 2) {
             ESP_LOGE(TAG, "Too many channels: %d", chans);
-            return AudioNode::kErrDecode;
+            return false;
         }
         outputFormat.setNumChannels(chans);
         outputFormat.setBitsPerSample(16);
@@ -138,10 +140,12 @@ int DecoderMp3::output(const mad_pcm& pcmData)
     }
 
     if (pcmData.channels == 2) {
+        uint16_t dataSize = nsamples * 4;
+        mOutputChunk.reset(StreamDataItem::create(dataSize, dataSize));
         auto left_ch = pcmData.samples[0];
         auto right_ch = pcmData.samples[1];
         int n = 0;
-        for (unsigned char* sbytes = mOutputBuf; n < nsamples; n++) {
+        for (unsigned char* sbytes = mOutputChunk->data; n < nsamples; n++) {
             uint16_t sample = scale(*left_ch++);
             *(sbytes++) = (sample & 0xff);
             *(sbytes++) = ((sample >> 8) & 0xff);
@@ -150,8 +154,9 @@ int DecoderMp3::output(const mad_pcm& pcmData)
             *(sbytes++) = (sample & 0xff);
             *(sbytes++) = ((sample >> 8) & 0xff);
         }
-        return nsamples * 4;
     } else if (pcmData.channels == 1) {
+        uint16_t dataSize = nsamples * 2;
+        mOutputChunk.reset(StreamDataItem::create(dataSize, dataSize));
         auto samples = pcmData.samples[0];
         int n = 0;
         for (unsigned char* sbytes = mOutputBuf; n < nsamples;) {
@@ -159,9 +164,9 @@ int DecoderMp3::output(const mad_pcm& pcmData)
             *(sbytes++) = (sample & 0xff);
             *(sbytes++) = ((sample >> 8) & 0xff);
         }
-        return nsamples * 2;
     } else {
         ESP_LOGE(TAG, "Unsupported number of channels %d", pcmData.channels);
-        return AudioNode::kErrDecode;
+        return false;
     }
+    return true;
 }

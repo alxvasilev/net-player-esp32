@@ -19,7 +19,7 @@ protected:
     AudioNode::DataPullReq* mDprPtr = nullptr;
     FLAC__StreamDecoder* mDecoder = nullptr;
     OutputFunc mOutputFunc = nullptr;
-    AudioNode::StreamError mLastStreamEvent;
+    AudioNode::StreamEvent mLastStreamEvent;
     Codec mCodecInfo;
     void init();
     static FLAC__StreamDecoderReadStatus readCb(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void *client_data);
@@ -34,7 +34,7 @@ public:
     virtual Codec::Type type() const { return Codec::kCodecFlac; }
     DecoderFlac(DecoderNode& parent, AudioNode& src, bool oggMode);
     ~DecoderFlac();
-    virtual AudioNode::StreamError pullData(AudioNode::DataPullReq& dpr);
+    virtual AudioNode::StreamEvent pullData(AudioNode::DataPullReq& dpr);
     virtual void reset();
 };
 

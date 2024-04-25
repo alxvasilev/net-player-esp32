@@ -18,6 +18,8 @@
 #include "utils.hpp"
 #include "playlist.hpp"
 #include "audioNode.hpp"
+#include "streamRingQueue.hpp"
+
 
 void AudioNodeWithState::setState(State newState)
 {
@@ -172,24 +174,6 @@ void AudioNodeWithTask::processMessages()
         }
     }
 }
-AudioNode::StreamError AudioNode::readExact(AudioNode::DataPullReq& dpr, int size, char* buf)
-{
-    int nread = 0;
-    while (nread < size) {
-        dpr.size = size - nread;
-        auto event = pullData(dpr);
-        if (event) {
-            return event;
-        }
-        assert(nread + dpr.size <= size);
-        if (buf) {
-            memcpy(buf + nread, dpr.buf, dpr.size);
-        }
-        nread += dpr.size;
-        confirmRead(dpr.size);
-    }
-    return AudioNode::kNoError;
-}
 
 const char* Codec::toString() const
 {
@@ -231,18 +215,15 @@ const char* AudioNodeWithState::stateToStr(State state)
         default: return "(invalid)";
     }
 }
-const char* AudioNode::streamEventToStr(StreamError evt) {
-    switch (evt) {
-        case kTimeout: return "kTimeout";
-        case kStreamStopped: return "kStreamStopped";
-        case kStreamEnd: return "kStreamEnd";
-        case kStreamChanged: return "kStreamChanged";
-        case kCodecChanged: return "kCodecChanged";
-        case kTitleChanged: return "kTitleChanged";
+const char* streamErrorToString(StreamError err)
+{
+    switch (err) {
+        case kNoError: return "kNoError";
+        case kErrTimeout: return "kErrTimeout";
+        case kErrStopped: return "kErrStopped";
         case kErrNoCodec: return "kErrNoCodec";
         case kErrDecode: return "kErrDecode";
-        case kErrStreamFmt: return "kErrStreamFmt";
-        case kNoError: return "kNoError";
+        case kErrInvalidFirstChunk: return "kErrInvalidFirstChunk";
         default: return "(invalid)";
     }
 }
