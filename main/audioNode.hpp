@@ -135,6 +135,10 @@ public:
     void setNumChannels(uint8_t ch) { members.numChannels = ch - 1; }
 };
 
+struct IVirtDestructor {
+    virtual ~IVirtDestructor() = default;
+};
+
 class AudioNode;
 
 class IAudioPipeline {
@@ -144,21 +148,22 @@ public:
 };
 
 class IAudioVolume;
+class StreamEvent;
 
 class AudioNode
 {
 public:
     enum StreamError: int8_t {
+        kFlagEvtOwnsData = 64, // event object owns its data and must free it
         kNoError = 0,
-        kTimeout,
-        kStreamStopped,
-        kStreamEnd,
-        kStreamChanged,
-        kCodecChanged,
-        kTitleChanged,
-        kErrNoCodec,
-        kErrDecode,
-        kErrStreamFmt
+        kEvtStreamEnd = 1,
+        kEvtStreamChanged = 2,
+        kEvtTitleChanged = 4 | kFlagEvtOwnsData,
+        kErrStreamStopped = -1,
+        kErrTimeout = -2,
+        kErrNoCodec = -3,
+        kErrDecode = -4,
+        kErrStreamFmt = -5
     };
     enum { kEventStreamError = 1, kEventAudioFormatChange, kEventNewStream, kEventLast = kEventNewStream };
     // we put here the state definitions only because the class name is shorter than AudioNodeWithTask
@@ -208,10 +213,25 @@ public:
         StreamFormat fmt;
         StreamId streamId;
         DataPullReq(size_t aSize): size(aSize) {}
+        ~DataPullReq() { freeEvent(); }
+        bool hasEvent() const { return (size < 0); }
+        StreamEvent* event() const { return (StreamEvent*)buf; }
+        void setEvent(IVirtDestructor& evt) {
+            freeEvent();
+            buf = (char*)&evt;
+            size = -1;
+        }
+        void freeEvent() {
+            if (size < 0) {
+                myassert(buf);
+                delete (IVirtDestructor*)buf;
+            }
+        }
         void reset(size_t aSize)
         {
-            size = aSize;
+            freeEvent();
             buf = nullptr;
+            size = aSize;
             streamId = 0;
             fmt.clear();
             myassert(!fmt.codec());
@@ -219,6 +239,7 @@ public:
         void clear() { reset(0); }
         void clearExceptStreamId()
         {
+            freeEvent();
             size = 0;
             buf = nullptr;
             fmt.clear();
@@ -234,17 +255,6 @@ public:
      *  if \c buf is null */
     StreamError readExact(DataPullReq& dpr, int size, char* buf);
     static const char* streamEventToStr(StreamError evt);
-    static StreamError threeStateStreamError(int ret) {
-        if (ret > 0) {
-            return kNoError;
-        }
-        else if (ret == 0) {
-            return kTimeout;
-        }
-        else {
-            return kStreamStopped;
-        }
-    }
 };
 
 class AudioNodeWithState: public AudioNode

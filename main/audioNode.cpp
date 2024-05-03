@@ -233,12 +233,10 @@ const char* AudioNodeWithState::stateToStr(State state)
 }
 const char* AudioNode::streamEventToStr(StreamError evt) {
     switch (evt) {
-        case kTimeout: return "kTimeout";
-        case kStreamStopped: return "kStreamStopped";
-        case kStreamEnd: return "kStreamEnd";
-        case kStreamChanged: return "kStreamChanged";
-        case kCodecChanged: return "kCodecChanged";
-        case kTitleChanged: return "kTitleChanged";
+        case kEvtStreamEnd: return "kEvtStreamEnd";
+        case kEvtStreamChanged: return "kEvtStreamChanged";
+        case kEvtTitleChanged: return "kEvtTitleChanged";
+        case kErrStreamStopped: return "kErrStreamStopped";
         case kErrNoCodec: return "kErrNoCodec";
         case kErrDecode: return "kErrDecode";
         case kErrStreamFmt: return "kErrStreamFmt";

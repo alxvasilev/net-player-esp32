@@ -1047,8 +1047,9 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
         // We are in the http node's thread, must not do any locking from here, so we call
         // into the player via async messages
         if (event == HttpNode::kEventTrackInfo) {
-            ESP_LOGI(TAG, "Received title event: '%s'", (const char*)arg);
-            asyncCall([this, title = std::string((const char*)arg)]() {
+            const std::string title(std::move(*((std::string*)arg)));
+            ESP_LOGI(TAG, "Received title event: '%s'", title.c_str());
+            asyncCall([this, title]() {
                 LOCK_PLAYER();
                 lcdUpdateTrackTitle(title.c_str());
             });

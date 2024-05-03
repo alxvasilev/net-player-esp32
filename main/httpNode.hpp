@@ -13,14 +13,12 @@
 #include "esp_system.h"
 #include <esp_http_client.h>
 #include <strings.h>
-#include "ringbuf.hpp"
-#include "queue.hpp"
 #include "utils.hpp"
 #include "audioNode.hpp"
 #include "playlist.hpp"
 #include "icyParser.hpp"
 #include "recorder.hpp"
-#include "staticQueue.hpp"
+#include "ringBufWithEvents.hpp"
 
 class HttpNode: public AudioNodeWithTask
 {
@@ -36,35 +34,13 @@ protected:
     // need to wait for the read mode to change to a specific value, the enum values
     // are flags
     enum: uint8_t { kEvtPrefillChange = kEvtLast << 1 };
-    struct QueuedStreamEvent {
-        int64_t streamPos;
-        union {
-            StreamFormat fmt;
-            void* data;
-        };
-        uint16_t streamId;
-        StreamError type;
-        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, StreamFormat aFmt, uint32_t aStreamId)
-            :streamPos(aStreamPos), fmt(aFmt), streamId(aStreamId), type(aType) {}
-        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, void* aData)
-            :streamPos(aStreamPos), data(aData), streamId(0), type(aType) {}
-        QueuedStreamEvent(uint32_t aStreamPos, StreamError aType, uint32_t aStreamId)
-            :streamPos(aStreamPos), streamId(aStreamId), type(aType) {}
-        ~QueuedStreamEvent() {
-            if (type == kTitleChanged) {
-                free(data);
-            }
-        }
-    };
     std::unique_ptr<UrlInfo> mUrlInfo;
     esp_http_client_handle_t mClient = nullptr;
     StreamFormat mInFormat;
     StreamFormat mOutFormat;
     uint32_t mOutStreamId = 0;
     Playlist mPlaylist; /* media playlist */
-    RingBuf mRingBuf;
-    StaticQueue<QueuedStreamEvent, 6> mStreamEventQueue;
-    int64_t mRxByteCtr = 0;
+    RingBufWithEvents mRingBuf;
     int64_t mStreamStartPos = 0;
     int mContentLen;
     IcyParser mIcyParser;
@@ -88,11 +64,6 @@ protected:
     void disconnect();
     void destroyClient();
     bool recv();
-    template <typename... Args>
-    bool postStreamEvent_Lock(int64_t streamPos, StreamError event, Args... args);
-    template <typename... Args>
-    bool postStreamEvent_NoLock(int64_t streamPos, StreamError event, Args... args);
-    StreamError dequeueStreamEvent(DataPullReq& dp);
     int delayFromRetryCnt(int tries);
     void nodeThreadFunc();
     virtual bool dispatchCommand(Command &cmd);
@@ -102,12 +73,11 @@ protected:
     void recordingStop();
     void recordingCancelCurrent();
 public:
+    // events sent to the GUI via plSendEvent()
     enum: uint32_t {
         kEventConnecting = 1,
         kEventConnected,
         kEventPlaying,
-        kEventNextTrack,
-        kEventNoMoreTracks,
         kEventTrackInfo,
         kEventRecording,
         kEventBufState
@@ -180,29 +150,3 @@ public:
     const char* url() const { return mUrlInfo ? mUrlInfo->url : nullptr; }
     const char* recStaName() const { return mUrlInfo ? mUrlInfo->recStaName : nullptr; }
 };
-template <typename... Args>
-bool HttpNode::postStreamEvent_Lock(int64_t streamPos, StreamError event, Args... args) {
-    for(;;) {
-        bool ok;
-        {
-            MutexLocker locker(mMutex);
-            ok = mStreamEventQueue.emplaceBack(streamPos, event, args...);
-        }
-        if (ok) {
-            return true;
-        }
-        if (mRingBuf.waitForReadOp(-1) < 0) {
-            return false;
-        }
-    }
-}
-template <typename... Args>
-bool HttpNode::postStreamEvent_NoLock(int64_t streamPos, StreamError event, Args... args) {
-    while (!mStreamEventQueue.emplaceBack(streamPos, event, args...)) {
-        MutexUnlocker unlock(mMutex);
-        if (mRingBuf.waitForReadOp(-1) < 0) {
-            return false;
-        }
-    }
-    return true;
-}

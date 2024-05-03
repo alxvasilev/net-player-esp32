@@ -4,6 +4,8 @@
 #include "decoderFlac.hpp"
 #include "decoderWav.hpp"
 #include "detectorOgg.hpp"
+#include "streamEvents.hpp"
+
 bool DecoderNode::createDecoder(StreamFormat fmt)
 {
     /* info may contain a buffer with some bytes prefetched from the stream in order to detect the codec,
@@ -57,13 +59,17 @@ void DecoderNode::deleteDecoder()
 }
 AudioNode::StreamError DecoderNode::detectCodecCreateDecoder(AudioNode::DataPullReq& odp)
 {
-    odp.size = 0;
-    auto err = mPrev->pullData(odp);
-    if (err) {
+    StreamError err;
+    while ((err = mPrev->pullData(odp)) == kNoError) {
+        ESP_LOGW(mTag, "detectCodec: Discarding %d bytes of stream data", odp.size);
+    }
+    if (err != kEvtStreamChanged) {
         return err;
     }
-    assert(!odp.buf && !odp.size);
-    Codec& codec = odp.fmt.codec();
+    assert(odp.hasEvent());
+    StreamEvent& evt = *odp.event();
+    Codec& codec = evt.fmt.codec();
+
     if (codec.type == Codec::kCodecUnknown && codec.transport == Codec::kTransportOgg) {
         // allocates a buffer in odp and fetches some stream bytes in it
         auto err = detectOggCodec(*mPrev, codec);
@@ -72,8 +78,12 @@ AudioNode::StreamError DecoderNode::detectCodecCreateDecoder(AudioNode::DataPull
             return err;
         }
     }
-    bool ok = createDecoder(odp.fmt);
-    return ok ? kNoError : kErrNoCodec;
+    bool ok = createDecoder(evt.fmt);
+    if (!ok) {
+        ESP_LOGE(mTag, "createDecoder(%s) failed", codec.toString());
+        return kErrNoCodec;
+    }
+    return kNoError;
 }
 
 AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
@@ -81,6 +91,7 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
     for (;;) {
         // get only stream format, no data, but wait for data to be available (so we know the stream format)
         if (!mDecoder) {
+            printf("detect and create decoder\n");
             auto err = detectCodecCreateDecoder(odp);
             if (err) {
                 return err;
@@ -97,19 +108,16 @@ AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
                 mStartingNewStream = false;
                 plSendEvent(kEventNewStream, mDecoder->outputFormat.asNumCode());
                 if (!mPrev->waitForPrefill()) {
-                    return kStreamStopped;
+                    return kErrStreamStopped;
                 }
             }
             return kNoError;
         }
-        if (odp.size) {
-            printf("ASSERT odp.size is not zero but %d, event %d\n", odp.size, err);
-        }
-        if (err == kStreamChanged) {
+        if (err == kEvtStreamChanged) {
             mStartingNewStream = true;
             deleteDecoder();
         }
-        else if (err == kStreamStopped || err == kStreamEnd) {
+        else if (err == kErrStreamStopped || err == kEvtStreamEnd) {
             deleteDecoder();
         }
         return err;

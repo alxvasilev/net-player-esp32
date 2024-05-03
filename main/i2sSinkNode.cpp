@@ -126,7 +126,7 @@ void I2sOutputNode::nodeThreadFunc()
             ESP_LOGI(TAG, "pullData took %d ms\n", t.msElapsed());
 #endif
             if (err) {
-                if (err == kStreamChanged) {
+                if (err == kEvtStreamChanged) {
                     // dpr does not contain PCM format info, but codec type and streamId
                     MutexLocker locker(mutex);
                     mSampleCtr = 0;

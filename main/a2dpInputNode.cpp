@@ -131,9 +131,9 @@ AudioNode::StreamError A2dpInputNode::pullData(DataPullReq& dpr)
         dpr.fmt = mFormat;
         return kNoError;
     } else if (ret < 0) {
-        return kStreamStopped;
+        return kErrStreamStopped;
     } else {
-        return kTimeout;
+        return kErrTimeout;
     }
 }
 

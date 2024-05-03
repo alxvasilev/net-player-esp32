@@ -41,7 +41,7 @@ public:
     ~I2sOutputNode();
     virtual Type type() const { return kTypeI2sOut; }
     virtual IAudioVolume* volumeInterface() override { return this; }
-    virtual StreamError pullData(DataPullReq& dpr) { return kTimeout; }
+    virtual StreamError pullData(DataPullReq& dpr) { return kErrStreamStopped; }
     virtual void confirmRead(int amount) {}
     uint32_t positionTenthSec() const;
     void mute() { muteDac(); }
