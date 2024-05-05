@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_a2dp_api.h"
 #include "audioNode.hpp"
+#include "streamRingQueue.hpp"
 #include "bluetooth.hpp"
 
 class A2dpInputNode: public AudioNodeWithState
@@ -24,7 +25,7 @@ public:
     };
 protected:
     static A2dpInputNode* gSelf; // bluetooth callbacks don't have a user pointer
-    RingBuf mRingBuf;
+    StreamRingQueue<200> mRingBuf;
     StreamFormat mFormat;
     static void eventCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param);
     static void dataCallback(const uint8_t* data, uint32_t len);
@@ -34,7 +35,6 @@ public:
     virtual Type type() const override { return AudioNode::kTypeA2dpIn; }
     A2dpInputNode(IAudioPipeline& parent, const char* btName);
     ~A2dpInputNode();
-    virtual StreamError pullData(DataPullReq& dpr) override;
-    virtual void confirmRead(int amount);
+    virtual StreamEvent pullData(PacketResult& dpr) override;
 };
 #endif

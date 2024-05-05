@@ -107,7 +107,7 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
         if ((mNvsHandle.readBlob(eqNameKey().c_str(), mGains.get(), len) == ESP_OK) && (len == nBands)) {
             ESP_LOGI(TAG, "Loaded equalizer gains from NVS for '%s'", mEqName);
         } else {
-            printf("============ error loading gains for '%s', len=%d, bands=%d\n", eqNameKey().c_str(), len, nBands);
+            ESP_LOGI(TAG, "Error loading gains for '%s', len=%d, nbands=%d", eqNameKey().c_str(), len, nBands);
             memset(mGains.get(), 0, nBands);
         }
     }
@@ -206,10 +206,10 @@ void EqualizerNode::useEspEqualizer(bool use)
 }
 
 template<int N>
-void MyEqualizerCore<N>::process16bitStereo(AudioNode::DataPullReq& dpr, void* arg) {
+void MyEqualizerCore<N>::process16bitStereo(DataPacket& pkt, void* arg) {
     auto& self = *static_cast<MyEqualizerCore<N>*>(arg);
-    auto end = (int16_t*)(dpr.buf + dpr.size);
-    for (auto sample = (int16_t*)dpr.buf; sample < end;) {
+    auto end = (int16_t*)(pkt.data + pkt.dataLen);
+    for (auto sample = (int16_t*)pkt.data; sample < end;) {
         *sample = self.mEqualizerLeft.processAndNarrow(*sample);
         sample++;
         *sample = self.mEqualizerRight.processAndNarrow(*sample);
@@ -217,10 +217,10 @@ void MyEqualizerCore<N>::process16bitStereo(AudioNode::DataPullReq& dpr, void* a
     }
 }
 template<int N>
-void MyEqualizerCore<N>::process32bitStereo(AudioNode::DataPullReq& dpr, void* arg) {
+void MyEqualizerCore<N>::process32bitStereo(DataPacket& pkt, void* arg) {
     auto& self = *static_cast<MyEqualizerCore<N>*>(arg);
-    auto end = (int32_t*)(dpr.buf + dpr.size);
-    for (auto sample = (int32_t*)dpr.buf; sample < end;) {
+    auto end = (int32_t*)(pkt.data + pkt.dataLen);
+    for (auto sample = (int32_t*)pkt.data; sample < end;) {
         *sample = self.mEqualizerLeft.process(*sample);
         sample++;
         *sample = self.mEqualizerRight.process(*sample);
@@ -274,10 +274,11 @@ EqBandConfig EspEqualizerCore::bandConfig(uint8_t n) const
     };
     return {bandFreqs[n], 3};
 }
-void EspEqualizerCore::process16bitStereo(AudioNode::DataPullReq& dpr, void *arg)
+void EspEqualizerCore::process16bitStereo(DataPacket& pkt, void *arg)
 {
     auto& self = *static_cast<EspEqualizerCore*>(arg);
-    esp_equalizer_process(self.mEqualizer, (unsigned char*)dpr.buf, dpr.size, self.mSampleRate, self.mChanCount);
+    esp_equalizer_process(self.mEqualizer, (unsigned char*)pkt.data, pkt.dataLen,
+                          self.mSampleRate, self.mChanCount);
 }
 EspEqualizerCore::~EspEqualizerCore()
 {
@@ -285,25 +286,34 @@ EspEqualizerCore::~EspEqualizerCore()
         esp_equalizer_uninit(mEqualizer);
     }
 }
-AudioNode::StreamError EqualizerNode::pullData(DataPullReq &dpr)
+StreamEvent EqualizerNode::pullData(PacketResult& dpr)
 {
     auto event = mPrev->pullData(dpr);
-    if (event) {
+    if (!event) {
+        MutexLocker locker(mMutex);
+        if (mVolLevelMeasurePoint == 0) {
+            volumeNotifyLevelCallback(); // notify previous levels to compensate output buffering delay
+            volumeGetLevel(dpr);
+        }
+        if (volProcessingEnabled()) {
+            volumeProcess(dpr);
+        }
+        if (!mBypass) {
+            mProcessFunc(dpr.dataPacket(), this->mProcFuncArg);
+        }
+        if (mVolLevelMeasurePoint == 1) {
+            volumeNotifyLevelCallback(); // notify previous levels to compensate output buffering delay
+            volumeGetLevel(dpr);
+        }
+    }
+    else if (event == kEvtStreamChanged) {
+        MutexLocker locker(mMutex);
+        equalizerReinit(dpr.genericEvent().fmt);
         return event;
     }
-    MutexLocker locker(mMutex);
-    if (dpr.fmt != mFormat) {
-        equalizerReinit(dpr.fmt);
+    else {
+        return event;
     }
-    if (volLevelEnabled()) {
-        volumeNotifyLevelCallback(); // notify previous levels to compensate output buffering delay
-        volumeGetLevel(dpr);
-    }
-    if (volProcessingEnabled()) {
-        volumeProcess(dpr);
-    }
-    if (!mBypass) {
-        mProcessFunc(dpr, this->mProcFuncArg);
-    }
+
     return kNoError;
 }

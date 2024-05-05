@@ -7,12 +7,6 @@ static const char* TAG = "aacdec";
 DecoderAac::DecoderAac(DecoderNode& parent, AudioNode& src)
 : Decoder(parent, src)
 {
-    mInputBuf = (unsigned char*)utils::mallocTrySpiram(kInputBufSize + kOutputBufSize);
-    if (!mInputBuf) {
-        ESP_LOGE(TAG, "Out of memory allocating buffers");
-        abort();
-    }
-    mOutputBuf = (int16_t*)(mInputBuf + kInputBufSize);
     initDecoder();
 }
 void DecoderAac::initDecoder()
@@ -34,7 +28,6 @@ void DecoderAac::freeDecoder()
 DecoderAac::~DecoderAac()
 {
     freeDecoder();
-    free(mInputBuf);
 }
 
 void DecoderAac::reset()
@@ -44,9 +37,10 @@ void DecoderAac::reset()
     outputFormat.clear();
 }
 
-AudioNode::StreamError DecoderAac::pullData(AudioNode::DataPullReq& dpr)
+StreamEvent DecoderAac::decode(AudioNode::PacketResult& dpr)
 {
     bool needMoreData = (mInputLen == 0);
+    DataPacket::unique_ptr output;
     for(;;) {
         if (needMoreData || mInputLen < kMinAllowedAacInputSize) {
             needMoreData = false;
@@ -54,26 +48,30 @@ AudioNode::StreamError DecoderAac::pullData(AudioNode::DataPullReq& dpr)
                 memmove(mInputBuf, mNextFramePtr, mInputLen);
                 mNextFramePtr = mInputBuf;
             }
-            int reqSize = kInputBufSize - mInputLen;
-            if (reqSize <= 0) {
+            int freeSpace = kInputBufSize - mInputLen;
+            if (freeSpace <= 0) {
                 ESP_LOGE(TAG, "Can't decode a frame, even though input buffer is full");
                 mInputLen = 0;
                 mNextFramePtr = mInputBuf;
-                return AudioNode::kErrDecode;
+                return kErrDecode;
             }
-            dpr.size = reqSize;
             auto event = mSrcNode.pullData(dpr);
             if (event) {
                 return event;
             }
             // Existing data starts at mInputBuf
-            myassert(dpr.size && dpr.size <= reqSize);
-            memcpy(mInputBuf + mInputLen, dpr.buf, dpr.size);
-            mSrcNode.confirmRead(dpr.size);
-            mInputLen += dpr.size;
+            myassert(dpr.packet);
+            auto& packet = dpr.dataPacket();
+            myassert(packet.dataLen);
+            memcpy(mInputBuf + mInputLen, packet.data, packet.dataLen);
+            mInputLen += packet.dataLen;
+            dpr.clear();
+        }
+        if (!output) {
+            output.reset(DataPacket::create(kOutputBufSize));
         }
         // printf("AACDecode: inLen=%d, offs=%d\n", mInputLen, mNextFramePtr - mInputBuf);
-        auto err = AACDecode(mDecoder, &mNextFramePtr, &mInputLen, mOutputBuf);
+        auto err = AACDecode(mDecoder, &mNextFramePtr, &mInputLen, (int16_t*)output->data);
         if (err == ERR_AAC_INDATA_UNDERFLOW) { // need more data
             ESP_LOGD(TAG, "Decoder underflow");
             needMoreData = true;
@@ -83,10 +81,8 @@ AudioNode::StreamError DecoderAac::pullData(AudioNode::DataPullReq& dpr)
             if (!mOutputLen) { // we haven't yet initialized output format info
                 getStreamFormat();
             }
-            dpr.buf = (char*)mOutputBuf;
-            dpr.size = mOutputLen;
-            dpr.fmt = outputFormat;
-            return AudioNode::kNoError;
+            output->dataLen = mOutputLen;
+            return mParent.codecPostOutput(output.release()) ? kNoError : kErrStreamStopped;
         }
         else { //err < 0 - error, try to re-sync
             // mNextFramePtr and mInputLen are guaranteed to not be updated if AACDecode() failed
@@ -133,4 +129,5 @@ void DecoderAac::getStreamFormat()
         isSbr ? " SBR" : "",
         info.nChans == 2 ? "stereo" : "mono", info.sampRateOut,
         info.bitRate, info.outputSamps);
+    mParent.codecOnFormatDetected(outputFormat);
 }

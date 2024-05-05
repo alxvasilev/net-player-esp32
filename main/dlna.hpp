@@ -4,6 +4,7 @@
 #include <memory>
 #include <list>
 #include "utils.hpp"
+#include <sys/socket.h>
 
 class AudioPlayer;
 struct TrackInfo;

@@ -1,4 +1,5 @@
 #include <esp_http_server.h>
+#include <esp_http_client.h>
 #include <sys/socket.h>
 #include "dlna.hpp"
 #include <httpServer.hpp>

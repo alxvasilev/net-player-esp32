@@ -8,19 +8,20 @@ class DecoderFlac: public Decoder
 protected:
     enum {
         kMaxSamplesPerBlock = 4608,
-        kOutputBufSize = 65536
+        kOutputSplitMaxSamples = 2048
     };
     typedef bool (DecoderFlac::*OutputFunc)(int nSamples, const FLAC__int32* const samples[]);
-    uint8_t* mOutputBuf;
-    uint16_t mOutputChunkSize = 0;
-    int mOutputLen;
     int mOutputReadOfs = 0;
     int mNumReads = 0;
-    AudioNode::DataPullReq* mDprPtr = nullptr;
+    AudioNode::PacketResult* mInputPr = nullptr;
+    DataPacket::unique_ptr mInputPacket;
+    DataPacket::unique_ptr mExtraOutPacket;
+    int mInputPos = 0;
     FLAC__StreamDecoder* mDecoder = nullptr;
     OutputFunc mOutputFunc = nullptr;
-    AudioNode::StreamError mLastStreamEvent;
-    Codec mCodecInfo;
+    uint16_t mOutputChunkSize = 0;
+    bool mHasOutput = false;
+    StreamEvent mInputEvent;
     void init();
     static FLAC__StreamDecoderReadStatus readCb(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void *client_data);
     static void errorCb(const FLAC__StreamDecoder *decoder, FLAC__StreamDecoderErrorStatus status, void *client_data);
@@ -30,11 +31,12 @@ protected:
     bool outputStereoSamples(int nSamples, const FLAC__int32* const samples[]);
     template <typename T, int Shift=0>
     bool outputMonoSamples(int nSamples, const FLAC__int32* const samples[]);
+    bool selectOutputFunc(int nChans, int bps);
 public:
     virtual Codec::Type type() const { return Codec::kCodecFlac; }
     DecoderFlac(DecoderNode& parent, AudioNode& src, bool oggMode);
     ~DecoderFlac();
-    virtual AudioNode::StreamError pullData(AudioNode::DataPullReq& dpr);
+    virtual StreamEvent decode(AudioNode::PacketResult& dpr);
     virtual void reset();
 };
 

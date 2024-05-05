@@ -89,11 +89,15 @@ void A2dpInputNode::eventCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *
 void A2dpInputNode::dataCallback(const uint8_t* data, uint32_t len)
 {
 //    ESP_LOGI(TAG, "Recv %d bytes, writing to ringbuf(%d)", len, gSelf->mRingBuf.totalDataAvail());
-    gSelf->mRingBuf.write((char*)data, len);
+    auto pkt = DataPacket::create(len);
+    memcpy(pkt->data, data, len);
+    if (!gSelf->mRingBuf.pushBack(pkt)) {
+        gSelf->stop(false);
+    }
 }
 
 A2dpInputNode::A2dpInputNode(IAudioPipeline& parent, const char* btName)
-: AudioNodeWithState(parent, TAG), mRingBuf(kBufferSize)
+: AudioNodeWithState(parent, TAG)
 {
     if (gSelf) {
         ESP_LOGE(TAG, "Only a single instance is allowed, and one already exists");
@@ -123,21 +127,14 @@ void A2dpInputNode::doStop()
 A2dpInputNode::~A2dpInputNode()
 {
 }
-AudioNode::StreamError A2dpInputNode::pullData(DataPullReq& dpr)
+StreamEvent A2dpInputNode::pullData(PacketResult& dpr)
 {
-    auto ret = mRingBuf.contigRead(dpr.buf, dpr.size, -1);
-    if (ret > 0) {
-        dpr.size = ret;
-        dpr.fmt = mFormat;
-        return kNoError;
-    } else if (ret < 0) {
-        return kErrStreamStopped;
-    } else {
-        return kErrTimeout;
+    auto pkt = mRingBuf.popFront();
+    if (pkt) {
+        dpr.packet.reset(pkt);
+        return kEvtData;
     }
-}
-
-void A2dpInputNode::confirmRead(int amount)
-{
-    mRingBuf.commitContigRead(amount);
+    else {
+        return kErrStreamStopped;
+    }
 }

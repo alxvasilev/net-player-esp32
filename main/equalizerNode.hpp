@@ -8,7 +8,7 @@
 struct IEqualizerCore
 {
     enum Type { kTypeUnknown = 0, kTypeEsp = 1, kTypeCustom = 2 };
-    typedef void(*ProcessFunc)(AudioNode::DataPullReq&, void* arg);
+    typedef void(*ProcessFunc)(DataPacket& pkt, void* arg);
     virtual Type type() const = 0;
     virtual uint8_t numBands() const = 0;
     virtual void init(StreamFormat fmt, int8_t* gains) = 0;
@@ -26,12 +26,12 @@ class MyEqualizerCore: public IEqualizerCore
 protected:
     Equalizer<N, float> mEqualizerLeft;
     Equalizer<N, float> mEqualizerRight;
-    static void process16bitStereo(AudioNode::DataPullReq&, void* arg);
-    static void process32bitStereo(AudioNode::DataPullReq&, void* arg);
+    static void process16bitStereo(DataPacket&, void* arg);
+    static void process32bitStereo(DataPacket&, void* arg);
 public:
     MyEqualizerCore();
     Type type() const override { return kTypeCustom; }
-    void* operator new(size_t size) { printf("eq core malloc %zu\n", size); return heap_caps_malloc(size, MALLOC_CAP_DMA); }
+    void* operator new(size_t size) { return heap_caps_malloc(size, MALLOC_CAP_DMA); }
     void operator delete(void* ptr) noexcept { free(ptr); }
     MyEqualizerCore(const EqBandConfig* cfg);
     virtual uint8_t numBands() const override { return N; }
@@ -56,7 +56,7 @@ protected:
     void* mEqualizer = nullptr;
     int mSampleRate = 0; // cache these because the esp eq wants them passed for each process() call
     int8_t mChanCount = 0;
-    static void process16bitStereo(AudioNode::DataPullReq&, void* arg);
+    static void process16bitStereo(DataPacket&, void* arg);
 public:
     Type type() const override { return kTypeEsp; }
     uint8_t numBands() const { return 10; }
@@ -100,8 +100,7 @@ public:
     Mutex mMutex;
     EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs);
     virtual Type type() const { return kTypeEqualizer; }
-    virtual StreamError pullData(DataPullReq &dpr) override;
-    virtual void confirmRead(int size) override { mPrev->confirmRead(size); }
+    virtual StreamEvent pullData(PacketResult &dpr) override;
     int numBands() const { return mCore->numBands(); }
     bool setMyEqNumBands(uint8_t n);
     IEqualizerCore::Type eqType() const { return mCore->type(); }

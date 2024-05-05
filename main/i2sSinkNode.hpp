@@ -6,7 +6,7 @@
 #include <driver/i2s.h>
 #include "volume.hpp"
 
-class I2sOutputNode: public AudioNodeWithTask, public DefaultVolumeImpl
+class I2sOutputNode: public AudioNodeWithTask
 {
 public:
     Mutex mutex;
@@ -40,9 +40,7 @@ public:
         uint8_t dmaBufCnt, int8_t cpuCore=-1);
     ~I2sOutputNode();
     virtual Type type() const { return kTypeI2sOut; }
-    virtual IAudioVolume* volumeInterface() override { return this; }
-    virtual StreamError pullData(DataPullReq& dpr) { return kErrStreamStopped; }
-    virtual void confirmRead(int amount) {}
+    virtual StreamEvent pullData(PacketResult& dpr) { return kErrStreamStopped; }
     uint32_t positionTenthSec() const;
     void mute() { muteDac(); }
     void unmute() { unMuteDac(); }

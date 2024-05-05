@@ -7,18 +7,16 @@ class DecoderMp3: public Decoder
 {
 protected:
     enum {
-        kInputBufSize = 2048,
+        kInputBufSize = 4096,
         kSamplesPerFrame = 1152,
-        kOutputBufSize = kSamplesPerFrame * 4 // each mp3 packet decodes to 1152 samples, for 16 bit stereo, multiply by 4
+        kOutputFrameSize = kSamplesPerFrame * 4 // each mp3 packet decodes to 1152 samples, for 16 bit stereo, multiply by 4
     };
     struct mad_stream mMadStream;
     struct mad_frame mMadFrame;
     struct mad_synth mMadSynth;
-    unsigned char* mInputBuf;
-    unsigned char* mOutputBuf;
+    unsigned char mInputBuf[kInputBufSize];
     int mInputLen = 0;
-    bool initStreamFormat(mad_header& header);
-    int output(const mad_pcm& pcm);
+    StreamEvent output(const mad_pcm& pcm);
     void initMadState();
     void freeMadState();
     void logEncodingInfo();
@@ -27,7 +25,7 @@ public:
     virtual Codec::Type type() const { return Codec::kCodecMp3; }
     DecoderMp3(DecoderNode& parent, AudioNode& src);
     virtual ~DecoderMp3();
-    virtual AudioNode::StreamError pullData(AudioNode::DataPullReq& dpr);
+    virtual StreamEvent decode(AudioNode::PacketResult& dpr);
 };
 
 #endif

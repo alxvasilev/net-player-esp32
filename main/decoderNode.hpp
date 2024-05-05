@@ -1,6 +1,7 @@
 #ifndef DECODER_NODE_HPP
 #define DECODER_NODE_HPP
 #include "audioNode.hpp"
+#include "streamRingQueue.hpp"
 
 class DecoderNode;
 class Decoder
@@ -10,12 +11,11 @@ protected:
     AudioNode& mSrcNode;
 public:
     StreamFormat outputFormat;
-    Decoder(DecoderNode& parent, AudioNode& src)
-    : mParent(parent), mSrcNode(src) {}
+    Decoder(DecoderNode& parent, AudioNode& src, StreamFormat outFmt = 0)
+    : mParent(parent), mSrcNode(src), outputFormat(outFmt) {}
     virtual ~Decoder() {}
     virtual Codec::Type type() const = 0;
-    virtual AudioNode::StreamError pullData(AudioNode::DataPullReq& output) = 0;
-    virtual void confirmRead(int size) {}
+    virtual StreamEvent decode(AudioNode::PacketResult& pr) = 0;
     virtual void reset() = 0;
 };
 /*
@@ -26,24 +26,31 @@ public:
     static int16_t detectCodec(AudioNode& src, int timeout);
 };
 */
-class DecoderNode: public AudioNode
+class DecoderNode: public AudioNodeWithTask
 {
 protected:
     Decoder* mDecoder = nullptr;
     bool mStartingNewStream = true;
-    // odp in case there is a stream event that needs to be propagated
-    AudioNode::StreamError detectCodecCreateDecoder(DataPullReq& odp);
+    StreamId mStreamId = 0;
+    StreamRingQueue<16> mRingBuf;
+    // pr in case there is a stream event that needs to be propagated
+    StreamEvent detectCodecCreateDecoder(GenericEvent& startPkt);
     bool createDecoder(StreamFormat fmt);
+    StreamEvent decode();
+    StreamEvent forwardEvent(StreamEvent evt, AudioNode::PacketResult& pr);
     static int32_t heapFreeTotal(); // used to  calculate memory usage for codecs
     void deleteDecoder();
 public:
     enum { kEventCodecChange = AudioNode::kEventLast + 1 };
-    DecoderNode(IAudioPipeline& parent): AudioNode(parent, "decoder"){}
+    enum { kStackSize = 4096, kPrio = 1, kCore = -1 };
+    DecoderNode(IAudioPipeline& parent): AudioNodeWithTask(parent, "decoder", kStackSize, kPrio, kCore){}
     virtual Type type() const { return kTypeDecoder; }
-    virtual StreamError pullData(DataPullReq& dpr);
-    virtual void confirmRead(int size);
+    virtual void nodeThreadFunc();
+    virtual StreamEvent pullData(PacketResult &pr);
     virtual ~DecoderNode() { deleteDecoder(); }
     virtual void reset() override { deleteDecoder(); }
+    bool codecOnFormatDetected(StreamFormat fmt); // called by codec when it know the sample format, and before posting any data packet
+    bool codecPostOutput(DataPacket* pkt); // called by codec to output a decoded packet
     friend class Decoder;
 };
 

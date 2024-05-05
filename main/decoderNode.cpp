@@ -4,16 +4,11 @@
 #include "decoderFlac.hpp"
 #include "decoderWav.hpp"
 #include "detectorOgg.hpp"
-#include "streamEvents.hpp"
+#include "streamPackets.hpp"
 
 bool DecoderNode::createDecoder(StreamFormat fmt)
 {
-    /* info may contain a buffer with some bytes prefetched from the stream in order to detect the codec,
-     * in case it's encapsulated in a transport stream. For example - ogg, where the mime is just audio/ogg. In this case
-     * We need to pass that pre-fetched data to the codec. We can't peek the first bytes via pullData with
-     * no subsequent confirmRead(), because the needed amount of bytes may be non-contiguous in the ring
-     * buffer. In that case, pullData() will return less than needed
-     */
+    mStartingNewStream = true;
     auto freeBefore = heapFreeTotal();
     switch (fmt.codec().type) {
     case Codec::kCodecMp3:
@@ -46,7 +41,6 @@ bool DecoderNode::createDecoder(StreamFormat fmt)
 }
 void DecoderNode::deleteDecoder()
 {
-    mStartingNewStream = true;
     if (!mDecoder) {
         return;
     }
@@ -57,71 +51,114 @@ void DecoderNode::deleteDecoder()
     ESP_LOGI(mTag, "\e[34mDeleted %s decoder freed %d bytes",
         Codec::numCodeToStr(codec), heapFreeTotal() - freeBefore);
 }
-AudioNode::StreamError DecoderNode::detectCodecCreateDecoder(AudioNode::DataPullReq& odp)
+StreamEvent DecoderNode::detectCodecCreateDecoder(GenericEvent& startPkt)
 {
-    StreamError err;
-    while ((err = mPrev->pullData(odp)) == kNoError) {
-        ESP_LOGW(mTag, "detectCodec: Discarding %d bytes of stream data", odp.size);
-    }
-    if (err != kEvtStreamChanged) {
-        return err;
-    }
-    assert(odp.hasEvent());
-    StreamEvent& evt = *odp.event();
-    Codec& codec = evt.fmt.codec();
-
+    mStreamId = startPkt.streamId;
+    Codec& codec = startPkt.fmt.codec();
     if (codec.type == Codec::kCodecUnknown && codec.transport == Codec::kTransportOgg) {
         // allocates a buffer in odp and fetches some stream bytes in it
-        auto err = detectOggCodec(*mPrev, codec);
-        if (err != kNoError) {
-            ESP_LOGW(mTag, "Error %s detecting ogg-encapsulated codec", streamEventToStr(err));
-            return err;
+        bool preceded;
+        auto dataPacket = mPrev->peekData(preceded);
+        if (!dataPacket) {
+            return preceded ? kErrDecode : kErrStreamStopped;
+        }
+        auto evt = detectOggCodec(*dataPacket, codec);
+        if (evt) {
+            ESP_LOGW(mTag, "Error %s detecting ogg-encapsulated codec", streamEventToStr(evt));
+            return evt;
         }
     }
-    bool ok = createDecoder(evt.fmt);
+    bool ok = createDecoder(startPkt.fmt);
     if (!ok) {
         ESP_LOGE(mTag, "createDecoder(%s) failed", codec.toString());
         return kErrNoCodec;
     }
     return kNoError;
 }
-
-AudioNode::StreamError DecoderNode::pullData(DataPullReq& odp)
+void DecoderNode::nodeThreadFunc()
 {
+    ESP_LOGI(mTag, "Task started");
+    mRingBuf.clearStopSignal();
     for (;;) {
-        // get only stream format, no data, but wait for data to be available (so we know the stream format)
-        if (!mDecoder) {
-            printf("detect and create decoder\n");
-            auto err = detectCodecCreateDecoder(odp);
-            if (err) {
-                return err;
+        processMessages();
+        if (mTerminate) {
+            return;
+        }
+        myassert(mState == kStateRunning);
+        while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
+            auto err = decode();
+            if (err) { // err cannot be an event here
+                plSendEvent(kEventStreamError, err, 0);
+                stop(false);
+                break;
             }
         }
-        myassert(mDecoder);
-        // Pull requested size is ignored here, codec always returns whole frames.
-        // And in case codec returns an event, having it pre-initialized to zero,
-        // it doesn't need to zero-out the size field
-        odp.size = 0;
-        auto err = mDecoder->pullData(odp);
-        if (!err) {
-            if (mStartingNewStream) {
-                mStartingNewStream = false;
-                plSendEvent(kEventNewStream, mDecoder->outputFormat.asNumCode());
-                if (!mPrev->waitForPrefill()) {
-                    return kErrStreamStopped;
-                }
-            }
-            return kNoError;
-        }
-        if (err == kEvtStreamChanged) {
-            mStartingNewStream = true;
-            deleteDecoder();
-        }
-        else if (err == kErrStreamStopped || err == kEvtStreamEnd) {
-            deleteDecoder();
-        }
-        return err;
     }
+}
+StreamEvent DecoderNode::forwardEvent(StreamEvent evt, AudioNode::PacketResult& pr) {
+    if (evt < 0) {
+        mRingBuf.pushBack(new GenericEvent(evt, pr.streamId, 0));
+        return evt;
+    }
+    else {
+        return mRingBuf.pushBack(pr.packet.release()) ? kNoError : kErrStreamStopped;
+    }
+}
+StreamEvent DecoderNode::decode()
+{
+    AudioNode::PacketResult pr;
+    if (!mDecoder) {
+        StreamEvent evt;
+        while ((evt = mPrev->pullData(pr)) == kEvtData) {
+            ESP_LOGW(mTag, "Detect codec: Discarding %d bytes of stream data", pr.dataPacket().dataLen);
+        }
+        if (evt != kEvtStreamChanged) {
+            return forwardEvent(evt, pr);
+        }
+        myassert(pr.packet);
+        evt = detectCodecCreateDecoder(pr.genericEvent());
+        if (evt) { // evt can only be an error here
+            return evt;
+        }
+        pr.clear();
+    }
+    myassert(mDecoder);
+    auto evt = mDecoder->decode(pr);
+    if (evt) {
+        if (evt < 0) {
+            deleteDecoder();
+            return evt;
+        }
+        else if (evt == kEvtStreamChanged) {
+            deleteDecoder();
+            return detectCodecCreateDecoder(pr.genericEvent());
+        }
+        else if (evt == kEvtStreamEnd) {
+            deleteDecoder();
+        }
+        return forwardEvent(evt, pr);
+    }
+    if (mStartingNewStream) {
+        mStartingNewStream = false;
+    }
+    return kNoError;
+}
+StreamEvent DecoderNode::pullData(PacketResult &pr)
+{
+    auto pkt = mRingBuf.popFront();
+    if (!pkt) {
+        return kErrStreamStopped;
+    }
+    pr.packet.reset(pkt);
+    return pkt->type;
+}
+bool DecoderNode::codecOnFormatDetected(StreamFormat fmt)
+{
+    return mRingBuf.pushBack(new GenericEvent(kEvtStreamChanged, mStreamId, fmt));
+}
+bool DecoderNode::codecPostOutput(DataPacket *pkt)
+{
+    return mRingBuf.pushBack(pkt);
 }
 int32_t DecoderNode::heapFreeTotal()
 {
@@ -130,11 +167,4 @@ int32_t DecoderNode::heapFreeTotal()
         result += heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     }
     return result;
-}
-
-void DecoderNode::confirmRead(int size)
-{
-    if (mDecoder) {
-        mDecoder->confirmRead(size);
-    }
 }

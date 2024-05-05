@@ -7,13 +7,12 @@ typedef void *HAACDecoder;
 class DecoderAac: public Decoder
 {
 protected:
-    enum { kInputBufSize = 2048, kMinAllowedAacInputSize = 1024, kOutputBufSize = 2 * 2 *
+    enum { kInputBufSize = 4096, kMinAllowedAacInputSize = 1024, kOutputBufSize = 2 * 2 *
            2048 // 1024 if no SBR support, i.e. HELIX_FEATURE_AUDIO_CODEC_AAC_SBR not defined
     };
     HAACDecoder mDecoder;
-    unsigned char* mInputBuf;
+    unsigned char mInputBuf[kInputBufSize];
     unsigned char* mNextFramePtr;
-    int16_t* mOutputBuf;
     int mInputLen;
     int mOutputLen;
     void initDecoder();
@@ -23,7 +22,7 @@ public:
     virtual Codec::Type type() const { return Codec::kCodecAac; }
     DecoderAac(DecoderNode& parent, AudioNode& src);
     ~DecoderAac();
-    virtual AudioNode::StreamError pullData(AudioNode::DataPullReq& output);
+    virtual StreamEvent decode(AudioNode::PacketResult& pr);
     virtual void reset() override;
 };
 

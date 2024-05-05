@@ -4,140 +4,18 @@
 #include <sys/unistd.h>
 #include <sys/stat.h>
 #include <string.h>
-#include <atomic>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
-#include <freertos/event_groups.h>
 
 #include "esp_log.h"
 #include "errno.h"
 #include "esp_system.h"
-#include <esp_http_client.h>
-#include <strings.h>
-#include "ringbuf.hpp"
+#include <eventGroup.hpp>
+#include "streamPackets.hpp"
 #include "queue.hpp"
 #include "utils.hpp"
-#include "playlist.hpp"
-struct Codec {
-    enum Type: uint8_t {
-        kCodecUnknown = 0,
-        kCodecMp3,
-        kCodecAac,
-        kCodecVorbis,
-        kCodecFlac,
-        kCodecOpus,
-        kCodecWav,
-        kCodecPcm,
-        // ====
-        kPlaylistM3u8,
-        kPlaylistPls
-    };
-    enum Transport: uint8_t {
-        kTransportDefault = 0,
-        kTransportOgg  = 1,
-        kTransportMpeg = 2
-    };
-    enum Mode: uint8_t {
-        kAacModeSbr    = 1
-    };
-    union {
-        struct {
-            Type type: 4;
-            Mode mode: 2;
-            Transport transport: 2;
-        };
-        uint8_t numCode;
-    };
-    Codec(uint8_t val = 0): numCode(val) {
-        static_assert(sizeof(Codec) == 1, "sizeof(Codec) must be 1 byte");
-    }
-    Codec(Type aType, Transport aTrans): numCode(0) {
-        type = aType;
-        transport = aTrans;
-    }
-    const char* toString() const;
-    const char* fileExt() const;
-    operator uint8_t() const { return this->type; }
-    operator bool() const { return this->type != 0; }
-    Codec& operator=(Type aType) { type = aType; return *this; }
-    uint8_t asNumCode() const { return numCode; }
-    static const char* numCodeToStr(uint8_t aNumCode) {
-        Codec inst = { .numCode = aNumCode }; return inst.toString();
-    }
-    void clear() { numCode = 0; }
-};
-
-struct StreamFormat
-{
-protected:
-    struct Members {
-        uint32_t sampleRate: 19;
-        uint8_t numChannels: 1;
-        uint8_t bitsPerSample: 2;
-        bool isLeftAligned: 1;
-        bool isBigEndian: 1;
-        Codec codec;
-    };
-    union {
-        Members members;
-        uint32_t mNumCode;
-    };
-    void initSampleFormat(uint32_t sr, uint8_t bps, uint8_t channels)
-    {
-        setSampleRate(sr);
-        setBitsPerSample(bps);
-        setNumChannels(channels);
-    }
-public:
-    operator bool() const { return mNumCode != 0; }
-    static uint8_t encodeBps(uint8_t bits) { return (bits >> 3) - 1; }
-    static uint8_t decodeBps(uint8_t bits) { return (bits + 1) << 3; }
-    void clear() { mNumCode = 0; }
-    StreamFormat(uint32_t sr, uint8_t bps, uint8_t channels): mNumCode(0)
-    {
-        initSampleFormat(sr, bps, channels);
-    }
-    StreamFormat(Codec codec): mNumCode(0) { members.codec = codec; }
-    StreamFormat(Codec::Type type): mNumCode(0) { members.codec.type = type; }
-    StreamFormat(Codec codec, uint32_t sr, uint8_t bps, uint8_t channels): mNumCode(0)
-    {
-        initSampleFormat(sr, bps, channels);
-        members.codec = codec;
-    }
-    StreamFormat(): mNumCode(0)
-    {
-        static_assert(sizeof(StreamFormat) == sizeof(uint32_t), "Size of StreamFormat must be 32bit");
-    }
-    StreamFormat(uint32_t code): mNumCode(code) {}
-    bool operator==(StreamFormat other) const { return mNumCode == other.mNumCode; }
-    bool operator!=(StreamFormat other) const { return mNumCode != other.mNumCode; }
-    uint32_t asNumCode() const { return mNumCode; }
-    void set(uint32_t sr, uint8_t bits, uint8_t channels) {
-        setNumChannels(channels);
-        setSampleRate(sr);
-        setBitsPerSample(bits);
-    }
-    const Codec& codec() const { return members.codec; }
-    Codec& codec() { return members.codec; }
-    void setCodec(Codec codec) { members.codec = codec; }
-    uint32_t sampleRate() const { return members.sampleRate; }
-    void setSampleRate(uint32_t sr) { members.sampleRate = sr; }
-    uint8_t bitsPerSample() const { return decodeBps(members.bitsPerSample); }
-    void setBitsPerSample(uint8_t bps) { members.bitsPerSample = encodeBps(bps); }
-    uint8_t numChannels() const { return members.numChannels + 1; }
-    bool isStereo() const { return members.numChannels != 0; }
-    bool isLeftAligned() const { return members.isLeftAligned; }
-    bool isBigEndian() const { return members.isBigEndian; }
-    void setBigEndian(bool isBe) { members.isBigEndian = isBe; }
-    void setIsLeftAligned(bool val) { members.isLeftAligned = val; }
-    void setNumChannels(uint8_t ch) { members.numChannels = ch - 1; }
-};
-
-struct IVirtDestructor {
-    virtual ~IVirtDestructor() = default;
-};
 
 class AudioNode;
 
@@ -148,24 +26,16 @@ public:
 };
 
 class IAudioVolume;
-class StreamEvent;
 
 class AudioNode
 {
 public:
-    enum StreamError: int8_t {
-        kFlagEvtOwnsData = 64, // event object owns its data and must free it
-        kNoError = 0,
-        kEvtStreamEnd = 1,
-        kEvtStreamChanged = 2,
-        kEvtTitleChanged = 4 | kFlagEvtOwnsData,
-        kErrStreamStopped = -1,
-        kErrTimeout = -2,
-        kErrNoCodec = -3,
-        kErrDecode = -4,
-        kErrStreamFmt = -5
-    };
-    enum { kEventStreamError = 1, kEventAudioFormatChange, kEventNewStream, kEventLast = kEventNewStream };
+    // events sent to the GUI via plSendEvent()
+    enum { kEventStreamError = 1, kEventAudioFormatChange,
+           kEventNewStream, kEventStreamEnd, kEventTrackInfo,
+           kEventConnecting, kEventConnected,
+           kEventPlaying, kEventRecording, kEventBufState,
+           kEventLast = kEventBufState };
     // we put here the state definitions only because the class name is shorter than AudioNodeWithTask
     enum State: uint8_t {
         kStateTerminated = 1, kStateStopped = 2,
@@ -202,59 +72,44 @@ public:
     virtual ~AudioNode() {}
     virtual void reset() {}
     virtual bool waitForPrefill() { return true; }
-    virtual const char* peek(int size, char* buf) { return nullptr; }
+    virtual DataPacket* peekData(bool& preceded) { return nullptr; }
+    virtual StreamPacket* peek() { return nullptr; }
     void linkToPrev(AudioNode* prev) { mPrev = prev; }
     AudioNode* prev() const { return mPrev; }
     typedef uint8_t StreamId;
-    struct DataPullReq
+    struct PacketResult
     {
-        char* buf = nullptr;
-        int size;
-        StreamFormat fmt;
+        StreamPacket::unique_ptr packet;
         StreamId streamId;
-        DataPullReq(size_t aSize): size(aSize) {}
-        ~DataPullReq() { freeEvent(); }
-        bool hasEvent() const { return (size < 0); }
-        StreamEvent* event() const { return (StreamEvent*)buf; }
-        void setEvent(IVirtDestructor& evt) {
-            freeEvent();
-            buf = (char*)&evt;
-            size = -1;
+        DataPacket& dataPacket() {
+            myassert(packet && packet->type == kEvtData);
+            return *(DataPacket*)packet.get();
         }
-        void freeEvent() {
-            if (size < 0) {
-                myassert(buf);
-                delete (IVirtDestructor*)buf;
-            }
+        GenericEvent& genericEvent() {
+            myassert(packet->type == kEvtStreamChanged || packet->type == kEvtStreamEnd);
+            return *(GenericEvent*)packet.get();
         }
-        void reset(size_t aSize)
+        void clear()
         {
-            freeEvent();
-            buf = nullptr;
-            size = aSize;
+            packet.reset();
             streamId = 0;
-            fmt.clear();
-            myassert(!fmt.codec());
         }
-        void clear() { reset(0); }
-        void clearExceptStreamId()
-        {
-            freeEvent();
-            size = 0;
-            buf = nullptr;
-            fmt.clear();
+        StreamEvent set(StreamPacket* pkt) {
+            packet.reset(pkt);
+            return packet->type;
+        }
+        StreamEvent set(StreamPacket::unique_ptr& pkt) {
+            packet.reset(pkt.release());
+            return packet->type;
         }
     };
 
     // Upon return, buf is set to the internal buffer containing the data, and size is updated to the available data
     // for reading from it. Once the caller reads the amount it needs, it must call
     // confirmRead() with the actual amount read.
-    virtual StreamError pullData(DataPullReq& dpr) = 0;
-    virtual void confirmRead(int amount) = 0;
+    virtual StreamEvent pullData(PacketResult& pr) = 0;
     /** Reads exactly the specified amount of bytes to buf, or discards them
      *  if \c buf is null */
-    StreamError readExact(DataPullReq& dpr, int size, char* buf);
-    static const char* streamEventToStr(StreamError evt);
 };
 
 class AudioNodeWithState: public AudioNode

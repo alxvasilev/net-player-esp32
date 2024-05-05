@@ -115,56 +115,49 @@ void I2sOutputNode::nodeThreadFunc()
             return;
         }
         myassert(mState == kStateRunning);
-        plSendEvent(kEventAudioFormatChange, mFormat.asNumCode());
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
-            DataPullReq dpr(0xffff); // read all available data
+            PacketResult dpr;
 #ifdef DEBUG_TIMING
             ElapsedTimer t;
 #endif
-            auto err = mPrev->pullData(dpr);
+            auto evt = mPrev->pullData(dpr);
 #ifdef DEBUG_TIMING
             ESP_LOGI(TAG, "pullData took %d ms\n", t.msElapsed());
 #endif
-            if (err) {
-                if (err == kEvtStreamChanged) {
-                    // dpr does not contain PCM format info, but codec type and streamId
-                    MutexLocker locker(mutex);
-                    mSampleCtr = 0;
-                    mStreamId = dpr.streamId;
-                    ESP_LOGI(mTag, "streamId set to %u", mStreamId);
-                    continue;
-                } else {
-                    // Note: we are sending the error with dpr.streamId directly (i.e. not with mStreamId)
-                    // because it may be possible that the kStreamChanged event was not have been delivered
-                    // by the decoder, if it entered a confused state. This may happen with the FLAC decoder
-                    plSendEvent(kEventStreamError, err, dpr.streamId);
+            if (evt) {
+                if (evt < 0) {
+                    plSendEvent(kEventStreamError, evt, dpr.streamId);
                     // flush DMA buffers - ramp / fade out
                     vTaskDelay(20);
                     break;
                 }
+                else if (evt == kEvtTitleChanged) {
+                    plSendEvent(kEventTrackInfo, 0, (uintptr_t)(*(TitleChangeEvent*)dpr.packet.get()).title);
+                }
+                else { // any other generic event
+                    auto& pkt = dpr.genericEvent();
+                    if (evt == kEvtStreamChanged) {
+                        MutexLocker locker(mutex);
+                        setFormat(pkt.fmt);
+                        mSampleCtr = 0;
+                        mStreamId = pkt.streamId;
+                        ESP_LOGI(mTag, "New stream, streamId set to %u", mStreamId);
+                    }
+                    else if (evt == kEvtStreamEnd) {
+                        plSendEvent(kEventStreamEnd, 0, pkt.streamId);
+                    }
+                }
+                continue;
             }
-            myassert(dpr.size);
-            dpr.fmt.codec() = Codec::kCodecUnknown;
-            if (dpr.fmt != mFormat) {
-                ESP_LOGW(mTag, "Stream format changed");
-                setFormat(dpr.fmt);
-            }
+            // we have data
+            auto& pkt = dpr.dataPacket();
+            myassert(pkt.dataLen);
             {
                 MutexLocker locker(mutex);
-                mSampleCtr += dpr.size >> mBytesPerSampleShiftDiv;
+                mSampleCtr += pkt.dataLen >> mBytesPerSampleShiftDiv;
             }
-            if (volProcessingEnabled()) { // enabled only when there is no equalizer node
-                volumeProcess(dpr);
-            }
-            if (volLevelEnabled()) {
-                // notify previous levels before finding new ones, thus the delay compensates a bit
-                // for the delay introduced by the DMA buffering
-                volumeNotifyLevelCallback();
-                volumeGetLevel(dpr);
-            }
-
             if (mUseInternalDac) {
-                adjustSamplesForInternalDac(dpr.buf, dpr.size);
+                adjustSamplesForInternalDac(pkt.data, pkt.dataLen);
             }
 
             size_t written;
@@ -176,28 +169,27 @@ void I2sOutputNode::nodeThreadFunc()
 #if 1
 //              ESP_LOGW(mTag, "sending ramp");
                 if (mFormat.bitsPerSample() <= 16) {
-                    rampIn<int16_t>(dpr.buf);
+                    rampIn<int16_t>(pkt.data);
                 } else {
-                    rampIn<int32_t>(dpr.buf);
+                    rampIn<int32_t>(pkt.data);
                 }
 //              ESP_LOGW(mTag, "ramp sent");
 #else
                 if (mFormat.bitsPerSample() <= 16) {
-                    fadeIn<int16_t>(dpr.buf, dpr.size);
+                    fadeIn<int16_t>(pkt.data, pkt.dataLen);
                 } else {
-                    fadeIn<int32_t>(dpr.buf, dpr.size);
+                    fadeIn<int32_t>(pkt.data, pkt.dataLen);
                 }
-                mPrev->confirmRead(dpr.size);
+                //TODO: Revise DAC muting
                 continue;
 #endif
             }
-            auto espErr = i2s_write(mPort, dpr.buf, dpr.size, &written, portMAX_DELAY);
-            mPrev->confirmRead(dpr.size);
+            auto espErr = i2s_write(mPort, pkt.data, pkt.dataLen, &written, portMAX_DELAY);
             if (espErr != ESP_OK) {
                 ESP_LOGE(mTag, "i2s_write error: %s", esp_err_to_name(espErr));
                 continue;
             }
-            if (written != dpr.size) {
+            if (written != pkt.dataLen) {
                 ESP_LOGE(mTag, "is2_write() wrote less than requested with infinite timeout");
             }
         }
@@ -214,8 +206,7 @@ bool I2sOutputNode::setFormat(StreamFormat fmt)
 
     ESP_LOGW(mTag, "Setting output mode to %d-bit %s, %d Hz", bps,
         fmt.isStereo() ? "stereo" : "mono", samplerate);
-    auto err = i2s_set_clk(mPort, samplerate,
-        bps, (i2s_channel_t)fmt.numChannels());
+    auto err = i2s_set_clk(mPort, samplerate, bps, (i2s_channel_t)fmt.numChannels());
     if (err == ESP_FAIL) {
         ESP_LOGE(mTag, "i2s_set_clk failed: rate: %d, bits: %d, ch: %d. Error: %s",
             samplerate, bps, fmt.numChannels(), esp_err_to_name(err));

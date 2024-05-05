@@ -9,13 +9,10 @@
 #include <limits>
 
 
-/* Interface for setting and getting volume of an audio node. If implemented,
- * flags() should have the kHasVolume bit set.
- * IMPORTANT: This interface class should have no members, because it is
- * used in multple inheritance and AudioNode is cast to IAudioVolume based
- * on the presence of kHasVolume bit in flags(). This cast will not work correctly
- * if IAudioVolume is not a pure virtual class, because the this pointers will
- * differ in the multiple inheritance
+/* Interface for setting and getting volume of an audio node. If implemented
+ * by an audio node, flags() should have the kHasVolume bit set.
+ * NOTE: Most of the methods are not virtual for performance reasons, which
+ * necessitates also the inclusion of (the public) part of the implementation here.
  */
 class IAudioVolume
 {
@@ -29,16 +26,23 @@ public:
         int16_t right;
     };
     typedef void(*AudioLevelCallbck)(void* arg);
-    void volEnableLevel(AudioLevelCallbck cb, void* arg)
+    void volEnableLevel(AudioLevelCallbck cb, void* arg, uint8_t measurePoint)
     {
         mAudioLevelCb = cb;
         mAudioLevelCbArg = arg;
+        mVolLevelMeasurePoint = measurePoint;
     }
+    void volDisableLevel() {
+        mAudioLevelCb = nullptr;
+        mAudioLevelCbArg = nullptr;
+        mVolLevelMeasurePoint = -1;
+    }
+    void volSetMeasurePoint(uint8_t point) { mVolLevelMeasurePoint = point; }
     bool volLevelEnabled() const { return mAudioLevelCb != nullptr; }
     void volEnableProcessing(bool ena) { mVolProcessingEnabled = ena; }
     bool volProcessingEnabled() const { return mVolProcessingEnabled; }
     // volume is in percent of original.
-    // 0-99% attenuates, 101-400% amplifies  
+    // 0-99% attenuates, 101-400% amplifies
     virtual uint8_t getVolume() const = 0;
     virtual void setVolume(uint8_t vol) = 0;
     const StereoLevels& audioLevels() const { return mAudioLevels; }
@@ -54,6 +58,7 @@ protected:
     StereoLevels mAudioLevels;
     AudioLevelCallbck mAudioLevelCb = nullptr;
     void* mAudioLevelCbArg = nullptr;
+    int8_t mVolLevelMeasurePoint = -1;
     bool mVolProcessingEnabled = false;
 };
 
@@ -63,12 +68,12 @@ protected:
     enum: uint8_t { kVolumeDivShift = 8 };
     enum: uint16_t { kVolumeDiv = 1 << kVolumeDivShift };
     uint16_t mVolume = kVolumeDiv; // 16-bit because it can be 256
-    uint8_t mVolumeAndAlignShift = 0;
 private:
-    typedef void (DefaultVolumeImpl::*ProcessFunc)(AudioNode::DataPullReq& dpr);
+    typedef void (DefaultVolumeImpl::*ProcessFunc)(DataPacket& pkt);
     ProcessFunc mProcessVolumeFunc = nullptr;
     ProcessFunc mGetLevelFunc = nullptr;
     StreamFormat mFormat;
+    uint8_t mGetLevelLeftAlignedFlag = 0; // we are configured for left-aligned samples in volumeLevelGet()
     static constexpr int calculateShift(int bitsPerSample)
     {
         if (bitsPerSample == 8 || bitsPerSample == 24) {
@@ -79,35 +84,35 @@ private:
         }
     }
 template <typename T, int Bps>
-void processVolume(AudioNode::DataPullReq& dpr)
+void processVolume(DataPacket& pkt)
 {
     // we do two shifts at once - one is for the volume multiply/divide, and the other one
     // is to left-align the sample, as is required by i2s
     enum { kShift = calculateShift(Bps) };
-    T* end = (T*)(dpr.buf + dpr.size);
-    for(T* pSample = (T*)dpr.buf; pSample < end; pSample++) {
+    T* end = (T*)(pkt.data + pkt.dataLen);
+    for(T* pSample = (T*)pkt.data; pSample < end; pSample++) {
         int32_t unaligned = (static_cast<int32_t>(*pSample) * mVolume + kVolumeDiv / 2);
         *pSample = (kShift >= 0) ? (unaligned >> kShift) : (unaligned << -kShift);
     }
-    dpr.fmt.setIsLeftAligned(true);
+    pkt.flags |= StreamPacket::kFlagLeftAlignedSamples;
 }
-void processVolume32(AudioNode::DataPullReq& dpr)
+void processVolume32(DataPacket& pkt)
 {
     // we do two shifts at once - one is for the volume multiply/divide, and the other one
     // is to left-align the sample, as is required by i2s
-    int32_t* end = (int32_t*)(dpr.buf + dpr.size);
-    for(int32_t* pSample = (int32_t*)dpr.buf; pSample < end; pSample++) {
+    int32_t* end = (int32_t*)(pkt.data + pkt.dataLen);
+    for(int32_t* pSample = (int32_t*)pkt.data; pSample < end; pSample++) {
         *pSample = (static_cast<int64_t>(*pSample) * mVolume + kVolumeDiv / 2) >> kVolumeDivShift;
     }
-    dpr.fmt.setIsLeftAligned(true);
+    pkt.flags |= StreamPacket::kFlagLeftAlignedSamples;
 }
 
 template <typename T, int Bps, bool LeftAligned>
-void getPeakLevelMono(AudioNode::DataPullReq& dpr)
+void getPeakLevelMono(DataPacket& pkt)
 {
     T level = 0;
-    T* end = (T*)(dpr.buf + dpr.size);
-    for(T* pSample = (T*)dpr.buf; pSample < end; pSample++) {
+    T* end = (T*)(pkt.data + pkt.dataLen);
+    for(T* pSample = (T*)pkt.data; pSample < end; pSample++) {
         if (*pSample > level) {
             level = *pSample;
         }
@@ -124,12 +129,12 @@ void getPeakLevelMono(AudioNode::DataPullReq& dpr)
 }
 
 template <typename T, int Bps, bool LeftAligned>
-void getPeakLevelStereo(AudioNode::DataPullReq& dpr)
+void getPeakLevelStereo(DataPacket& pkt)
 {
     T left = 0;
     T right = 0;
-    T* end = (T*)(dpr.buf + dpr.size);
-    for(T* pSample = (T*)dpr.buf; pSample < end; pSample++) {
+    T* end = (T*)(pkt.data + pkt.dataLen);
+    for(T* pSample = (T*)pkt.data; pSample < end; pSample++) {
         if (*pSample > right) {
             right = *pSample;
         }
@@ -153,73 +158,101 @@ void getPeakLevelStereo(AudioNode::DataPullReq& dpr)
 }
 
 template<typename T, int Bps>
-void updateProcessFuncsStereo()
+void updateProcessFuncsStereo(bool onlyGetLevel)
 {
-    mProcessVolumeFunc = (Bps == 32)
-        ? &DefaultVolumeImpl::processVolume32
-        : &DefaultVolumeImpl::processVolume<T, Bps>;
-    mGetLevelFunc = mFormat.isLeftAligned()
+    if (!onlyGetLevel) {
+        mProcessVolumeFunc = (Bps == 32)
+            ? &DefaultVolumeImpl::processVolume32
+            : &DefaultVolumeImpl::processVolume<T, Bps>;
+    }
+    mGetLevelFunc = mGetLevelLeftAlignedFlag
         ? &DefaultVolumeImpl::getPeakLevelStereo<T, Bps, true>
         : &DefaultVolumeImpl::getPeakLevelStereo<T, Bps, false>;
 }
 
 template<typename T, int Bps>
-void updateProcessFuncsMono()
+void updateProcessFuncsMono(bool onlyGetLevel)
 {
-    mProcessVolumeFunc = (Bps == 32)
-        ? &DefaultVolumeImpl::processVolume32
-        : &DefaultVolumeImpl::processVolume<T, Bps>;
-    mGetLevelFunc = mFormat.isLeftAligned()
+    if (!onlyGetLevel) {
+        mProcessVolumeFunc = (Bps == 32)
+            ? &DefaultVolumeImpl::processVolume32
+            : &DefaultVolumeImpl::processVolume<T, Bps>;
+    }
+    mGetLevelFunc = mGetLevelLeftAlignedFlag
         ? &DefaultVolumeImpl::getPeakLevelMono<T, Bps, true>
         : &DefaultVolumeImpl::getPeakLevelMono<T, Bps, false>;
 }
 template <typename T, int Bps>
-bool updateProcessFuncs()
+bool updateProcessFuncs(bool onlyGetLevel)
 {
     auto nChans = mFormat.numChannels();
     if (nChans == 2) {
-        updateProcessFuncsStereo<T, Bps>();
+        updateProcessFuncsStereo<T, Bps>(onlyGetLevel);
     } else if (nChans == 1) {
-        updateProcessFuncsMono<T, Bps>();
+        updateProcessFuncsMono<T, Bps>(onlyGetLevel);
     } else {
         return false;
     }
     return true;
 }
 
-bool updateVolumeFormat(StreamFormat fmt)
+bool updateVolumeFormat(StreamFormat fmt, bool leftAligned)
 {
-    mFormat = fmt;
+    bool onlyGetLevel;
+    if (mFormat == fmt) {
+        onlyGetLevel = true;
+    }
+    else {
+        mFormat = fmt;
+        onlyGetLevel = false;
+    }
+    mGetLevelLeftAlignedFlag = leftAligned ? StreamPacket::kFlagLeftAlignedSamples : 0;
     auto bps = fmt.bitsPerSample();
     if (bps == 16) {
-        return updateProcessFuncs<int16_t, 16>();
+        return updateProcessFuncs<int16_t, 16>(onlyGetLevel);
     } else if (bps == 24) {
-        return updateProcessFuncs<int32_t, 24>();
+        return updateProcessFuncs<int32_t, 24>(onlyGetLevel);
     } else if (bps == 32) {
-        return updateProcessFuncs<int32_t, 32>();
+        return updateProcessFuncs<int32_t, 32>(onlyGetLevel);
     } else if (bps == 8) {
-        return updateProcessFuncs<int16_t, 8>();
+        return updateProcessFuncs<int16_t, 8>(onlyGetLevel);
     } else {
         return false;
     }
 }
 protected:
-void volumeProcess(AudioNode::DataPullReq& dpr)
+void volumeProcess(AudioNode::PacketResult& dpr)
 {
-    if (mVolume == kVolumeDiv) {
+    if (mVolume == kVolumeDiv) { // 100% volume, nothing to change
         return;
     }
-    if (dpr.fmt != mFormat) {
-        updateVolumeFormat(dpr.fmt);
+    auto& pkt = *dpr.packet.get();
+    if (pkt.type == kEvtData) {
+        (this->*mProcessVolumeFunc)(static_cast<DataPacket&>(pkt));
     }
-    (this->*mProcessVolumeFunc)(dpr);
+    else if (pkt.type == kEvtStreamChanged) {
+        auto fmt = dpr.genericEvent().fmt;
+        if (fmt != mFormat) {
+            updateVolumeFormat(fmt, false);
+        }
+    }
 }
-void volumeGetLevel(AudioNode::DataPullReq& dpr)
+void volumeGetLevel(AudioNode::PacketResult& dpr)
 {
-    if (dpr.fmt != mFormat) {
-        updateVolumeFormat(dpr.fmt);
+    auto& pkt = *dpr.packet.get();
+    if (pkt.type == kEvtData) {
+        uint8_t laFlag = (pkt.flags & StreamPacket::kFlagLeftAlignedSamples);
+        if (laFlag != mGetLevelLeftAlignedFlag) {
+            updateVolumeFormat(mFormat, laFlag);
+        }
+        (this->*mGetLevelFunc)((DataPacket&)pkt);
     }
-    (this->*mGetLevelFunc)(dpr);
+    else if (pkt.type == kEvtStreamChanged) {
+        auto fmt = dpr.genericEvent().fmt;
+        if (fmt != mFormat) {
+            updateVolumeFormat(fmt, false);
+        }
+    }
 }
 void volumeNotifyLevelCallback()
 {

@@ -18,7 +18,7 @@
 #include "playlist.hpp"
 #include "icyParser.hpp"
 #include "recorder.hpp"
-#include "ringBufWithEvents.hpp"
+#include "streamRingQueue.hpp"
 
 class HttpNode: public AudioNodeWithTask
 {
@@ -26,7 +26,7 @@ public:
     class UrlInfo;
 protected:
     enum {
-        kHttpRecvTimeoutMs = 2000, kHttpClientBufSize = 512,
+        kHttpRecvTimeoutMs = 2000, kHttpClientBufSize = 512, kRingQueueLen = 400,
         kReadSize = 4096, kStackSize = 3600
     };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1 };
@@ -40,7 +40,8 @@ protected:
     StreamFormat mOutFormat;
     uint32_t mOutStreamId = 0;
     Playlist mPlaylist; /* media playlist */
-    RingBufWithEvents mRingBuf;
+    StreamRingQueue<kRingQueueLen> mRingBuf;
+    int64_t mRxByteCtr = 0;
     int64_t mStreamStartPos = 0;
     int mContentLen;
     IcyParser mIcyParser;
@@ -58,7 +59,7 @@ protected:
     int8_t handleResponseAsPlaylist(int32_t contentLen);
     void doSetUrl(UrlInfo* urlInfo);
     void updateUrl(const char* url);
-    void clearRingBufAndEventQueue();
+    void clearRingBuffer();
     uint32_t currentStreamId() const;
     bool connect(bool isReconnect=false);
     void disconnect();
@@ -73,25 +74,16 @@ protected:
     void recordingStop();
     void recordingCancelCurrent();
 public:
-    // events sent to the GUI via plSendEvent()
-    enum: uint32_t {
-        kEventConnecting = 1,
-        kEventConnected,
-        kEventPlaying,
-        kEventTrackInfo,
-        kEventRecording,
-        kEventBufState
-    };
     mutable Mutex mMutex;
     IcyInfo& icyInfo() { return mIcyParser; }
-    HttpNode(IAudioPipeline& parent, size_t bufSize);
+    HttpNode(IAudioPipeline& parent);
     virtual ~HttpNode();
     virtual Type type() const { return kTypeHttpIn; }
-    virtual StreamError pullData(DataPullReq &dp);
-    virtual void confirmRead(int size);
+    virtual StreamEvent pullData(PacketResult& pr);
     virtual void onStopped() override { recordingCancelCurrent(); }
     virtual bool waitForPrefill() override;
-    virtual const char* peek(int len, char* buf) override;
+    virtual DataPacket* peekData(bool& preceded) override;
+    virtual StreamPacket* peek() override;
     void setUrl(UrlInfo* urlInfo);
     bool isConnected() const;
     void setWaitingPrefill(int amout); // locking required

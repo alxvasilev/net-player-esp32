@@ -138,7 +138,6 @@ void AudioPlayer::lcdInit()
 void AudioPlayer::initTimedDrawTask()
 {
     xTaskCreatePinnedToCore(&lcdTimedDrawTask, "lcdTask", kLcdTaskStackSize, this, kLcdTaskPrio, nullptr, kLcdTaskCore);
-    mVuLevelInterface->volEnableLevel(audioLevelCb, this);
 }
 
 bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType)
@@ -147,16 +146,7 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
     AudioNode* pcmSource = nullptr;
     switch(inType) {
     case AudioNode::kTypeHttpIn: {
-        HttpNode* http;
-        if (utils::haveSpiRam()) {
-            ESP_LOGI(TAG, "Allocating %d bytes in SPIRAM for http buffer", kHttpBufSizeSpiRam);
-            http = new HttpNode(*this, kHttpBufSizeSpiRam);
-        } else {
-            ESP_LOGI(TAG, "Allocating %d bytes internal RAM for http buffer", kHttpBufSizeInternal);
-            http = new HttpNode(*this, kHttpBufSizeInternal);
-        }
-        mStreamIn.reset(http);
-
+        mStreamIn.reset(new HttpNode(*this));
         mDecoder.reset(new DecoderNode(*this));
         mDecoder->linkToPrev(mStreamIn.get());
         pcmSource = mDecoder.get();
@@ -204,17 +194,13 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         return false;
     }
     mStreamOut->linkToPrev(pcmSource);
-
+    // VU stuff
+    mVolumeInterface = mVuLevelInterface = mEqualizer.get();
+    mVolumeInterface->volEnableProcessing(true);
     // setup VU level probe point
     auto vuAtInput = mNvsHandle.readDefault<uint8_t>("vuAtEqInput", 0);
-    if (vuAtInput && mEqualizer) {
-        mVuLevelInterface = mEqualizer.get();
-        ESP_LOGI(TAG, "VU source set %s volume and EQ processing", vuAtInput ? "before" : "after");
-    } else {
-        mVuLevelInterface = mStreamOut->volumeInterface();
-    }
-    // setup volume change point
-    detectVolumeNode();
+    mVuLevelInterface->volEnableLevel(audioLevelCb, this, vuAtInput ? 0 : 1);
+    ESP_LOGI(TAG, "VU source set %s volume and EQ processing", vuAtInput ? "before" : "after");
     // ====
     ESP_LOGI(TAG, "Audio pipeline:\n%s", printPipeline().c_str());
     loadSettings();
@@ -371,22 +357,6 @@ void AudioPlayer::loadSettings()
         ESP_LOGI(TAG, "Setting volume to %u", vol);
         mVolumeInterface->setVolume(vol);
     }
-}
-
-void AudioPlayer::detectVolumeNode() {
-    std::vector<AudioNode*> nodes(10);
-    for (AudioNode* node = mStreamOut.get(); node; node = node->prev()) {
-        nodes.push_back(node);
-    }
-    for (auto it = nodes.rbegin(); it != nodes.rend(); it++) {
-        mVolumeInterface = (*it)->volumeInterface();
-        if (mVolumeInterface) {
-            mVolumeInterface->volEnableProcessing(true);
-            ESP_LOGW(TAG, "Volume node found and enabled: '%s'", (*it)->tag());
-            return;
-        }
-    }
-    ESP_LOGE(TAG, "No node with volume interface found, volume control will be unavailable");
 }
 
 void AudioPlayer::destroyPipeline()
@@ -1046,8 +1016,8 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
     if (node.type() == AudioNode::kTypeHttpIn) {
         // We are in the http node's thread, must not do any locking from here, so we call
         // into the player via async messages
-        if (event == HttpNode::kEventTrackInfo) {
-            const std::string title(std::move(*((std::string*)arg)));
+        if (event == AudioNode::kEventTrackInfo) {
+            const std::string title((const char*)arg);
             ESP_LOGI(TAG, "Received title event: '%s'", title.c_str());
             asyncCall([this, title]() {
                 LOCK_PLAYER();
@@ -1080,7 +1050,7 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
         if (event == AudioNode::kEventStreamError) {
             asyncCall([this, numArg, arg]() {
                 LOCK_PLAYER();
-                const char* errName = AudioNode::streamEventToStr((AudioNode::StreamError)numArg);
+                const char* errName = streamEventToStr((StreamEvent)numArg);
                 if (arg && arg != mStreamSeqNo) {
                     ESP_LOGW(TAG, "Discarding stream error %s from output node, streamId is old (got %d, expected %d)", errName, arg, mStreamSeqNo);
                 }

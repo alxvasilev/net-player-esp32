@@ -1,4 +1,6 @@
 #include "decoderWav.hpp"
+#include <arpa/inet.h>
+
 const char* TAG = "wavdec";
 
 DecoderWav::DecoderWav(DecoderNode& parent, AudioNode& src, StreamFormat fmt)
@@ -43,75 +45,69 @@ struct WavHeader
 #define CHECK_CHUNK_TYPE(ptr, str)                                          \
 if (strncmp(ptr, str, 4) != 0) {                                            \
     ESP_LOGW(TAG, "Chunk type is not the expected '%s' string", str);       \
-    return AudioNode::kErrDecode;                                           \
+    return 0;                                                               \
 }
 
 
-AudioNode::StreamError DecoderWav::parseWavHeader(AudioNode::DataPullReq& dpr)
+int DecoderWav::parseWavHeader(DataPacket& pkt)
 {
-    char buf[sizeof(WavHeader)];
-    auto event = mSrcNode.readExact(dpr, sizeof(WavHeader), buf);
-    if (event) {
-        return event;
+    if (pkt.dataLen < sizeof(WavHeader) + 100) {
+        ESP_LOGW(TAG, "First packet of WAV stream is smaller than the WAV header");
+        return 0;
     }
-    WavHeader& wavHdr = *reinterpret_cast<WavHeader*>(buf);
+    WavHeader& wavHdr = *reinterpret_cast<WavHeader*>(pkt.data);
     CHECK_CHUNK_TYPE(wavHdr.riffHdr.chunkHdr.type, "RIFF");
     CHECK_CHUNK_TYPE(wavHdr.riffHdr.riffType, "WAVE");
     CHECK_CHUNK_TYPE(wavHdr.fmtHeader.chunkHdr.type, "fmt ");
     auto& wfmt = wavHdr.fmtHeader;
     if (wfmt.formatId != WAVE_FORMAT_PCM && wfmt.formatId != WAVE_FORMAT_EXTENSIBLE) {
         ESP_LOGW(TAG, "Unexpected WAV format code 0x%X", wfmt.formatId);
-        return AudioNode::kErrDecode;
+        return 0;
     }
     auto bps = wfmt.bitsPerSample;
     if (bps != 8 && bps != 16 && bps != 24 && bps != 32) {
         ESP_LOGW(TAG, "Invalid bits per sample %u in WAV header", bps);
-        return AudioNode::kErrDecode;
+        return 0;
     }
     outputFormat.setBitsPerSample(bps);
     outputFormat.setSampleRate(wfmt.sampleRate);
     outputFormat.setNumChannels(wfmt.numChannels);
     if (wfmt.blockAlign != wfmt.numChannels * wfmt.bitsPerSample / 8) {
         ESP_LOGW(TAG, "blockAlign does not match bps * numChans");
-        return AudioNode::kErrDecode;
+        return 0;
     }
-    mInputBytesPerSample = wfmt.blockAlign;
+    //mInputBytesPerSample = wfmt.blockAlign;
     if (!setupOutput()) {
-        return AudioNode::kErrDecode;
+        return 0;
     }
-    int extra = (int)wfmt.chunkHdr.size - 16;
-    if (extra) {
-        event = mSrcNode.readExact(dpr, extra, nullptr); // discard rest of fmt chunk
-        if (event) {
-            return event;
-        }
+    const char* end = pkt.data + pkt.dataLen;
+    // point to first byte after the fmt chunk
+    // wfmt.chunkHdr.size - 16 = number of extra bytes in fmt chunk
+    const char* rptr = pkt.data + sizeof(WavHeader) + ((int)wfmt.chunkHdr.size - 16);
+    if (rptr >= end) {
+        ESP_LOGE(TAG, "Format chunk spans outside packet, to offset %d", rptr - pkt.data);
+        return 0;
     }
     // === discard the rest till the actual PCM data
-    ChunkHeader* chunkHdr = reinterpret_cast<ChunkHeader*>(buf);
     for(;;) {
-        event = mSrcNode.readExact(dpr, sizeof(ChunkHeader), buf); // read chunk header
-        if (event) {
-            return event;
+        auto chunkHdr = reinterpret_cast<const ChunkHeader*>(rptr);
+        rptr += sizeof(ChunkHeader) + chunkHdr->size; // point to next chunk
+        if (rptr >= end) {
+            ESP_LOGE(TAG, "Next chunk spans outside packet, to offset %d", rptr - pkt.data);
+            return 0;
         }
         if (strncasecmp(chunkHdr->type, "data", 4) == 0) {
             break;
         }
-        // read and discard chunk
-        auto event = mSrcNode.readExact(dpr, chunkHdr->size, nullptr); // discard chunk data
-        if (event) {
-            return event;
-        }
     }
-    return AudioNode::kNoError;
+    return rptr - pkt.data;
 }
 bool DecoderWav::setupOutput()
 {
     int bps = outputFormat.bitsPerSample();
     int nChans = outputFormat.numChannels();
-    mInputBytesPerFrame = kSamplesPerRequest * nChans * bps / 8;
     if (bps == 16 || bps == 32) {
-        mOutputBuf.freeBuf(); // must already be null
-        mOutputBytesPerFrame = kSamplesPerRequest * nChans * bps / 8;
+        mOutputInSitu = true;
         if (outputFormat.isBigEndian()) {
             mOutputFunc = (bps == 16)
                 ? &DecoderWav::outputSwapBeToLe16
@@ -124,81 +120,56 @@ bool DecoderWav::setupOutput()
         }
     }
     else if (bps == 24) {
-        mOutputBytesPerFrame = kSamplesPerRequest * 4 * nChans;
-        mOutputBuf.resize(mOutputBytesPerFrame);
+        mOutputInSitu = false;
         mOutputFunc = outputFormat.isBigEndian()
-            ? &DecoderWav::transformAudioData<int32_t, 24, true>
-            : &DecoderWav::transformAudioData<int32_t, 24, false>;
+            ? &DecoderWav::output<int32_t, 24, true>
+            : &DecoderWav::output<int32_t, 24, false>;
     }
     else if (bps == 8) {
-        mOutputBytesPerFrame = kSamplesPerRequest * 2 * nChans;
-        mOutputBuf.resize(mOutputBytesPerFrame);
-        mOutputFunc = &DecoderWav::transformAudioData<int16_t, 8>;
+        mOutputInSitu = false;
+        mOutputFunc = &DecoderWav::output<int16_t, 8>;
     }
     else {
         return false;
     }
     ESP_LOGI(TAG, "Audio format: %d-bit %.1f kHz %s", bps, (float)outputFormat.sampleRate() / 1000,
         nChans == 1 ? "mono" : "stereo");
+    mParent.codecOnFormatDetected(outputFormat);
     return true;
 }
-AudioNode::StreamError DecoderWav::pullData(AudioNode::DataPullReq& dpr)
+StreamEvent DecoderWav::decode(AudioNode::PacketResult& dpr)
 {
-    if (!mInputBytesPerFrame) {
+    auto evt = mSrcNode.pullData(dpr);
+    if (evt) {
+        return evt;
+    }
+    auto& pkt = dpr.dataPacket();
+    int sampleOffs = 0;
+    if (!mOutputFunc) { // first packet
         auto codec = outputFormat.codec().type;
         if (codec == Codec::kCodecWav) {
-            auto event = parseWavHeader(dpr);
-            if (event) {
-                return event;
+            sampleOffs = parseWavHeader(pkt);
+            if (!sampleOffs) {
+                return kErrDecode;
             }
         } else if (codec == Codec::kCodecPcm) {
             if (!setupOutput()) {
-                return AudioNode::kErrDecode;
+                return kErrDecode;
             }
         } else {
             assert(false);
         }
-        assert(mInputBytesPerFrame);
+        assert(mOutputFunc);
     }
-    dpr.size = mInputBytesPerFrame;
-    auto event = mSrcNode.pullData(dpr);
-    if (event) {
-        return event;
+    bool ok;
+    if (mOutputInSitu) {
+        (this->*mOutputFunc)(pkt.data + sampleOffs, pkt.dataLen - sampleOffs);
+        ok = mParent.codecPostOutput(&pkt);
     }
-    mNeedConfirmRead = !mOutputBuf;
-    if (dpr.size != mInputBytesPerFrame) { // less returned, round to whole samples
-        assert(dpr.size < mInputBytesPerFrame);
-        dpr.size -= dpr.size % mInputBytesPerSample;
-        if (dpr.size == 0) {
-            event = mSrcNode.readExact(dpr, mInputBytesPerSample, mSingleSampleBuf);
-            if (event) {
-                return event;
-            }
-            dpr.buf = mSingleSampleBuf;
-            dpr.size = mInputBytesPerSample;
-            mNeedConfirmRead = false;
-        }
+    else {
+        ok = (this->*mOutputFunc)(pkt.data + sampleOffs, pkt.dataLen - sampleOffs);
     }
-
-    if (mOutputFunc) {
-        (this->*mOutputFunc)(dpr);
-    }
-    dpr.fmt = outputFormat;
-    assert(dpr.size);
-    if (!mOutputBuf) { // caller needs to confirm the read
-        return AudioNode::kNoError;
-    }
-    if (dpr.buf != mSingleSampleBuf) { // read to mSingleSampleBuf is auto-confirmed already
-        mSrcNode.confirmRead(dpr.size);
-    }
-    dpr.buf = mOutputBuf.buf();
-    dpr.size = mOutputBuf.dataSize();
-    return AudioNode::kNoError;
-}
-void DecoderWav::confirmRead(int size) {
-    if (mNeedConfirmRead) {
-        mSrcNode.confirmRead(size);
-    }
+    return ok ? kNoError : kErrStreamStopped;
 }
 template<typename T, int Bps, bool BigEndian>
 T transformSample(uint8_t* input);
@@ -228,27 +199,30 @@ int16_t transformSample<int16_t, 8, false>(uint8_t* input)
 }
 
 template <typename T, int Bps, bool BigEndian=false>
-void DecoderWav::transformAudioData(AudioNode::DataPullReq& audio)
+bool DecoderWav::output(char* input, int len)
 {
     enum { kInputBytesPerSample = Bps / 8 };
-    mOutputBuf.setDataSize(audio.size * sizeof(T) / kInputBytesPerSample);
-    auto wptr = (T*)mOutputBuf.buf();
-    uint8_t* end = (uint8_t*)audio.buf + audio.size;
-    for (auto rptr = (uint8_t*)audio.buf; rptr < end; wptr++, rptr += kInputBytesPerSample) {
+    DataPacket::unique_ptr out(DataPacket::create(len * sizeof(T) / kInputBytesPerSample));
+    auto wptr = (T*)out->data;
+    uint8_t* end = (uint8_t*)input + len;
+    for (auto rptr = (uint8_t*)input; rptr < end; wptr++, rptr += kInputBytesPerSample) {
         *wptr = transformSample<T, Bps, BigEndian>(rptr);
     }
+    return mParent.codecPostOutput(out.release());
 }
-void DecoderWav::outputSwapBeToLe16(AudioNode::DataPullReq& audio)
+bool DecoderWav::outputSwapBeToLe16(char* input, int len)
 {
-    auto end = (int16_t*)(audio.buf + audio.size);
-    for (int16_t* sample = (int16_t*)audio.buf; sample < end; sample++) {
+    auto end = (int16_t*)(input + len);
+    for (int16_t* sample = (int16_t*)input; sample < end; sample++) {
         *sample = ntohs(*sample);
     }
+    return true;
 }
-void DecoderWav::outputSwapBeToLe32(AudioNode::DataPullReq& audio)
+bool DecoderWav::outputSwapBeToLe32(char* input, int len)
 {
-    auto end = (int32_t*)(audio.buf + audio.size);
-    for (int32_t* sample = (int32_t*)audio.buf; sample < end; sample++) {
+    auto end = (int32_t*)(input + len);
+    for (int32_t* sample = (int32_t*)input; sample < end; sample++) {
         *sample = ntohl(*sample);
     }
+    return true;
 }
