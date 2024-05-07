@@ -316,7 +316,6 @@ bool HttpNode::recv()
         }
         */
         int rlen = esp_http_client_read(mClient, dataPacket->data, kReadSize);
-        printf("http: rx %d\n", rlen);
         if (rlen <= 0) {
             if (rlen == 0) {
                 if (mContentLen && esp_http_client_is_complete_data_received(mClient)) {
@@ -396,7 +395,7 @@ uint32_t HttpNode::pollSpeed() const
 //  return mSpeedProbe.average();
 }
 
-void HttpNode::setUrl(UrlInfo* urlInfo)
+void HttpNode::setUrlAndStart(UrlInfo* urlInfo)
 {
     if (!mTaskId) {
         run();
@@ -494,36 +493,29 @@ uint32_t HttpNode::currentStreamId() const
 StreamEvent HttpNode::pullData(PacketResult& pr)
 {
     // TODO: Simplify prefill mechanism
-    LOCK();
-    pr.streamId = currentStreamId();
-    if (mWaitingPrefill) {
-        ESP_LOGI(TAG, "Waiting ringbuf prefill...");
-        if (!waitForPrefill()) {
-            pr.clear();
-            return kErrStreamStopped;
+    {
+        LOCK();
+        pr.streamId = currentStreamId();
+        if (mWaitingPrefill) {
+            ESP_LOGI(TAG, "Waiting ringbuf prefill...");
+            if (!waitForPrefill()) {
+                return kErrStreamStopped;
+            }
         }
-    }
-    auto dataSize = mRingBuf.dataSize();
-    if (!dataSize) {
-        printf("Underrun\n");
-        setUnderrunState(true);
-    }
-    else {
-        setUnderrunState(false);
-    }
-    for (;;) {
-        StreamPacket::unique_ptr pkt(mRingBuf.popFront());
-        if (!pkt) {
-            pr.clear();
-            return kErrStreamStopped;
-        }
-        else if (pkt->type == kEvtTitleChanged) {
-            plSendEvent(kEventTrackInfo, 0, (uintptr_t)pkt.as<TitleChangeEvent>().title);
+        auto dataSize = mRingBuf.dataSize();
+        if (!dataSize) {
+            printf("Underrun\n");
+            setUnderrunState(true);
         }
         else {
-            return pr.set(pkt);
+            setUnderrunState(false);
         }
     }
+    StreamPacket::unique_ptr pkt(mRingBuf.popFront());
+    if (!pkt) {
+        return kErrStreamStopped;
+    }
+    return pr.set(pkt);
 }
 DataPacket* HttpNode::peekData(bool& preceded)
 {

@@ -42,13 +42,15 @@ protected:
     void deleteDecoder();
 public:
     enum { kEventCodecChange = AudioNode::kEventLast + 1 };
-    enum { kStackSize = 4096, kPrio = 1, kCore = -1 };
+    enum { kStackSize = 9000, kPrio = 20, kCore = 0 };
     DecoderNode(IAudioPipeline& parent): AudioNodeWithTask(parent, "decoder", kStackSize, kPrio, kCore){}
     virtual Type type() const { return kTypeDecoder; }
     virtual void nodeThreadFunc();
     virtual StreamEvent pullData(PacketResult &pr);
     virtual ~DecoderNode() { deleteDecoder(); }
     virtual void reset() override { deleteDecoder(); }
+    virtual void onStopRequest() { mRingBuf.setStopSignal(); }
+    virtual void onStopped() { mRingBuf.clear(); deleteDecoder(); }
     bool codecOnFormatDetected(StreamFormat fmt); // called by codec when it know the sample format, and before posting any data packet
     bool codecPostOutput(DataPacket* pkt); // called by codec to output a decoded packet
     friend class Decoder;

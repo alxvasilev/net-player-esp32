@@ -51,9 +51,9 @@ protected:
     enum: uint8_t
     { kEventTerminating = 1, kEventScroll = 2, kEventVolLevel = 4, kEventTerminated = 8 };
     enum {
-        kI2sStackSize = 9000, kI2sCpuCore = 1,
-        kI2sDmaBufCntInternalRam = 2, kI2sDmaBufCntSpiRam = 11, // 1 buffer is 1024 samples
-        kLcdTaskStackSize = 2200, kLcdTaskPrio = 10, kLcdTaskCore = 0
+        kI2sStackSize = 4096, kI2sCpuCore = 1,
+        kI2sDmaBufCntInternalRam = 2, kI2sDmaBufCntSpiRam = 3, // 1 buffer is 1024 samples
+        kLcdTaskStackSize = 2200, kLcdTaskPrio = 10, kLcdTaskCore = 1
     };
     enum {
         kLcdArtistNameLineY = 38, kLcdPlayStateLineY = 76, kLcdTrackTitleY = 106
@@ -74,6 +74,7 @@ protected:
     std::unique_ptr<AudioNodeWithTask> mStreamOut;
     IAudioVolume* mVolumeInterface = nullptr;
     IAudioVolume* mVuLevelInterface = nullptr;
+    bool mStopping = false; // set while stopping the pipeline, to ignore error signalled by nodes during the process
     NvsHandle mNvsHandle;
     ST7735Display& mLcd;
     EventGroup mEvents;
@@ -190,7 +191,7 @@ public:
     void registerUrlHanlers();
     // AudioNode::EventHandler interface
     virtual bool onNodeEvent(AudioNode& node, uint32_t type, size_t numArg, uintptr_t arg) override;
-    virtual void onNodeError(AudioNode& node, int error) override;
+    virtual void onNodeError(AudioNode& node, int error, uintptr_t arg) override;
 };
 
 struct TrackInfo {

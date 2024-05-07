@@ -22,7 +22,7 @@ class AudioNode;
 class IAudioPipeline {
 public:
     virtual bool onNodeEvent(AudioNode& node, uint32_t type, size_t numArg, uintptr_t arg) = 0;
-    virtual void onNodeError(AudioNode& node, int error) = 0;
+    virtual void onNodeError(AudioNode& node, int error, uintptr_t arg) = 0;
 };
 
 class IAudioVolume;
@@ -64,7 +64,7 @@ protected:
     Mutex mMutex;
     AudioNode* mPrev = nullptr;
     inline bool plSendEvent(uint32_t type, size_t numArg = 0, uintptr_t arg=0);
-    inline void plNotifyError(int error);
+    inline void plSendError(int error, uintptr_t arg);
     AudioNode(IAudioPipeline& parent, const char* tag): mPipeline(parent), mTag(tag) {}
 public:
     virtual Type type() const = 0;
@@ -181,9 +181,9 @@ inline bool AudioNode::plSendEvent(uint32_t type, size_t numArg, uintptr_t arg)
     return mPipeline.onNodeEvent(*this, type, numArg, arg);
 }
 
-inline void AudioNode::plNotifyError(int error)
+inline void AudioNode::plSendError(int error, uintptr_t arg)
 {
-    mPipeline.onNodeError(*this, error);
+    mPipeline.onNodeError(*this, error, arg);
 }
 
 #endif

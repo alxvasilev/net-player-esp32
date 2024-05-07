@@ -146,11 +146,7 @@ StreamEvent DecoderNode::decode()
 StreamEvent DecoderNode::pullData(PacketResult &pr)
 {
     auto pkt = mRingBuf.popFront();
-    if (!pkt) {
-        return kErrStreamStopped;
-    }
-    pr.packet.reset(pkt);
-    return pkt->type;
+    return pkt ? pr.set(pkt) : kErrStreamStopped;
 }
 bool DecoderNode::codecOnFormatDetected(StreamFormat fmt)
 {

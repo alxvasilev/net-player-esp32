@@ -14,6 +14,7 @@
 #include <type_traits>
 #include <limits>
 #include <math.h> // for roundf
+#define DEBUG_TIMING 1
 
 void I2sOutputNode::adjustSamplesForInternalDac(char* sBuff, int len)
 {
@@ -122,11 +123,11 @@ void I2sOutputNode::nodeThreadFunc()
 #endif
             auto evt = mPrev->pullData(dpr);
 #ifdef DEBUG_TIMING
-            ESP_LOGI(TAG, "pullData took %d ms\n", t.msElapsed());
+            ESP_LOGI(mTag, "pullData took %d ms", t.msElapsed());
 #endif
             if (evt) {
                 if (evt < 0) {
-                    plSendEvent(kEventStreamError, evt, dpr.streamId);
+                    plSendError(evt, dpr.streamId);
                     // flush DMA buffers - ramp / fade out
                     vTaskDelay(20);
                     break;
@@ -137,11 +138,12 @@ void I2sOutputNode::nodeThreadFunc()
                 else { // any other generic event
                     auto& pkt = dpr.genericEvent();
                     if (evt == kEvtStreamChanged) {
+                        ESP_LOGI(mTag, "Got start of new stream with streamId %u", pkt.streamId);
                         MutexLocker locker(mutex);
                         setFormat(pkt.fmt);
                         mSampleCtr = 0;
                         mStreamId = pkt.streamId;
-                        ESP_LOGI(mTag, "New stream, streamId set to %u", mStreamId);
+                        plSendEvent(kEventNewStream, pkt.fmt.asNumCode());
                     }
                     else if (evt == kEvtStreamEnd) {
                         plSendEvent(kEventStreamEnd, 0, pkt.streamId);
@@ -215,7 +217,6 @@ bool I2sOutputNode::setFormat(StreamFormat fmt)
     mFormat = fmt;
     uint bytesPerSample = fmt.numChannels() * (bps / 8);
     for (mBytesPerSampleShiftDiv = 0; bytesPerSample; bytesPerSample >>= 1, mBytesPerSampleShiftDiv++);
-    plSendEvent(kEventAudioFormatChange, fmt.asNumCode());
     return true;
 }
 

@@ -10,7 +10,6 @@ DecoderMp3::DecoderMp3(DecoderNode& parent, AudioNode& src): Decoder(parent, src
 DecoderMp3::~DecoderMp3()
 {
     freeMadState();
-    free(mInputBuf);
 }
 void DecoderMp3::initMadState()
 {

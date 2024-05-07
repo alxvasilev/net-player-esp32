@@ -384,21 +384,26 @@ bool AudioPlayer::doPlayUrl(const char* url, PlayerMode playerMode, const char* 
     // setUrl will start the http node, if it's stopped. However, this may take a while.
     // If we meanwhile start the i2s out node, it will start to pull data from the not-yet-started http node,
     // whose state may not be set up correctly for the new stream (i.e. waitingPrefill not set)
-    http.stop(true);
-    mStreamOut->stop(true);
+    stop(nullptr);
+    /*
     if (mVuLevelInterface) {
         mVuLevelInterface->clearAudioLevels();
     }
-    mDecoder->reset();
-    http.setUrl(urlInfo);
+    */
+    http.setUrlAndStart(urlInfo);
     if (http.waitForState(AudioNode::kStateRunning, 10000) != AudioNode::kStateRunning) {
         return false;
     }
+    lcdUpdateTrackDisplay();
+    /*
+    mDecoder->run();
     lcdUpdateTrackDisplay();
     mStreamOut->run();
     if (mDlna) {
         mDlna->notifyPlayStart();
     }
+    */
+    play();
     return true;
 }
 bool AudioPlayer::playUrl(const char* url, PlayerMode playerMode, const char* record)
@@ -473,6 +478,10 @@ bool AudioPlayer::isPlaying() const
 void AudioPlayer::play()
 {
     mStreamIn->run();
+    if (mDecoder) {
+        mDecoder->run();
+        mDecoder->waitForState(AudioNode::kStateRunning);
+    }
     mStreamOut->run();
     if (mDlna) {
         mDlna->notifyPlayStart();
@@ -485,11 +494,16 @@ void AudioPlayer::resume()
 }
 void AudioPlayer::pipelineStop()
 {
+    mStopping = true;
     mStreamIn->stop(false);
     mStreamOut->stop(false);
+    if (mDecoder) {
+        mDecoder->stop(false);
+        mDecoder->waitForStop();
+    }
     mStreamIn->waitForStop();
     mStreamOut->waitForStop();
-    mDecoder->reset();
+    mStopping = false;
 }
 void AudioPlayer::pause()
 {
@@ -1001,65 +1015,53 @@ void AudioPlayer::registerUrlHanlers()
     }
 }
 
-void AudioPlayer::onNodeError(AudioNode& node, int error)
+void AudioPlayer::onNodeError(AudioNode& node, int error, uintptr_t arg)
 {
-    asyncCall([this, error, nodeName = std::string((const char*)node.tag())]() {
-        ESP_LOGW(TAG, "Error %d from node '%s', pausing pipeline", error, nodeName.c_str());
+    if (mStopping) {
+        const char* errName = streamEventToStr((StreamEvent)error);
+        ESP_LOGW(TAG, "Discarding error %s from node '%s' while stopping", errName, node.tag());
+        return;
+    }
+    asyncCall([this, streamId = this->mStreamSeqNo, error, nodeName = std::string(node.tag())]() {
+        const char* errName = streamEventToStr((StreamEvent)error);
         LOCK_PLAYER();
-        pause();
+        if (streamId != mStreamSeqNo) {
+            ESP_LOGW(TAG, "Discarding stale (streamId %u != %u) error %s from node '%s' while stopping",
+                streamId, mStreamSeqNo, errName, nodeName.c_str());
+            return;
+        }
+        ESP_LOGW(TAG, "Error %s from node '%s', stopping pipeline", errName, nodeName.c_str());
+        stop(errName);
     });
 }
 
 bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, uintptr_t arg)
 {
     // For most of the events, we do an asyncCall to access the player, to avoid deadlocks
-    if (node.type() == AudioNode::kTypeHttpIn) {
-        // We are in the http node's thread, must not do any locking from here, so we call
-        // into the player via async messages
-        if (event == AudioNode::kEventTrackInfo) {
-            const std::string title((const char*)arg);
-            ESP_LOGI(TAG, "Received title event: '%s'", title.c_str());
-            asyncCall([this, title]() {
-                LOCK_PLAYER();
-                lcdUpdateTrackTitle(title.c_str());
-            });
-        }
-        else {
-            asyncCall([this, event, numArg]() {
-                LOCK_PLAYER();
-                if (event == HttpNode::kEventConnected) {
-                    lcdUpdatePlayState(numArg ? nullptr : "Buffering...");
-                } else if (event == HttpNode::kEventConnecting) {
-                    lcdUpdatePlayState(numArg ? "Reconnecting..." : "Connecting...");
-                } else if (event == HttpNode::kEventPlaying || event == HttpNode::kEventRecording) {
-                    lcdUpdatePlayState(nullptr);
-                } else if (event == HttpNode::kEventBufState) {
-                    lcdShowBufUnderrunImmediate();
-                }
-            });
-        }
-    }
-    else if (&node == mDecoder.get()) {
-        if (event == DecoderNode::kEventNewStream) {
-            // Must be synchronous as the caller expects prefill to be set upon return
+    // Must not do any locking from here, so we call into the player via async messages
+    if (event == AudioNode::kEventTrackInfo) {
+        const std::string title((const char*)arg);
+        ESP_LOGI(TAG, "Received title event: '%s'", title.c_str());
+        asyncCall([this, title]() {
             LOCK_PLAYER();
-            onNewStream(StreamFormat(numArg));
-        }
+            lcdUpdateTrackTitle(title.c_str());
+        });
     }
-    else if (&node == mStreamOut.get()) {
-        if (event == AudioNode::kEventStreamError) {
-            asyncCall([this, numArg, arg]() {
-                LOCK_PLAYER();
-                const char* errName = streamEventToStr((StreamEvent)numArg);
-                if (arg && arg != mStreamSeqNo) {
-                    ESP_LOGW(TAG, "Discarding stream error %s from output node, streamId is old (got %d, expected %d)", errName, arg, mStreamSeqNo);
-                }
-                else {
-                    ESP_LOGW(TAG, "Received stream error %s from output node, stopping playback", errName);
-                    stop();
-                }
-            });
-        }
+    else {
+        asyncCall([this, event, arg, numArg]() {
+            LOCK_PLAYER();
+            if (event == AudioNode::kEventConnected) {
+                lcdUpdatePlayState(numArg ? nullptr : "Buffering...");
+            } else if (event == AudioNode::kEventConnecting) {
+                lcdUpdatePlayState(numArg ? "Reconnecting..." : "Connecting...");
+            } else if (event == AudioNode::kEventPlaying || event == HttpNode::kEventRecording) {
+                lcdUpdatePlayState(nullptr);
+            } else if (event == AudioNode::kEventBufState) {
+                lcdShowBufUnderrunImmediate();
+            } else if (event == AudioNode::kEventNewStream) {
+                onNewStream(StreamFormat(numArg));
+            }
+        });
     }
     return true;
 }

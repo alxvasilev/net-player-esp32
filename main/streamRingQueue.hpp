@@ -131,7 +131,7 @@ public:
         }
         auto item = Base::front();
         assert(item);
-        popFront();
+        Base::popFront();
         if ((*item)->type == kEvtData) {
             mDataSize -= static_cast<DataPacket*>(*item)->dataLen;
         }

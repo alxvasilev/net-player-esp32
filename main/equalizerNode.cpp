@@ -305,9 +305,11 @@ StreamEvent EqualizerNode::pullData(PacketResult& dpr)
             volumeNotifyLevelCallback(); // notify previous levels to compensate output buffering delay
             volumeGetLevel(dpr);
         }
+        return kEvtData;
     }
     else if (event == kEvtStreamChanged) {
         MutexLocker locker(mMutex);
+        volumeProcess(dpr);
         equalizerReinit(dpr.genericEvent().fmt);
         return event;
     }

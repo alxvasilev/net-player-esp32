@@ -27,7 +27,7 @@ public:
 protected:
     enum {
         kHttpRecvTimeoutMs = 2000, kHttpClientBufSize = 512, kRingQueueLen = 400,
-        kReadSize = 4096, kStackSize = 3600
+        kReadSize = 2048, kStackSize = 3600
     };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1 };
     // Read mode dictates how the pullData() caller behaves. Since it may
@@ -84,7 +84,7 @@ public:
     virtual bool waitForPrefill() override;
     virtual DataPacket* peekData(bool& preceded) override;
     virtual StreamPacket* peek() override;
-    void setUrl(UrlInfo* urlInfo);
+    void setUrlAndStart(UrlInfo* urlInfo);
     bool isConnected() const;
     void setWaitingPrefill(int amout); // locking required
     const char* trackName() const;
