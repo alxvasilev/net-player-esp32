@@ -13,7 +13,12 @@ protected:
     int mDataSize = 0;
 public:
     mutable Mutex mMutex;
+    using Base::capacity;
     using Base::empty; // doesn't need locking - is a single primtive member read
+    int size() const {
+        MutexLocker locker(mMutex);
+        return Base::size();
+    }
     bool full() const {
         MutexLocker locker(mMutex);
         return Base::full();

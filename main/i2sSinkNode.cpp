@@ -144,6 +144,7 @@ void I2sOutputNode::nodeThreadFunc()
                         mSampleCtr = 0;
                         mStreamId = pkt.streamId;
                         plSendEvent(kEventNewStream, pkt.fmt.asNumCode());
+                        plSendEvent(kEventPlaying);
                     }
                     else if (evt == kEvtStreamEnd) {
                         plSendEvent(kEventStreamEnd, 0, pkt.streamId);

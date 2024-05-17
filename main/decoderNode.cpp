@@ -8,7 +8,6 @@
 
 bool DecoderNode::createDecoder(StreamFormat fmt)
 {
-    mStartingNewStream = true;
     auto freeBefore = heapFreeTotal();
     switch (fmt.codec().type) {
     case Codec::kCodecMp3:
@@ -120,6 +119,7 @@ StreamEvent DecoderNode::decode()
         if (evt) { // evt can only be an error here
             return evt;
         }
+        mWaitingPrefill = true;
         pr.clear();
     }
     myassert(mDecoder);
@@ -138,18 +138,24 @@ StreamEvent DecoderNode::decode()
         }
         return forwardEvent(evt, pr);
     }
-    if (mStartingNewStream) {
-        mStartingNewStream = false;
-    }
     return kNoError;
 }
 StreamEvent DecoderNode::pullData(PacketResult &pr)
 {
+    while (mWaitingPrefill && (mRingBuf.size() < mRingBuf.capacity())) {
+        ESP_LOGI(mTag, "Prefill...");
+        auto ret = mRingBuf.waitForWriteOp(-1);
+        if (ret < 0) {
+            return kErrStreamStopped;
+        }
+    }
+    mWaitingPrefill = false;
     auto pkt = mRingBuf.popFront();
     return pkt ? pr.set(pkt) : kErrStreamStopped;
 }
 bool DecoderNode::codecOnFormatDetected(StreamFormat fmt)
 {
+    mPrev->updatePrefill(fmt.prefillAmount());
     return mRingBuf.pushBack(new GenericEvent(kEvtStreamChanged, mStreamId, fmt));
 }
 bool DecoderNode::codecPostOutput(DataPacket *pkt)

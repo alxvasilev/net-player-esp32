@@ -281,7 +281,7 @@ void AudioPlayer::lcdUpdateArtistName(const char* name)
     }
 }
 
-void AudioPlayer::lcdUpdatePlayState(const char* text)
+void AudioPlayer::lcdUpdatePlayState(const char* text, bool isRecording)
 {
     mLcd.setFont(font_Camingo22);
     mLcd.clear(0, kLcdPlayStateLineY, mLcd.width(), mLcd.fontHeight());
@@ -289,27 +289,24 @@ void AudioPlayer::lcdUpdatePlayState(const char* text)
         mLcd.setFgColor(kLcdColorPlayState);
         mLcd.gotoXY(0, kLcdPlayStateLineY);
         mLcd.putsCentered(text);
+        return;
     }
-    else { // playing
+    // playing, maybe display REC indicator
+    if (isRecording) {
+        mLcd.setFgColor(255, 0, 0);
+    }
+    else { // maybe display a REC-enabled-but-not-active indicator
         if ((mPlayerMode != kModeRadio) || !mStreamIn.get() || !stationList) {
             return;
         }
         auto& station = stationList->currStation;
-        if (!station.isValid()) {
+        if (!station.isValid() || !(station.flags() & Station::kFlagRecord)) {
             return;
         }
-        if (!(station.flags() & Station::kFlagRecord)) {
-            return;
-        }
-        auto& httpNode = *static_cast<HttpNode*>(mStreamIn.get());
-        if (httpNode.recordingIsActive()) {
-            mLcd.setFgColor(255, 0, 0);
-        } else {
-            mLcd.setFgColor(0xF68E); // orange
-        }
-        mLcd.gotoXY(0, kLcdPlayStateLineY);
-        mLcd.putsCentered("rec");
+        mLcd.setFgColor(0xF68E); // orange
     }
+    mLcd.gotoXY(0, kLcdPlayStateLineY);
+    mLcd.putsCentered("rec");
 }
 
 std::string AudioPlayer::printPipeline()
@@ -1050,16 +1047,20 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
     else {
         asyncCall([this, event, arg, numArg]() {
             LOCK_PLAYER();
-            if (event == AudioNode::kEventConnected) {
-                lcdUpdatePlayState(numArg ? nullptr : "Buffering...");
-            } else if (event == AudioNode::kEventConnecting) {
-                lcdUpdatePlayState(numArg ? "Reconnecting..." : "Connecting...");
-            } else if (event == AudioNode::kEventPlaying || event == HttpNode::kEventRecording) {
-                lcdUpdatePlayState(nullptr);
-            } else if (event == AudioNode::kEventBufState) {
-                lcdShowBufUnderrunImmediate();
-            } else if (event == AudioNode::kEventNewStream) {
-                onNewStream(StreamFormat(numArg));
+            switch(event) {
+                case AudioNode::kEventConnected:
+                    return lcdUpdatePlayState(numArg ? nullptr : "Buffering..."); break;
+                case AudioNode::kEventConnecting:
+                    return lcdUpdatePlayState(numArg ? "Reconnecting..." : "Connecting..."); break;
+                case AudioNode::kEventPlaying:
+                    return lcdUpdatePlayState(nullptr); break;
+                case HttpNode::kEventRecording:
+                    return lcdUpdatePlayState(nullptr, arg); break;
+                case AudioNode::kEventBufUnderrun:
+                    return lcdShowBufUnderrunImmediate(); break;
+                case AudioNode::kEventNewStream:
+                    return onNewStream(StreamFormat(numArg)); break;
+                default: break;
             }
         });
     }
@@ -1191,33 +1192,9 @@ void AudioPlayer::onNewStream(StreamFormat fmt)
     mStreamFormat = fmt;
     lcdUpdateCodec();
     lcdUpdateAudioFormat();
-
     mTitleScrollEnabled = mLcdTrackTitle.dataSize() && !streamIsCpuHeavy();
-    bool isFlac = (mStreamFormat.codec().type == Codec::kCodecFlac);
-    int prefill;
-    if (!utils::haveSpiRam()) {
-        prefill = kHttpBufSizeInternal - 1024;
-        mBufLowThreshold = isFlac ? 64 * 1024 : 32 * 1024;
-    }
-    else if (isFlac) {
-        if (mStreamFormat.sampleRate() <= 48000) {
-            prefill = 400 * 1024;
-            mBufLowThreshold = 100 * 1024;
-        } else {
-            prefill = 500 * 1024;
-            mBufLowThreshold = 200 * 1024;
-        }
-    } else {
-        prefill = 65536;
-        mBufLowThreshold = 32768;
-    }
+    mBufLowThreshold = fmt.prefillAmount() / 4;
     mBufLowDisplayGradient = (mBufLowThreshold + 46) / 47;
-    if (mStreamIn && mStreamIn->type() == AudioNode::kTypeHttpIn) {
-        auto& http = *static_cast<HttpNode*>(mStreamIn.get());
-        MutexUnlocker unlocker(mutex);
-        MutexLocker locker(http.mMutex);
-        http.setWaitingPrefill(prefill);
-    }
 }
 bool AudioPlayer::streamIsCpuHeavy() const
 {

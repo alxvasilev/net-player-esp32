@@ -1,6 +1,26 @@
 #include <sys/unistd.h>
 #include <string.h>
 #include "streamDefs.hpp"
+int StreamFormat::prefillAmount() const
+{
+    switch (codec().asNumCode()) {
+        case Codec::kCodecMp3:
+            return 48 * 1024;
+        case Codec::kCodecAac:
+            return 32 * 1024;
+        case Codec::kCodecFlac: {
+            auto val = ((sampleRate() > 64000) ? 200 : 100) * 1024;
+            return bitsPerSample() > 16 ? val * 2 : val;
+        }
+        case Codec::kCodecWav:
+        case Codec::kCodecPcm: {
+            auto val = bitsPerSample() * sampleRate() * numChannels() / 8;
+            return val ? val : 160 * 1024;
+        }
+        default:
+            return 64 * 1024;
+    }
+}
 
 const char* Codec::toString() const
 {

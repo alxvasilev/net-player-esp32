@@ -106,7 +106,6 @@ void HttpNode::doSetUrl(UrlInfo* urlInfo)
         esp_http_client_set_url(mClient, urlInfo->url); // do it here to avoid keeping reference to the old, freed one
     }
     mUrlInfo.reset(urlInfo);
-    setWaitingPrefill(0);
 }
 void HttpNode::updateUrl(const char* url)
 {
@@ -182,7 +181,8 @@ bool HttpNode::connect(bool isReconnect)
         if (!isReconnect) {
             mAcceptsRangeRequests = false;
             clearRingBuffer(); // clear in case of hard reconnect
-            mStreamStartPos = mRxByteCtr;
+            mStreamByteCtr = 0;
+            mWaitingPrefill = 0;
         }
         recordingMaybeEnable();
     }
@@ -198,7 +198,7 @@ bool HttpNode::connect(bool isReconnect)
 
     if (isReconnect) { // we are resuming, send position
         char strbuf[32];
-        vtsnprintf(strbuf, sizeof(strbuf), "bytes=", mRxByteCtr - mStreamStartPos, '-');
+        vtsnprintf(strbuf, sizeof(strbuf), "bytes=", mStreamByteCtr, '-');
         esp_http_client_set_header(mClient, "Range", strbuf);
     }
     plSendEvent(kEventConnecting, isReconnect);
@@ -359,18 +359,16 @@ bool HttpNode::recv()
             }
         }
         dataPacket->dataLen = rlen;
+        mStreamByteCtr += rlen;
         if (mRecorder) {
             mRecorder->onData(dataPacket->data, dataPacket->dataLen);
         }
-        mRingBuf.pushBack(dataPacket.release());
-
+        {
+            MutexUnlocker unlocker(mMutex);
+            mRingBuf.pushBack(dataPacket.release());
+        }
         auto ringBufDataSize = mRingBuf.dataSize();
         ESP_LOGD(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, ringBufDataSize);
-        if (mWaitingPrefill && (ringBufDataSize >= mWaitingPrefill)) {
-            ESP_LOGI(mTag, "Buffer prefilled >= %d bytes, allowing read", mWaitingPrefill);
-            setWaitingPrefill(0);
-            plSendEvent(kEventPlaying);
-        }
         return true;
     }
     return false;
@@ -471,15 +469,16 @@ HttpNode::HttpNode(IAudioPipeline& parent)
 {
 }
 
-void HttpNode::setUnderrunState(bool newState)
+void HttpNode::setUnderrunState(bool isUnderrun)
 {
-    if (newState == mBufUnderrunState) {
+    if (isUnderrun == mIsBufUnderrun) {
         return;
     }
-    mBufUnderrunState = newState;
-    if (newState) {
-        plSendEvent(kEventBufState);
+    mIsBufUnderrun = isUnderrun;
+    if (isUnderrun) {
+        ESP_LOGW(TAG, "Underrun");
     }
+    plSendEvent(kEventBufUnderrun, isUnderrun);
 }
 uint32_t HttpNode::currentStreamId() const
 {
@@ -492,28 +491,37 @@ uint32_t HttpNode::currentStreamId() const
 }
 StreamEvent HttpNode::pullData(PacketResult& pr)
 {
-    // TODO: Simplify prefill mechanism
-    {
-        LOCK();
-        pr.streamId = currentStreamId();
-        if (mWaitingPrefill) {
-            ESP_LOGI(TAG, "Waiting ringbuf prefill...");
-            if (!waitForPrefill()) {
+    LOCK();
+    if (mWaitingPrefill && mPrefillSentFirstData) {
+        ESP_LOGI(TAG, "Waiting buffer prefill...");
+        while (mStreamByteCtr < mWaitingPrefill) {
+            MutexUnlocker unlocker(mMutex);
+            auto ret = mRingBuf.waitForWriteOp(-1);
+            if (ret < 0) {
                 return kErrStreamStopped;
             }
         }
-        auto dataSize = mRingBuf.dataSize();
-        if (!dataSize) {
-            printf("Underrun\n");
-            setUnderrunState(true);
-        }
-        else {
-            setUnderrunState(false);
-        }
+        mWaitingPrefill = 0;
     }
-    StreamPacket::unique_ptr pkt(mRingBuf.popFront());
+    setUnderrunState(!mRingBuf.dataSize());
+    StreamPacket::unique_ptr pkt;
+    {
+        MutexUnlocker unlocker(mMutex);
+        pkt.reset(mRingBuf.popFront());
+    }
     if (!pkt) {
+        pr.streamId = currentStreamId();
         return kErrStreamStopped;
+    }
+    if (pkt->type == kEvtStreamChanged) {
+        auto& pktChange = static_cast<GenericEvent&>(*pkt);
+        mOutStreamId = pktChange.streamId;
+        mWaitingPrefill = pktChange.fmt.prefillAmount();
+        mPrefillSentFirstData = false;
+        ESP_LOGI(TAG, "Returning start of new stream, setting prefill to %d bytes", mWaitingPrefill);
+    }
+    else if (pkt->type == kEvtData) {
+        mPrefillSentFirstData = true;
     }
     return pr.set(pkt);
 }
@@ -524,34 +532,14 @@ DataPacket* HttpNode::peekData(bool& preceded)
 StreamPacket* HttpNode::peek() {
     return mRingBuf.peekFirstWait();
 }
-void HttpNode::setWaitingPrefill(int amount)
-{
-    if (amount && mRingBuf.dataSize() >= amount) {
+void HttpNode::updatePrefill(int amount) {
+    LOCK();
+    if (!mWaitingPrefill) {
+        ESP_LOGW(TAG, "updatePrefill: Not waiting for prefill");
         return;
     }
-    if (amount) {
-        ESP_LOGI(TAG, "Setting required buffer prefill to %d bytes", amount);
-    }
     mWaitingPrefill = amount;
-    mEvents.setBits(kEvtPrefillChange);
 }
-
-/* Must be locked */
-bool HttpNode::waitForPrefill()
-{
-    while (mWaitingPrefill) {
-        MutexUnlocker unlocker(mMutex);
-        auto bits = mEvents.waitForOneAndReset(kEvtPrefillChange|kEvtStopRequest, -1);
-        if (bits & kEvtStopRequest) {
-            return false;
-        }
-        else {
-            myassert(bits & kEvtPrefillChange);
-        }
-    }
-    return true;
-}
-
 bool HttpNode::recordingMaybeEnable() {
     auto staName = recStaName();
     if (!staName) {

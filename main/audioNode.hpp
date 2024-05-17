@@ -34,8 +34,8 @@ public:
     enum { kEventStreamError = 1, kEventAudioFormatChange,
            kEventNewStream, kEventStreamEnd, kEventTrackInfo,
            kEventConnecting, kEventConnected,
-           kEventPlaying, kEventRecording, kEventBufState,
-           kEventLast = kEventBufState };
+           kEventPlaying, kEventRecording, kEventBufUnderrun,
+           kEventLast = kEventBufUnderrun };
     // we put here the state definitions only because the class name is shorter than AudioNodeWithTask
     enum State: uint8_t {
         kStateTerminated = 1, kStateStopped = 2,
@@ -71,7 +71,7 @@ public:
     virtual IAudioVolume* volumeInterface() { return nullptr; }
     virtual ~AudioNode() {}
     virtual void reset() {}
-    virtual bool waitForPrefill() { return true; }
+    virtual void updatePrefill(int amount) {}
     virtual DataPacket* peekData(bool& preceded) { return nullptr; }
     virtual StreamPacket* peek() { return nullptr; }
     void linkToPrev(AudioNode* prev) { mPrev = prev; }

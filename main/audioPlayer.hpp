@@ -123,7 +123,7 @@ protected:
     void lcdInit();
     void lcdDrawGui();
     void initTimedDrawTask();
-    void lcdUpdatePlayState(const char* text);
+    void lcdUpdatePlayState(const char* text, bool isRecording=false);
     void lcdSetupForTrackTitle();
     void lcdUpdateTrackTitle(const char* buf);
     void lcdScrollTrackTitle(int step=1);

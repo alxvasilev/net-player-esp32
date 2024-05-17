@@ -26,28 +26,26 @@ public:
     class UrlInfo;
 protected:
     enum {
-        kHttpRecvTimeoutMs = 2000, kHttpClientBufSize = 512, kRingQueueLen = 400,
+        kHttpRecvTimeoutMs = 10000, kHttpClientBufSize = 512, kRingQueueLen = 500,
         kReadSize = 2048, kStackSize = 3600
     };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1 };
     // Read mode dictates how the pullData() caller behaves. Since it may
     // need to wait for the read mode to change to a specific value, the enum values
     // are flags
-    enum: uint8_t { kEvtPrefillChange = kEvtLast << 1 };
     std::unique_ptr<UrlInfo> mUrlInfo;
     esp_http_client_handle_t mClient = nullptr;
-    StreamFormat mInFormat;
-    StreamFormat mOutFormat;
+    StreamFormat mInFormat; // is not Codec, because PCM needs sample format info as well
     uint32_t mOutStreamId = 0;
     Playlist mPlaylist; /* media playlist */
     StreamRingQueue<kRingQueueLen> mRingBuf;
-    int64_t mRxByteCtr = 0;
-    int64_t mStreamStartPos = 0;
-    int mContentLen;
+    int64_t mStreamByteCtr = 0;
+    int mContentLen = 0;
     IcyParser mIcyParser;
     std::unique_ptr<TrackRecorder> mRecorder;
     bool mAcceptsRangeRequests = false;
     volatile int mWaitingPrefill = 0;
+    volatile bool mPrefillSentFirstData = false;
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     static StreamFormat parseLpcmContentType(const char* ctype, int bps);
     static StreamFormat codecFromContentType(const char* content_type);
@@ -81,9 +79,9 @@ public:
     virtual Type type() const { return kTypeHttpIn; }
     virtual StreamEvent pullData(PacketResult& pr);
     virtual void onStopped() override { recordingCancelCurrent(); }
-    virtual bool waitForPrefill() override;
     virtual DataPacket* peekData(bool& preceded) override;
     virtual StreamPacket* peek() override;
+    virtual void updatePrefill(int amount) override;
     void setUrlAndStart(UrlInfo* urlInfo);
     bool isConnected() const;
     void setWaitingPrefill(int amout); // locking required
@@ -136,8 +134,8 @@ protected:
         }
     };
     mutable LinkSpeedProbe mSpeedProbe;
-    bool mBufUnderrunState = false;
-    void setUnderrunState(bool newState);
+    bool mIsBufUnderrun = false;
+    void setUnderrunState(bool isUnderrun);
 public:
     const char* url() const { return mUrlInfo ? mUrlInfo->url : nullptr; }
     const char* recStaName() const { return mUrlInfo ? mUrlInfo->recStaName : nullptr; }
