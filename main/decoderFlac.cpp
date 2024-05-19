@@ -61,10 +61,10 @@ FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *dec
     memcpy(buffer, self.mInputPacket->data + self.mInputPos, readAmount);
     self.mInputPos += readAmount;
     if (self.mInputPos >= pktLen) {
-        self.mInputPacket.release();
+        self.mInputPacket.reset();
         self.mInputPos = 0;
     }
-    if (++self.mNumReads > 20) {
+    if (++self.mNumReads > 30) {
         ESP_LOGW(TAG, "Codec did %d reads without producing an output", self.mNumReads);
     }
     return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
@@ -118,7 +118,7 @@ bool DecoderFlac::outputStereoSamples(int nSamples, const FLAC__int32* const cha
     }
     mParent.codecPostOutput(output.release());
     if (pktNsamples < nSamples) {
-        output.reset(DataPacket::create(pktNsamples));
+        output.reset(DataPacket::create(outputLen));
         wptr = (T*)output->data;
         for (int i = pktNsamples; i < nSamples; i++) {
             *(wptr++) = ch0[i];
