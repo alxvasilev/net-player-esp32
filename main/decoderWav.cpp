@@ -4,9 +4,8 @@
 const char* TAG = "wavdec";
 
 DecoderWav::DecoderWav(DecoderNode& parent, AudioNode& src, StreamFormat fmt)
-: Decoder(parent, src)
+: Decoder(parent, src, fmt)
 {
-    outputFormat = fmt;
     if (fmt.codec().type == Codec::kCodecPcm) {
         assert(fmt.sampleRate() != 0 && fmt.bitsPerSample() != 0);
     }
@@ -91,16 +90,15 @@ int DecoderWav::parseWavHeader(DataPacket& pkt)
     // === discard the rest till the actual PCM data
     for(;;) {
         auto chunkHdr = reinterpret_cast<const ChunkHeader*>(rptr);
+        if (strncasecmp(chunkHdr->type, "data", 4) == 0) {
+            return rptr + sizeof(ChunkHeader) - pkt.data;
+        }
         rptr += sizeof(ChunkHeader) + chunkHdr->size; // point to next chunk
         if (rptr >= end) {
             ESP_LOGE(TAG, "Next chunk spans outside packet, to offset %d", rptr - pkt.data);
             return 0;
         }
-        if (strncasecmp(chunkHdr->type, "data", 4) == 0) {
-            break;
-        }
     }
-    return rptr - pkt.data;
 }
 bool DecoderWav::setupOutput()
 {
@@ -115,7 +113,7 @@ bool DecoderWav::setupOutput()
             ESP_LOGI(TAG, "Converting PCM data from big-endian");
         }
         else {
-            mOutputFunc = nullptr;
+            mOutputFunc = &DecoderWav::outputNoChange;
             ESP_LOGI(TAG, "Forwarding PCM data without conversion");
         }
     }
@@ -132,7 +130,8 @@ bool DecoderWav::setupOutput()
     else {
         return false;
     }
-    ESP_LOGI(TAG, "Audio format: %d-bit %.1f kHz %s", bps, (float)outputFormat.sampleRate() / 1000,
+    ESP_LOGI(TAG, "Audio format: %d-bit %s-endian %.1f kHz %s",
+        bps, outputFormat.isBigEndian() ? "big" : "little", (float)outputFormat.sampleRate() / 1000,
         nChans == 1 ? "mono" : "stereo");
     mParent.codecOnFormatDetected(outputFormat);
     return true;
@@ -144,15 +143,21 @@ StreamEvent DecoderWav::decode(AudioNode::PacketResult& dpr)
         return evt;
     }
     auto& pkt = dpr.dataPacket();
-    int sampleOffs = 0;
     if (!mOutputFunc) { // first packet
         auto codec = outputFormat.codec().type;
         if (codec == Codec::kCodecWav) {
-            sampleOffs = parseWavHeader(pkt);
+            int sampleOffs = parseWavHeader(pkt);
             if (!sampleOffs) {
                 return kErrDecode;
             }
-        } else if (codec == Codec::kCodecPcm) {
+            myassert(sampleOffs > 0);
+            myassert(mOutputFunc);
+            int len = pkt.dataLen - sampleOffs;
+            myassert(len > 0);
+            memmove(pkt.data, pkt.data + sampleOffs, len);
+            pkt.dataLen = len;
+        }
+        else if (codec == Codec::kCodecPcm) {
             if (!setupOutput()) {
                 return kErrDecode;
             }
@@ -163,11 +168,11 @@ StreamEvent DecoderWav::decode(AudioNode::PacketResult& dpr)
     }
     bool ok;
     if (mOutputInSitu) {
-        (this->*mOutputFunc)(pkt.data + sampleOffs, pkt.dataLen - sampleOffs);
-        ok = mParent.codecPostOutput(&pkt);
+        (this->*mOutputFunc)(pkt.data, pkt.dataLen);
+        ok = mParent.codecPostOutput((DataPacket*)dpr.packet.release());
     }
     else {
-        ok = (this->*mOutputFunc)(pkt.data + sampleOffs, pkt.dataLen - sampleOffs);
+        ok = (this->*mOutputFunc)(pkt.data, pkt.dataLen);
     }
     return ok ? kNoError : kErrStreamStopped;
 }
@@ -212,6 +217,7 @@ bool DecoderWav::output(char* input, int len)
 }
 bool DecoderWav::outputSwapBeToLe16(char* input, int len)
 {
+    printf("output pcm\n");
     auto end = (int16_t*)(input + len);
     for (int16_t* sample = (int16_t*)input; sample < end; sample++) {
         *sample = ntohs(*sample);

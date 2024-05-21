@@ -31,7 +31,7 @@ class AudioNode
 {
 public:
     // events sent to the GUI via plSendEvent()
-    enum { kEventStreamError = 1, kEventAudioFormatChange,
+    enum { kEventAudioFormatChange,
            kEventNewStream, kEventStreamEnd, kEventTrackInfo,
            kEventConnecting, kEventConnected,
            kEventPlaying, kEventRecording, kEventBufUnderrun,

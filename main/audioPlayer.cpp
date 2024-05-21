@@ -377,7 +377,10 @@ bool AudioPlayer::doPlayUrl(const char* url, PlayerMode playerMode, const char* 
     setPlayerMode(playerMode);
     lcdResetNetSpeedIndication();
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
-    auto urlInfo = HttpNode::UrlInfo::Create(url, ++mStreamSeqNo, record);
+    if (++mStreamSeqNo == 0) {
+        mStreamSeqNo = 1;
+    }
+    auto urlInfo = HttpNode::UrlInfo::Create(url, mStreamSeqNo, record);
     // setUrl will start the http node, if it's stopped. However, this may take a while.
     // If we meanwhile start the i2s out node, it will start to pull data from the not-yet-started http node,
     // whose state may not be set up correctly for the new stream (i.e. waitingPrefill not set)
@@ -1060,6 +1063,14 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
                     return lcdShowBufUnderrunImmediate(); break;
                 case AudioNode::kEventNewStream:
                     return onNewStream(StreamFormat(numArg)); break;
+                case AudioNode::kEventStreamEnd:
+                    if (numArg == mStreamSeqNo) {
+                        this->stop();
+                    }
+                    else {
+                        ESP_LOGI(TAG, "Discarding stream end event for a previous streamId %d", numArg);
+                    }
+                    break;
                 default: break;
             }
         });

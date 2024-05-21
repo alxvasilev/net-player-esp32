@@ -14,6 +14,7 @@ protected:
     bool output(char* input, int len);
     bool outputSwapBeToLe16(char* input, int len);
     bool outputSwapBeToLe32(char* input, int len);
+    bool outputNoChange(char*, int) { return true; }
 public:
     virtual Codec::Type type() const { return outputFormat.codec().type; }
     DecoderWav(DecoderNode& parent, AudioNode& src, StreamFormat fmt);

@@ -53,16 +53,18 @@ const char* Codec::fileExt() const {
         default: return "unk";
     }
 }
+#define STRMEVT_CASE(name) case name: return #name
 const char* streamEventToStr(StreamEvent evt) {
     switch (evt) {
-        case kEvtStreamEnd: return "kEvtStreamEnd";
-        case kEvtStreamChanged: return "kEvtStreamChanged";
-        case kEvtTitleChanged: return "kEvtTitleChanged";
-        case kErrStreamStopped: return "kErrStreamStopped";
-        case kErrNoCodec: return "kErrNoCodec";
-        case kErrDecode: return "kErrDecode";
-        case kErrStreamFmt: return "kErrStreamFmt";
-        case kEvtData: return "kEvtData";
+        STRMEVT_CASE(kEvtStreamEnd);
+        STRMEVT_CASE(kEvtStreamChanged);
+        STRMEVT_CASE(kEvtTitleChanged);
+        STRMEVT_CASE(kErrStreamStopped);
+        STRMEVT_CASE(kErrNoCodec);
+        STRMEVT_CASE(kErrDecode);
+        STRMEVT_CASE(kErrNotFound);
+        STRMEVT_CASE(kErrStreamFmt);
+        STRMEVT_CASE(kEvtData);
         default: return "(invalid)";
     }
 }

@@ -38,7 +38,8 @@ StreamFormat HttpNode::codecFromContentType(const char* content_type)
              strcasecmp(content_type, "application/ogg") == 0) {
         return Codec(Codec::kCodecUnknown, Codec::kTransportOgg);
     }
-    else if (strcasecmp(content_type, "audio/wav") == 0) {
+    else if (strcasecmp(content_type, "audio/wav") == 0 ||
+             strcasecmp(content_type, "audio/x-wav") == 0) {
         return Codec::kCodecWav;
     }
     else if (strncasecmp(content_type, "audio/L16", 9) == 0) {
@@ -235,6 +236,7 @@ bool HttpNode::connect(bool isReconnect)
         }
         else if (status_code != 200 && status_code != 206) {
             ESP_LOGE(mTag, "Non-200 response code %d", status_code);
+            plSendError(kErrNotFound, 0);
             return false;
         }
         auto ret = handleResponseAsPlaylist(mContentLen);
@@ -301,8 +303,10 @@ bool HttpNode::isConnected() const
 {
     return mClient != nullptr;
 }
-
-bool HttpNode::recv()
+/* Returns 0 on success, 1 if stream ended (node should not stop, just wait for a new command),
+   and -1 on error - node should stop
+*/
+int8_t HttpNode::recv()
 {
     for (int retries = 0; retries < 26; retries++) { // retry net errors
         DataPacket::unique_ptr dataPacket(DataPacket::create(kReadSize));
@@ -317,15 +321,16 @@ bool HttpNode::recv()
         */
         int rlen = esp_http_client_read(mClient, dataPacket->data, kReadSize);
         if (rlen <= 0) {
+            mWaitingPrefill = 0;
             if (rlen == 0) {
                 if (mContentLen && esp_http_client_is_complete_data_received(mClient)) {
                     // transfer complete, post end of stream
                     ESP_LOGI(TAG, "Transfer complete, posting kStreamEnd event (streamId=%d)", mUrlInfo->streamId);
                     mRingBuf.pushBack(new GenericEvent(kEvtStreamEnd, mUrlInfo->streamId, 0));
-                    return false;
+                    return 1; // don't stop the node, just wait for new commands
                 }
-                else if (errno == EAGAIN) { // just return, main loop will retry
-                    return true;
+                else if (errno == EAGAIN) {
+                    return 0; // just return, main loop will retry
                 }
                 // else we have a graceful disconnect but incomplete transfer?
             }
@@ -336,7 +341,7 @@ bool HttpNode::recv()
             int msDelay = delayFromRetryCnt(retries);
             ESP_LOGW(TAG, "Reconnecting in %d ms...", msDelay);
             if (mCmdQueue.waitForMessage(msDelay)) {
-                return false;
+                return 1; // main loop will process the command, but we won't reconnect
             }
             destroyClient(); // just in case
             connect(canResume());
@@ -369,9 +374,10 @@ bool HttpNode::recv()
         }
         auto ringBufDataSize = mRingBuf.dataSize();
         ESP_LOGD(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, ringBufDataSize);
-        return true;
+        return 0;
     }
-    return false;
+    plSendError(kErrStreamStopped, 0);
+    return -1;
 }
 void HttpNode::logStartOfRingBuf(const char* msg)
 {
@@ -450,8 +456,11 @@ void HttpNode::nodeThreadFunc()
             }
         }
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
-            if (!recv()) { // returns false on error or end of stream
-                stop(false);
+            auto ret = recv();
+            if (ret) { // returns nonzero on error or end of stream
+                if (ret < 0) {
+                    stop(false);
+                }
                 break;
             }
         }

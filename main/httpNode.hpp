@@ -27,7 +27,7 @@ public:
 protected:
     enum {
         kHttpRecvTimeoutMs = 10000, kHttpClientBufSize = 512, kRingQueueLen = 500,
-        kReadSize = 2048, kStackSize = 3600
+        kReadSize = 2048, kStackSize = 5120
     };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1 };
     // Read mode dictates how the pullData() caller behaves. Since it may
@@ -62,7 +62,7 @@ protected:
     bool connect(bool isReconnect=false);
     void disconnect();
     void destroyClient();
-    bool recv();
+    int8_t recv();
     int delayFromRetryCnt(int tries);
     void nodeThreadFunc();
     virtual bool dispatchCommand(Command &cmd);

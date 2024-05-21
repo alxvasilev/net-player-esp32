@@ -31,7 +31,7 @@ class DecoderNode: public AudioNodeWithTask
 protected:
     Decoder* mDecoder = nullptr;
     bool mWaitingPrefill = false;
-    StreamId mStreamId = 0;
+    StreamId mInStreamId = 0;
     StreamRingQueue<24> mRingBuf;
     // pr in case there is a stream event that needs to be propagated
     StreamEvent detectCodecCreateDecoder(GenericEvent& startPkt);

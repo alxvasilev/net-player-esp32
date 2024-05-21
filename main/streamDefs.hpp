@@ -129,6 +129,7 @@ enum StreamEvent: int8_t {
     kErrNoCodec = -3,
     kErrDecode = -4,
     kErrStreamFmt = -5,
+    kErrNotFound = -6,
     kInvalidStreamEvent = -128 // used for optional params
 };
 const char* streamEventToStr(StreamEvent evt);

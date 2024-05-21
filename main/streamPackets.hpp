@@ -33,7 +33,8 @@ public:
     uint8_t flags;
     void destroy() { // may use custom allocation
         if (flags & kFlagCustomAlloc) {
-            delete[] (AlignAs(*)[])this;
+            //printf("freeing packet type %d of size %d\n", this->type, (this->type == 0) ? *((int16_t*)(((char*)this) + 2)) : -1);
+            free(this); //delete[] (AlignAs(*)[])this;
         }
         else {
             delete this;
@@ -41,7 +42,7 @@ public:
     }
     template<class T>
     static T* allocWithDataSize(StreamEvent type, size_t dataSize) {
-        auto inst = (T*) new AlignAs[sizeToArraySize<AlignAs>(sizeof(T) + dataSize)];
+        auto inst = (T*)heap_caps_malloc(sizeof(T) + dataSize, MALLOC_CAP_SPIRAM); //new AlignAs[sizeToArraySize<AlignAs>(sizeof(T) + dataSize)];
         inst->type = type;
         inst->flags = kFlagCustomAlloc;
         return inst;

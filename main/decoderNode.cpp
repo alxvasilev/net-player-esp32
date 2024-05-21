@@ -52,7 +52,7 @@ void DecoderNode::deleteDecoder()
 }
 StreamEvent DecoderNode::detectCodecCreateDecoder(GenericEvent& startPkt)
 {
-    mStreamId = startPkt.streamId;
+    mInStreamId = startPkt.streamId;
     Codec& codec = startPkt.fmt.codec();
     if (codec.type == Codec::kCodecUnknown && codec.transport == Codec::kTransportOgg) {
         // allocates a buffer in odp and fetches some stream bytes in it
@@ -87,7 +87,7 @@ void DecoderNode::nodeThreadFunc()
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
             auto err = decode();
             if (err) { // err cannot be an event here
-                plSendEvent(kEventStreamError, err, 0);
+                plSendError(err, 0);
                 stop(false);
                 break;
             }
@@ -119,7 +119,6 @@ StreamEvent DecoderNode::decode()
         if (evt) { // evt can only be an error here
             return evt;
         }
-        mWaitingPrefill = true;
         pr.clear();
     }
     myassert(mDecoder);
@@ -134,7 +133,9 @@ StreamEvent DecoderNode::decode()
             return detectCodecCreateDecoder(pr.genericEvent());
         }
         else if (evt == kEvtStreamEnd) {
+            ESP_LOGI(mTag, "Stream end, deleting decoder");
             deleteDecoder();
+            mWaitingPrefill = false;
         }
         return forwardEvent(evt, pr);
     }
@@ -142,21 +143,30 @@ StreamEvent DecoderNode::decode()
 }
 StreamEvent DecoderNode::pullData(PacketResult &pr)
 {
-    while (mWaitingPrefill && (mRingBuf.size() < mRingBuf.capacity())) {
-        ESP_LOGI(mTag, "Prefill...");
-        auto ret = mRingBuf.waitForWriteOp(-1);
-        if (ret < 0) {
-            return kErrStreamStopped;
+    //TODO: Handle the case where we are sending a previous stream - we don't wait prefill then
+    if (mWaitingPrefill) {
+        ESP_LOGI(mTag, "Waiting prefill...");
+        while (mWaitingPrefill && (mRingBuf.size() < mRingBuf.capacity())) {
+            auto ret = mRingBuf.waitForWriteOp(-1);
+            if (ret < 0) {
+                return kErrStreamStopped;
+            }
         }
+        mWaitingPrefill = false;
     }
-    mWaitingPrefill = false;
     auto pkt = mRingBuf.popFront();
-    return pkt ? pr.set(pkt) : kErrStreamStopped;
+    if (!pkt) {
+        return kErrStreamStopped;
+    }
+    if (pkt->type == kEvtStreamChanged) {
+        mWaitingPrefill = true;
+    }
+    return pr.set(pkt);
 }
 bool DecoderNode::codecOnFormatDetected(StreamFormat fmt)
 {
     mPrev->updatePrefill(fmt.prefillAmount());
-    return mRingBuf.pushBack(new GenericEvent(kEvtStreamChanged, mStreamId, fmt));
+    return mRingBuf.pushBack(new GenericEvent(kEvtStreamChanged, mInStreamId, fmt));
 }
 bool DecoderNode::codecPostOutput(DataPacket *pkt)
 {
