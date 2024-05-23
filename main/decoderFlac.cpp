@@ -84,7 +84,6 @@ StreamEvent DecoderFlac::decode(AudioNode::PacketResult& dpr)
         mNumReads = 0;
         auto ok = FLAC__stream_decoder_process_single(mDecoder);
         if (!ok) {
-            dpr.clear();
             auto err = FLAC__stream_decoder_get_state(mDecoder);
             const char* errStr = (err >= 0) ? FLAC__StreamDecoderStateString[err] : "(invalid code)";
             ESP_LOGW(TAG, "Decoder returned error %s(%d)", errStr, err);

@@ -71,7 +71,7 @@ public:
     virtual IAudioVolume* volumeInterface() { return nullptr; }
     virtual ~AudioNode() {}
     virtual void reset() {}
-    virtual void updatePrefill(int amount) {}
+    virtual void streamFormatDetails(StreamFormat fmt) {}
     virtual DataPacket* peekData(bool& preceded) { return nullptr; }
     virtual StreamPacket* peek() { return nullptr; }
     void linkToPrev(AudioNode* prev) { mPrev = prev; }

@@ -228,15 +228,17 @@ static esp_err_t indexUrlHandler(httpd_req_t *req)
 {
     httpd_resp_sendstr_chunk(req,
         "<html><head /><body><h1 align='center'>NetPlayer HTTP inteface</h1><pre>Free internal RAM: ");
-    DynBuffer buf(128);
+    DynBuffer buf(200);
     /* Print chip information */
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
-    buf.printf("%zu of %zu\nFree external RAM: ",
-        heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_total_size(MALLOC_CAP_INTERNAL));
+    buf.printf("%zu of %zu (largest free blk: %zu)\nFree external RAM: ",
+        heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_total_size(MALLOC_CAP_INTERNAL),
+        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
     if (utils::haveSpiRam()) {
-        buf.printf("%zu of %zu\n",
-            heap_caps_get_free_size(MALLOC_CAP_SPIRAM), heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
+        buf.printf("%zu of %zu (largest free blk: %zu)\n",
+            heap_caps_get_free_size(MALLOC_CAP_SPIRAM), heap_caps_get_total_size(MALLOC_CAP_SPIRAM),
+            heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
     } else {
         buf.printf("Not available\n");
     }

@@ -151,7 +151,9 @@ void HttpNode::onHttpHeader(const char* key, const char* val)
 {
     if (strcasecmp(key, "Content-Type") == 0) {
         mInFormat = codecFromContentType(val);
-        ESP_LOGI(TAG, "Parsed content-type '%s' as %s", val, mInFormat.codec().toString());
+        mNetRecvSize = mInFormat.netRecvSize();
+        ESP_LOGI(TAG, "Parsed content-type '%s' as %s, recv chunk size set to %d",
+            val, mInFormat.codec().toString(), mNetRecvSize);
     }
     else if ((strcasecmp(key, "accept-ranges") == 0) && (strcasecmp(val, "bytes") == 0)) {
         mAcceptsRangeRequests = true;
@@ -309,17 +311,8 @@ bool HttpNode::isConnected() const
 int8_t HttpNode::recv()
 {
     for (int retries = 0; retries < 26; retries++) { // retry net errors
-        DataPacket::unique_ptr dataPacket(DataPacket::create(kReadSize));
-        /*
-        auto bufSize = mRingBuf.getWriteBuf(buf, kReadSize, kHttpRecvTimeoutMs);
-        if (bufSize <= 0) { // stop flag was set, or timeout
-            if (bufSize == 0) {
-                ESP_LOGW(TAG, "Ringbuf write timeout, consumer node is probably stuck");
-            }
-            return false;
-        }
-        */
-        int rlen = esp_http_client_read(mClient, dataPacket->data, kReadSize);
+        DataPacket::unique_ptr dataPacket(DataPacket::create(mNetRecvSize));
+        int rlen = esp_http_client_read(mClient, dataPacket->data, mNetRecvSize);
         if (rlen <= 0) {
             mWaitingPrefill = 0;
             if (rlen == 0) {
@@ -378,19 +371,6 @@ int8_t HttpNode::recv()
     }
     plSendError(kErrStreamStopped, 0);
     return -1;
-}
-void HttpNode::logStartOfRingBuf(const char* msg)
-{
-    char hex[128];
-    MutexLocker locker(mRingBuf.mMutex);
-    auto packet = mRingBuf.peekFirstDataWait();
-    if (!packet) {
-        hex[0] = 0;
-    }
-    else {
-        binToHex((uint8_t*)packet->data, packet->dataLen, hex);
-    }
-    printf("%s: %s\n", msg, hex);
 }
 uint32_t HttpNode::pollSpeed() const
 {
@@ -541,13 +521,16 @@ DataPacket* HttpNode::peekData(bool& preceded)
 StreamPacket* HttpNode::peek() {
     return mRingBuf.peekFirstWait();
 }
-void HttpNode::updatePrefill(int amount) {
+void HttpNode::streamFormatDetails(StreamFormat fmt) {
+    auto rxSize = fmt.netRecvSize();
     LOCK();
-    if (!mWaitingPrefill) {
-        ESP_LOGW(TAG, "updatePrefill: Not waiting for prefill");
-        return;
+    if (mNetRecvSize != rxSize) {
+        mNetRecvSize = rxSize;
+        ESP_LOGI(TAG, "Updated network recv size for codec %s to %d", fmt.codec().toString(), mNetRecvSize);
     }
-    mWaitingPrefill = amount;
+    if (mWaitingPrefill) {
+        mWaitingPrefill = fmt.prefillAmount();
+    }
 }
 bool HttpNode::recordingMaybeEnable() {
     auto staName = recStaName();

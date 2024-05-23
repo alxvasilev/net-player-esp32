@@ -100,37 +100,43 @@ int DecoderWav::parseWavHeader(DataPacket& pkt)
         }
     }
 }
+template<typename T>
+void DecoderWav::selectOutput16or32() {
+    if (outputFormat.isBigEndian()) {
+        mOutputFunc = &DecoderWav::outputWithNewPacket<T, sizeof(T) * 8, true>;
+        mOutputInSituFunc = &DecoderWav::outputSwapBeToLeInSitu<T>;
+    }
+    else {
+        mOutputFunc = &DecoderWav::outputWithNewPacket<T, sizeof(T) * 8, false>;
+        mOutputInSituFunc = &DecoderWav::outputNoChange;
+    }
+}
 bool DecoderWav::setupOutput()
 {
+    mPartialInSampleBytes = 0;
     int bps = outputFormat.bitsPerSample();
-    int nChans = outputFormat.numChannels();
-    if (bps == 16 || bps == 32) {
-        mOutputInSitu = true;
-        if (outputFormat.isBigEndian()) {
-            mOutputFunc = (bps == 16)
-                ? &DecoderWav::outputSwapBeToLe16
-                : &DecoderWav::outputSwapBeToLe32;
-            ESP_LOGI(TAG, "Converting PCM data from big-endian");
-        }
-        else {
-            mOutputFunc = &DecoderWav::outputNoChange;
-            ESP_LOGI(TAG, "Forwarding PCM data without conversion");
-        }
+    int nChans = mNumChans = outputFormat.numChannels();
+    mInBytesPerSample = (bps * nChans) / 8;
+    if (bps == 16) {
+        selectOutput16or32<int16_t>();
+    }
+    else if (bps == 32) {
+        selectOutput16or32<int32_t>();
     }
     else if (bps == 24) {
-        mOutputInSitu = false;
+        mOutputInSituFunc = nullptr;
         mOutputFunc = outputFormat.isBigEndian()
-            ? &DecoderWav::output<int32_t, 24, true>
-            : &DecoderWav::output<int32_t, 24, false>;
+            ? &DecoderWav::outputWithNewPacket<int32_t, 24, true>
+            : &DecoderWav::outputWithNewPacket<int32_t, 24, false>;
     }
     else if (bps == 8) {
-        mOutputInSitu = false;
-        mOutputFunc = &DecoderWav::output<int16_t, 8>;
+        mOutputInSituFunc = nullptr;
+        mOutputFunc = &DecoderWav::outputWithNewPacket<int16_t, 8>;
     }
     else {
         return false;
     }
-    ESP_LOGI(TAG, "Audio format: %d-bit %s-endian %.1f kHz %s",
+    ESP_LOGI(TAG, "Audio format: %d-bit %s-endian %.1fkHz %s",
         bps, outputFormat.isBigEndian() ? "big" : "little", (float)outputFormat.sampleRate() / 1000,
         nChans == 1 ? "mono" : "stereo");
     mParent.codecOnFormatDetected(outputFormat);
@@ -164,14 +170,22 @@ StreamEvent DecoderWav::decode(AudioNode::PacketResult& dpr)
         } else {
             assert(false);
         }
-        assert(mOutputFunc);
+        myassert(mOutputFunc);
+        myassert(!mPartialInSampleBytes);
+        myassert(mInBytesPerSample);
     }
     bool ok;
-    if (mOutputInSitu) {
-        (this->*mOutputFunc)(pkt.data, pkt.dataLen);
+    if (false && mOutputInSituFunc && !mPartialInSampleBytes) {
+        mPartialInSampleBytes = pkt.dataLen % mInBytesPerSample;
+        if (mPartialInSampleBytes) {
+            pkt.dataLen -= mPartialInSampleBytes;
+            memcpy(mPartialInSampleBuf, pkt.data + pkt.dataLen, mPartialInSampleBytes);
+        }
+        (this->*mOutputInSituFunc)(pkt);
         ok = mParent.codecPostOutput((DataPacket*)dpr.packet.release());
     }
     else {
+        //pkt.logData(40, "input", 40);
         ok = (this->*mOutputFunc)(pkt.data, pkt.dataLen);
     }
     return ok ? kNoError : kErrStreamStopped;
@@ -187,7 +201,6 @@ int32_t transformSample<int32_t, 24, false>(uint8_t* input)
     sample |= *(input+2) << 24;
     return sample >> 8;
 }
-
 template<>
 int32_t transformSample<int32_t, 24, true>(uint8_t* input)
 {
@@ -196,39 +209,70 @@ int32_t transformSample<int32_t, 24, true>(uint8_t* input)
     sample |= *(input+2) << 8;
     return sample >> 8;
 }
-
 template<>
 int16_t transformSample<int16_t, 8, false>(uint8_t* input)
 {
     return (*input << 8) >> 8;
 }
+// byte order transforms
+template<>
+int16_t transformSample<int16_t, 16, true>(uint8_t* sample)
+{
+    return ntohs(*((int16_t*)sample));
+}
+template<>
+int32_t transformSample<int32_t, 32, true>(uint8_t* sample)
+{
+    return ntohs(*((int32_t*)sample));
+}
+// dummy transforms
+template<>
+int16_t transformSample<int16_t, 16, false>(uint8_t* sample)
+{
+    return *(int16_t*)sample;
+}
+template<>
+int32_t transformSample<int32_t, 32, false>(uint8_t* sample)
+{
+    return *(int32_t*)sample;
+}
 
 template <typename T, int Bps, bool BigEndian=false>
-bool DecoderWav::output(char* input, int len)
+bool DecoderWav::outputWithNewPacket(char* input, int len)
 {
-    enum { kInputBytesPerSample = Bps / 8 };
-    DataPacket::unique_ptr out(DataPacket::create(len * sizeof(T) / kInputBytesPerSample));
+    enum { kInBytesPerChannel = Bps / 8 };
+    // reserve space for adding a partial sample from previous packet (mPartialInSampleBuffer)
+    DataPacket::unique_ptr out(DataPacket::create(((len / mInBytesPerSample + 2) * sizeof(T) * mNumChans)));
     auto wptr = (T*)out->data;
-    uint8_t* end = (uint8_t*)input + len;
-    for (auto rptr = (uint8_t*)input; rptr < end; wptr++, rptr += kInputBytesPerSample) {
-        *wptr = transformSample<T, Bps, BigEndian>(rptr);
+    if (mPartialInSampleBytes) {
+        int firstByteCount = mInBytesPerSample - mPartialInSampleBytes;
+        memcpy(mPartialInSampleBuf + mPartialInSampleBytes, input, firstByteCount);
+        input += firstByteCount;
+        len -= firstByteCount;
+        *(wptr++) = transformSample<T, Bps, BigEndian>((uint8_t*)mPartialInSampleBuf);
+        if (mNumChans == 2) { // two channels per sample
+            *(wptr++) = transformSample<T, Bps, BigEndian>((uint8_t*)mPartialInSampleBuf + kInBytesPerChannel);
+        }
     }
+    mPartialInSampleBytes = len % mInBytesPerSample;
+    if (mPartialInSampleBytes) {
+        len -= mPartialInSampleBytes;
+        memcpy(mPartialInSampleBuf, input + len, mPartialInSampleBytes);
+    }
+    myassert((len % mInBytesPerSample) == 0);
+    uint8_t* end = (uint8_t*)input + len;
+    for (auto rptr = (uint8_t*)input; rptr < end; rptr += kInBytesPerChannel) {
+        *(wptr++) = transformSample<T, Bps, BigEndian>(rptr);
+    }
+    out->dataLen = (char*)wptr - out->data;
     return mParent.codecPostOutput(out.release());
 }
-bool DecoderWav::outputSwapBeToLe16(char* input, int len)
+
+template <typename T>
+void DecoderWav::outputSwapBeToLeInSitu(DataPacket& pkt)
 {
-    printf("output pcm\n");
-    auto end = (int16_t*)(input + len);
-    for (int16_t* sample = (int16_t*)input; sample < end; sample++) {
-        *sample = ntohs(*sample);
+    auto end = (T*)(pkt.data + pkt.dataLen);
+    for (T* sample = (T*)pkt.data; sample < end; sample++) {
+        *sample = transformSample<T, sizeof(T) * 8, true>((uint8_t*)sample);
     }
-    return true;
-}
-bool DecoderWav::outputSwapBeToLe32(char* input, int len)
-{
-    auto end = (int32_t*)(input + len);
-    for (int32_t* sample = (int32_t*)input; sample < end; sample++) {
-        *sample = ntohl(*sample);
-    }
-    return true;
 }

@@ -3,6 +3,7 @@
 
 #include "streamDefs.hpp"
 #include <memory>
+#include <utils-parse.hpp>
 
 constexpr uint32_t myLog2(uint32_t n) noexcept
 {
@@ -68,6 +69,17 @@ struct DataPacket: public StreamPacket {
         auto inst = allocWithDataSize<DataPacket>(kEvtData, dataSize);
         inst->dataLen = dataSize;
         return inst;
+    }
+    void logData(int16_t maxLen, const char* msg, int lineLen=20)
+    {
+        int len = std::min(maxLen, dataLen);
+        std::unique_ptr<char[]> hex(new char[len * 3 + 10]);
+        printf("%s(%d of %d):\n", msg, len, dataLen);
+        for (int pos = 0; pos < len; pos += lineLen) {
+            auto thisLineLen = std::min(lineLen, len - pos);
+            binToHex((uint8_t*)data + pos, thisLineLen, hex.get());
+            printf("  [%04d]  %s\n", pos, hex.get());
+        }
     }
 protected:
     DataPacket() = delete;

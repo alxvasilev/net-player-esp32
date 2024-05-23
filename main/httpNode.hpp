@@ -26,8 +26,7 @@ public:
     class UrlInfo;
 protected:
     enum {
-        kHttpRecvTimeoutMs = 10000, kHttpClientBufSize = 512, kRingQueueLen = 500,
-        kReadSize = 2048, kStackSize = 5120
+        kHttpRecvTimeoutMs = 10000, kHttpClientBufSize = 512, kRingQueueLen = 256, kStackSize = 5120
     };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1 };
     // Read mode dictates how the pullData() caller behaves. Since it may
@@ -43,6 +42,7 @@ protected:
     int mContentLen = 0;
     IcyParser mIcyParser;
     std::unique_ptr<TrackRecorder> mRecorder;
+    int16_t mNetRecvSize = 0;
     bool mAcceptsRangeRequests = false;
     volatile int mWaitingPrefill = 0;
     volatile bool mPrefillSentFirstData = false;
@@ -81,7 +81,7 @@ public:
     virtual void onStopped() override { recordingCancelCurrent(); }
     virtual DataPacket* peekData(bool& preceded) override;
     virtual StreamPacket* peek() override;
-    virtual void updatePrefill(int amount) override;
+    virtual void streamFormatDetails(StreamFormat fmt) override;
     void setUrlAndStart(UrlInfo* urlInfo);
     bool isConnected() const;
     void setWaitingPrefill(int amout); // locking required

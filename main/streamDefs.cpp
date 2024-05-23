@@ -3,7 +3,7 @@
 #include "streamDefs.hpp"
 int StreamFormat::prefillAmount() const
 {
-    switch (codec().asNumCode()) {
+    switch (codec().type) {
         case Codec::kCodecMp3:
             return 48 * 1024;
         case Codec::kCodecAac:
@@ -21,7 +21,16 @@ int StreamFormat::prefillAmount() const
             return 64 * 1024;
     }
 }
-
+int16_t StreamFormat::netRecvSize() const
+{
+    switch (codec().type) {
+        case Codec::kCodecFlac:
+        case Codec::kCodecWav:
+            return (sampleRate() > 48000 || bitsPerSample() > 16) ? 8192 : 4096;
+        default:
+            return 2048;
+    }
+}
 const char* Codec::toString() const
 {
     switch (type) {

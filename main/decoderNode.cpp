@@ -165,7 +165,7 @@ StreamEvent DecoderNode::pullData(PacketResult &pr)
 }
 bool DecoderNode::codecOnFormatDetected(StreamFormat fmt)
 {
-    mPrev->updatePrefill(fmt.prefillAmount());
+    mPrev->streamFormatDetails(fmt);
     return mRingBuf.pushBack(new GenericEvent(kEvtStreamChanged, mInStreamId, fmt));
 }
 bool DecoderNode::codecPostOutput(DataPacket *pkt)

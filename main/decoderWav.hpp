@@ -6,15 +6,22 @@ class DecoderWav: public Decoder
 {
 protected:
     typedef bool(DecoderWav::*OutputFunc)(char* data, int len);
+    typedef void(DecoderWav::*OutputInSituFunc)(DataPacket& input);
     OutputFunc mOutputFunc = nullptr;
-    bool mOutputInSitu = false;
+    OutputInSituFunc mOutputInSituFunc = nullptr;
+    char mPartialInSampleBuf[8];
+    int8_t mPartialInSampleBytes = 0;
+    int8_t mInBytesPerSample = 0;
+    int8_t mNumChans = 0; // cached from outputFormat for faster access
     int parseWavHeader(DataPacket& pkt);
     bool setupOutput();
+    template<typename T>
+    void selectOutput16or32();
     template <typename T, int Bps, bool BigEndian=false>
-    bool output(char* input, int len);
-    bool outputSwapBeToLe16(char* input, int len);
-    bool outputSwapBeToLe32(char* input, int len);
-    bool outputNoChange(char*, int) { return true; }
+    bool outputWithNewPacket(char* input, int len);
+    template <typename T>
+    void outputSwapBeToLeInSitu(DataPacket& pkt);
+    void outputNoChange(DataPacket& pkt) {}
 public:
     virtual Codec::Type type() const { return outputFormat.codec().type; }
     DecoderWav(DecoderNode& parent, AudioNode& src, StreamFormat fmt);
