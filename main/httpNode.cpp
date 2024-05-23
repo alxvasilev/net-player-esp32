@@ -347,9 +347,12 @@ int8_t HttpNode::recv()
             bool gotTitle = mIcyParser.processRecvData(dataPacket->data, rlen);
             if (gotTitle) {
                 ESP_LOGW(TAG, "Track title changed to: '%s'", mIcyParser.trackName());
-                mRingBuf.pushBack(TitleChangeEvent::create(mIcyParser.trackName()));
+                TitleChangeEvent::unique_ptr pkt(TitleChangeEvent::create(mIcyParser.trackName()));
+                {
+                    MutexUnlocker unlocker(mMutex);
+                    mRingBuf.pushBack(pkt.release());
+                }
                 // offset of title within packet: (rlen - mIcyParser.bytesSinceLastMeta())
-
                 if (mRecorder && !isFirst) { // start recording only on second icy track event - first track may be incomplete
                     bool ok = mRecorder->onNewTrack(mIcyParser.trackName(), mInFormat.codec());
                     plSendEvent(kEventRecording, ok);
@@ -365,8 +368,7 @@ int8_t HttpNode::recv()
             MutexUnlocker unlocker(mMutex);
             mRingBuf.pushBack(dataPacket.release());
         }
-        auto ringBufDataSize = mRingBuf.dataSize();
-        ESP_LOGD(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, ringBufDataSize);
+        ESP_LOGD(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.dataSize());
         return 0;
     }
     plSendError(kErrStreamStopped, 0);
