@@ -42,12 +42,9 @@ FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *dec
         auto event = self.mInputEvent = self.mSrcNode.pullData(pr);
         if (event) {
             *bytes = 0;
-            return FLAC__STREAM_DECODER_READ_STATUS_ABORT;
-            /*
-               (event == AudioNode::kStreamChanged)
+            return (event == kEvtStreamEnd)
                     ? FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM
                     : FLAC__STREAM_DECODER_READ_STATUS_ABORT;
-            */
         }
         else {
             self.mInputPacket.reset((DataPacket*)pr.packet.release());
@@ -88,6 +85,9 @@ StreamEvent DecoderFlac::decode(AudioNode::PacketResult& dpr)
             const char* errStr = (err >= 0) ? FLAC__StreamDecoderStateString[err] : "(invalid code)";
             ESP_LOGW(TAG, "Decoder returned error %s(%d)", errStr, err);
             return mInputEvent ? mInputEvent : kErrDecode;
+        }
+        if (mInputEvent) { //FLAC__stream_decoder_get_state(mDecoder) == FLAC__STREAM_DECODER_END_OF_STREAM) {
+            return mInputEvent;
         }
     }
     mInputPr = nullptr; // we don't want a dangling invalid pointer, even if it's not used
