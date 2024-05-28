@@ -1,7 +1,7 @@
 #include "equalizer.hpp"
 const EqBandConfig EqBandConfig::kPreset10Band[10] = {
-    {31, 3}, {62, 3}, {125, 3}, {250, 3}, {500, 3},
-    {1000, 3}, {2000, 3}, {4000, 3}, {8000, 3}, {15500, -1}
+    {31, -1}, {62, 10}, {125, 10}, {250, 10}, {500, 10},
+    {1000, 10}, {2000, 10}, {4000, 10}, {8000, 10}, {15500, -1}
 };
 
 const EqBandConfig EqBandConfig::kPreset9Band[9] = {

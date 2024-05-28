@@ -12,7 +12,7 @@ struct IEqualizerCore
     virtual Type type() const = 0;
     virtual uint8_t numBands() const = 0;
     virtual void init(StreamFormat fmt, int8_t* gains) = 0;
-    virtual ProcessFunc getProcessFunc(StreamFormat fmt, void*& arg) = 0;
+    virtual ProcessFunc getProcessFunc(StreamFormat fmt) = 0;
     virtual void setBandGain(uint8_t band, int8_t dbGain) = 0;
     virtual void setAllGains(const int8_t* gains=nullptr) = 0;
     virtual EqBandConfig bandConfig(uint8_t n) const = 0;
@@ -20,14 +20,12 @@ struct IEqualizerCore
 };
 
 struct EqBandConfig;
-template<int N>
+template<int N, bool IsStereo>
 class MyEqualizerCore: public IEqualizerCore
 {
 protected:
-    Equalizer<N, float> mEqualizerLeft;
-    Equalizer<N, float> mEqualizerRight;
-    static void process16bitStereo(DataPacket&, void* arg);
-    static void process32bitStereo(DataPacket&, void* arg);
+    Equalizer<N, IsStereo> mEqualizer;
+    static void processFloat(DataPacket& pkt, void* arg);
 public:
     MyEqualizerCore();
     Type type() const override { return kTypeCustom; }
@@ -36,18 +34,17 @@ public:
     MyEqualizerCore(const EqBandConfig* cfg);
     virtual uint8_t numBands() const override { return N; }
     virtual void init(StreamFormat fmt, int8_t* gains) override {
-        auto sr = fmt.sampleRate();
-        mEqualizerLeft.init(sr, gains); mEqualizerRight.init(sr, gains);
+        mEqualizer.init(fmt.sampleRate(), gains);
     }
-    virtual ProcessFunc getProcessFunc(StreamFormat fmt, void*& arg) override;
+    virtual ProcessFunc getProcessFunc(StreamFormat fmt) override;
     virtual void setBandGain(uint8_t band, int8_t dbGain) override {
-        mEqualizerLeft.setBandGain(band, dbGain); mEqualizerRight.setBandGain(band, dbGain);
+        mEqualizer.setBandGain(band, dbGain);
     }
     virtual void setAllGains(const int8_t* gains) override {
-        mEqualizerLeft.setAllGains(gains); mEqualizerRight.setAllGains(gains);
+        mEqualizer.setAllGains(gains);
     }
     virtual EqBandConfig bandConfig(uint8_t n) const override {
-        return mEqualizerLeft.bandConfigs()[n];
+        return mEqualizer.bandConfigs()[n];
     }
 };
 class EspEqualizerCore: public IEqualizerCore
@@ -65,9 +62,7 @@ public:
     void setBandGain(uint8_t band, int8_t dbGain) override;
     void setAllGains(const int8_t *gains) override;
     EqBandConfig bandConfig(uint8_t n) const override;
-    ProcessFunc getProcessFunc(StreamFormat fmt, void*& arg) override {
-        assert(fmt.bitsPerSample() == 16);
-        arg = this;
+    ProcessFunc getProcessFunc(StreamFormat fmt) override {
         return process16bitStereo;
     }
     virtual ~EspEqualizerCore();
@@ -78,24 +73,35 @@ class EqualizerNode: public AudioNode, public DefaultVolumeImpl
 {
 protected:
     enum { kMyEqMinBands = 3, kMyEqMaxBands = 10, kMyEqDefaultNumBands = 8 };
+    typedef void(EqualizerNode::*PreConvertFunc)(DataPacket& pkt);
     NvsHandle& mNvsHandle;
     StreamFormat mFormat;
+    StreamFormat mEspFormat;
     int mSampleRate = 0; // cached from mFormat, for performance
     std::unique_ptr<IEqualizerCore> mCore;
     IEqualizerCore::ProcessFunc mProcessFunc = nullptr;
-    void* mProcFuncArg = nullptr;
     bool mUseEspEq;
     uint8_t mMyEqDefaultNumBands;
     bool mBypass = false;
+    bool mCoreChanged = false;
+    StreamId mStreamId = 0;
+    uint8_t mSourceBps = 0;
+    char mEqName[10] = {};
     std::unique_ptr<EqBandConfig[]> mBandConfigs;
     std::unique_ptr<int8_t[]> mGains;
-    char mEqName[10] = {};
+    float mFloatVolumeMul = 1.0;
+    PreConvertFunc mPreConvertFunc = nullptr;
     std::string eqNameKey() const;
     std::string eqConfigKey(uint8_t nBands) const;
     void loadEqConfig(uint8_t nBands);
     void equalizerReinit(StreamFormat fmt, bool forceLoadGains=false);
     void updateBandGain(uint8_t band);
     void createCustomCore(uint8_t nBands, StreamFormat fmt);
+    void samplesToFloatAndApplyVolume(DataPacket& pkt);
+    void floatSamplesTo24bitAndGetLevelsStereo(DataPacket& pkt);
+    void floatSamplesTo24bitAndGetLevelsMono(DataPacket& pkt);
+    template<int Bps>
+    void samplesTo16bitAndApplyVolume(DataPacket& pkt);
 public:
     Mutex mMutex;
     EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs);
@@ -115,6 +121,11 @@ public:
     bool reconfigEqBand(uint8_t band, uint16_t freq, int8_t bw);
     const EqBandConfig bandCfg(uint8_t n) const { return mCore->bandConfig(n); }
     virtual IAudioVolume* volumeInterface() override { return this; }
+    virtual void setVolume(uint8_t vol) override {
+        printf("setVolume->%u\n", vol);
+        DefaultVolumeImpl::setVolume(vol);
+        mFloatVolumeMul = (float)vol / 100;
+    }
 };
 
 #endif // EQUALIZERNODE_HPP

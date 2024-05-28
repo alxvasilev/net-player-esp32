@@ -95,12 +95,6 @@ void DecoderMp3::logEncodingInfo()
         mMadFrame.header.bitrate / 1000);
 }
 
-static inline uint16_t scale(mad_fixed_t sample) {
-    auto isNeg = sample & 0x80000000;
-    sample >>= (29 - 15);
-    return isNeg ? (sample | 0x8000) : (sample & 0x7fff);
-}
-
 StreamEvent DecoderMp3::output(const mad_pcm& pcmData)
 {
     int nsamples = pcmData.length;
@@ -118,42 +112,30 @@ StreamEvent DecoderMp3::output(const mad_pcm& pcmData)
             return kErrDecode;
         }
         outputFormat.setNumChannels(chans);
-        outputFormat.setBitsPerSample(16);
+        outputFormat.setBitsPerSample(24);
         logEncodingInfo();
-        if (!mParent.codecOnFormatDetected(outputFormat)) {
+        if (!mParent.codecOnFormatDetected(outputFormat, 16)) {
             return kErrStreamStopped;
         }
     }
+    DataPacket::unique_ptr output;
     if (pcmData.channels == 2) {
-        int dataLen = nsamples * 4;
-        DataPacket* output = DataPacket::create(dataLen);
+        output.reset(DataPacket::create(nsamples * 8));
         auto left_ch = pcmData.samples[0];
         auto right_ch = pcmData.samples[1];
-        int n = 0;
-        for (unsigned char* sbytes = (unsigned char*)output->data; n < nsamples; n++) {
-            uint16_t sample = scale(*left_ch++);
-            *(sbytes++) = (sample & 0xff);
-            *(sbytes++) = ((sample >> 8) & 0xff);
-
-            sample = scale(*right_ch++);
-            *(sbytes++) = (sample & 0xff);
-            *(sbytes++) = ((sample >> 8) & 0xff);
+        int32_t* end = (int32_t*)output->data + 2 * nsamples;
+        for (int32_t* wptr = (int32_t*)output->data; wptr < end; ) {
+            *(wptr++) = *(left_ch++) >> 8;
+            *(wptr++) = *(right_ch++) >> 8;
         }
-        return mParent.codecPostOutput(output) ? kEvtData : kErrStreamStopped;
     }
     else if (pcmData.channels == 1) {
-        int dataLen = nsamples * 2;
-        DataPacket* output = DataPacket::create(dataLen);
-        auto samples = pcmData.samples[0];
-        int n = 0;
-        for (unsigned char* sbytes = (unsigned char*)output->data; n < nsamples;) {
-            uint32_t sample = scale(*samples++);
-            *(sbytes++) = (sample & 0xff);
-            *(sbytes++) = ((sample >> 8) & 0xff);
-        }
-        return mParent.codecPostOutput(output) ? kEvtData : kErrStreamStopped;
-    } else {
+        output.reset(DataPacket::create(nsamples * 4));
+        memcpy(output->data, pcmData.samples[0], nsamples * 4);
+    }
+    else {
         ESP_LOGE(TAG, "Unsupported number of channels %d", pcmData.channels);
         return kErrDecode;
     }
+    return mParent.codecPostOutput(output.release()) ? kEvtData : kErrStreamStopped;
 }

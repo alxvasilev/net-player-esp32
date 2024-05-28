@@ -129,5 +129,5 @@ void DecoderAac::getStreamFormat()
         isSbr ? " SBR" : "",
         info.nChans == 2 ? "stereo" : "mono", info.sampRateOut,
         info.bitRate, info.outputSamps);
-    mParent.codecOnFormatDetected(outputFormat);
+    mParent.codecOnFormatDetected(outputFormat, 16);
 }

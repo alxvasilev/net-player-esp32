@@ -163,10 +163,12 @@ StreamEvent DecoderNode::pullData(PacketResult &pr)
     }
     return pr.set(pkt);
 }
-bool DecoderNode::codecOnFormatDetected(StreamFormat fmt)
+bool DecoderNode::codecOnFormatDetected(StreamFormat fmt, uint8_t sourceBps)
 {
-    mPrev->streamFormatDetails(fmt);
-    return mRingBuf.pushBack(new GenericEvent(kEvtStreamChanged, mInStreamId, fmt));
+    StreamFormat sourceFmt(fmt);
+    sourceFmt.setBitsPerSample(sourceBps);
+    mPrev->streamFormatDetails(sourceFmt);
+    return mRingBuf.pushBack(new GenericEvent(kEvtStreamChanged, mInStreamId, fmt, sourceBps));
 }
 bool DecoderNode::codecPostOutput(DataPacket *pkt)
 {

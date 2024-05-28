@@ -34,102 +34,32 @@ http://www.smartelectronix.com/musicdsp/text/filters005.txt
     #define BQ_LOGD(fmt,...)
 #endif
 
-enum BiQuadType: uint8_t {
-    LPF, /* low pass filter */
-    HPF, /* High pass filter */
-    BPF, /* band pass filter */
-    NOTCH, /* Notch Filter */
-    PEQ, /* Peaking band EQ filter */
-    LSH, /* Low shelf filter */
-    HSH /* High shelf filter */
-};
+extern "C" int asmBiquad_f32_df2_mono(const float* input, float* output, int len, float* coefs, float* delays);
+extern "C" int asmBiquad_f32_df2_stereo(const float* input, float* output, int len, float* coefs,
+    float* delaysL, float* delaysR);
 
-template <typename S, bool IsInt=std::is_integral<S>::value>
-struct MulTraitsFor;
-
-template<typename S>
-struct MulTraitsFor<S, false>
-{
-    enum { kIsFloat = true };
-    typedef S Sample;
-    typedef S Wide;
-    static Wide prepareCoeff(const double& coeff, const double& a0)
-    {
-        return coeff / a0;
-    }
-    static Sample normalizeResult(Wide result)
-    {
-        return (Sample)result;
-    }
-};
-
-template<typename S>
-struct MulTraitsFor<S, true>
-{
-    enum { kIsFloat = false };
-    typedef S Sample;
-    enum: bool { kIs32bit = sizeof(S) > 2 };
-    typedef typename std::conditional<kIs32bit, int64_t, int32_t>::type Wide;
-    enum { kCoefDecimalBits = kIs32bit ? 30 : 12 }; // 18 is the minimum for stable operation
-    enum { kCoefDecimalMul = 1 << kCoefDecimalBits };
-    static Wide prepareCoeff(double coeff, double a0)
-    {
-        return round(coeff * kCoefDecimalMul / a0);
-    }
-    static Sample normalizeResult(Wide result)
-    {
-        return (result + kCoefDecimalMul / 2 ) >> kCoefDecimalBits;
-    }
-};
-
-template <typename S>
-class BiQuad
+class Biquad
 {
 public:
-    typedef S Sample;
+    enum Type: uint8_t {
+        LPF, /* low pass filter */
+        HPF, /* High pass filter */
+        BPF, /* band pass filter */
+        NOTCH, /* Notch Filter */
+        PEQ, /* Peaking band EQ filter */
+        LSH, /* Low shelf filter */
+        HSH /* High shelf filter */
+    };
+    typedef float Float; // floating-point type used for samples and calculations
 protected:
-    typedef float Float; // floating-point type for coefficient calculation
-    typedef MulTraitsFor<Sample> Mul;
-    typedef typename Mul::Wide Wide;
-    BiQuadType m_type;
-    /* filter types */
-    Wide m_a0, m_a1, m_a2, m_a3, m_a4;
-    Sample m_x1, m_x2, m_y1, m_y2;
+    Type mType;
+    Float mCoeffs[5];
+    Biquad() {}
 public:
-    BiQuadType type() const { return m_type; }
+    Type type() const { return mType; }
     bool usesGain()
     {
-        return (m_type == BiQuadType::HSH || m_type == BiQuadType::LSH ||
-                m_type == BiQuadType::PEQ);
-    }
-    /** Process one sample */
-    Sample process(Sample sample)
-    {
-        /* compute result */
-        Wide result = m_a0 * sample;
-        result += m_a1 * m_x1;
-        result += m_a2 * m_x2;
-        result += m_a3 * m_y1;
-        result += m_a4 * m_y2;
-        /* shift x1 to x2, sample to x1 */
-        m_x2 = m_x1;
-        m_x1 = sample;
-        /* shift y1 to y2, result to y1 */
-        m_y2 = m_y1;
-        m_y1 = Mul::normalizeResult(result);
-        return m_y1;
-    }
-    /** Initialize the  biquad filter:
-     *  @param type The type of filter
-     *  @param freq The center/cutoff frequency, depending on filter type
-     *  @param bw The bandwidth of the filter (if applicable), in octaves
-     *  @param srate The sample rate of the stream, in Hz
-     *  @param dbGain The gain of the filter, in dB
-     */
-    void init(BiQuadType type)
-    {
-        m_type = type;
-        clearState();
+        return (mType == HSH || mType == LSH || mType == PEQ);
     }
     /** Reconfigure the filter, usually used for adjusting the gain during operation */
     void set(int freq, float bw, int srate, float dbGain)
@@ -143,7 +73,7 @@ public:
         double alpha = sn * sinh(M_LN2 / 2.0 * bw * omega /sn);
         double beta = sqrt(A + A);
 
-        switch (m_type) {
+        switch (mType) {
         case LPF:
             b0 = (1.0f - cs) / 2.0f;
             b1 = 1.0f - cs;
@@ -201,24 +131,97 @@ public:
             a2 = (A + 1) - (A - 1) * cs - beta * sn;
             break;
         default:
-            b0=b1=b2=a0=a1=a2=0; //suppress may be used uninitialized warning
+            b0 = b1 = b2 = a0 = a1 = a2 = 0; //suppress may be used uninitialized warning
             bqassert(false);
         }
-
         /* precompute the coefficients */
-        m_a0 = Mul::prepareCoeff(b0, a0);
-        m_a1 = Mul::prepareCoeff(b1, a0);
-        m_a2 = Mul::prepareCoeff(b2, a0);
-        m_a3 = -Mul::prepareCoeff(a1, a0);
-        m_a4 = -Mul::prepareCoeff(a2, a0);
-        BQ_LOGD("Config band %d Hz, bw: %f, gain: %f (%s)", freq, bw, dbGain, Mul::kIsFloat ? "fp" : "int");
-        BQ_LOGD("a0=%f, a1=%f, a2=%f, a3=%f, a4=%f", b0/a0, b1/a0, b2/a0, a1/a0, a2/a0);
-    }
-    void clearState()
-    {
-        /* zero initial samples */
-        m_x1 = m_x2 = 0;
-        m_y1 = m_y2 = 0;
+        mCoeffs[0] = b0 / a0;
+        mCoeffs[1] = b1 / a0;
+        mCoeffs[2] = b2 / a0;
+        mCoeffs[3] = a1 / a0;
+        mCoeffs[4] = a2 / a0;
+        BQ_LOGD("Config band %d Hz, bw: %f, gain: %f", freq, bw, dbGain);
+        BQ_LOGD("coeffs: b0 = %f, b1 = %f, b2 = %f, a1 = %f, a2 = %f",
+                mCoeffs[0], mCoeffs[1], mCoeffs[2], mCoeffs[3], mCoeffs[4]);
     }
 };
+
+class BiquadMono: public Biquad {
+protected:
+    Float mDelay[2]; //delay line, for Direct Form 2
+public:
+    void clearState()
+    {
+        mDelay[0] = mDelay[1] = 0.0;
+    }
+    void init(Type type)
+    {
+        mType = type;
+        clearState();
+    }
+    inline void process(Float* samples, int len)
+    {
+        asmBiquad_f32_df2_mono(samples, samples, len, mCoeffs, mDelay);
+    }
+    void process_C(Float* samples, int len)
+    {
+        Float dly0 = mDelay[0];
+        Float dly1 = mDelay[1];
+        for (int i = 0; i < len; i++) {
+            Float d0 = samples[i] - mCoeffs[3] * dly0 - mCoeffs[4] * dly1;
+            samples[i] = mCoeffs[0] * d0 +  mCoeffs[1] * dly0 + mCoeffs[2] * dly1;
+            dly1 = dly0;
+            dly0 = d0;
+        }
+        mDelay[0] = dly0;
+        mDelay[1] = dly1;
+    }
+};
+
+class BiquadStereo: public Biquad {
+protected:
+    Float mDelayL[2]; //delay line, for Direct Form 2
+    Float mDelayR[2];
+public:
+    void clearState()
+    {
+        mDelayL[0] = mDelayL[1] = mDelayR[0] = mDelayR[1] = 0.0;
+    }
+    void init(Type type)
+    {
+        mType = type;
+        clearState();
+    }
+    inline void process(Float* samples, int len)
+    {
+        //printf("asm process %d\n", len);
+        //asmBiquad_f32_df2_stereo(samples, samples, len, mCoeffs, mDelayL, mDelayR);
+        asmBiquad_f32_df2_mono(samples, samples, len * 2, mCoeffs, mDelayL);
+        //printf("asm process done\n");
+    }
+    void process_C(Float* samples, int len)
+    {
+        Float dlyL0 = mDelayL[0];
+        Float dlyL1 = mDelayL[1];
+        Float dlyR0 = mDelayR[0];
+        Float dlyR1 = mDelayR[1];
+
+        for (int i = 0; i < len; i++) {
+            Float d0 = *samples - mCoeffs[3] * dlyL0 - mCoeffs[4] * dlyL1;
+            *(samples++) = mCoeffs[0] * d0 +  mCoeffs[1] * dlyL0 + mCoeffs[2] * dlyL1;
+            dlyL1 = dlyL0;
+            dlyL0 = d0;
+
+            d0 = *samples - mCoeffs[3] * dlyR0 - mCoeffs[4] * dlyR1;
+            *(samples++) = mCoeffs[0] * d0 +  mCoeffs[1] * dlyR0 + mCoeffs[2] * dlyR1;
+            dlyR1 = dlyR0;
+            dlyR0 = d0;
+        }
+        mDelayL[0] = dlyL0;
+        mDelayL[1] = dlyL1;
+        mDelayR[0] = dlyR0;
+        mDelayR[1] = dlyR1;
+    }
+};
+
 #endif

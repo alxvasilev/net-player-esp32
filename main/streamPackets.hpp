@@ -26,6 +26,7 @@ public:
         T& as() const { return *(T*)get(); }
     };
     enum: uint8_t {
+        kFlag24BitSamples = 1 << 5,
         kFlagLeftAlignedSamples = 1 << 6,
         kFlagCustomAlloc = 1 << 7  // LSB bits denote the memory block size, in kB
     };
@@ -86,9 +87,10 @@ protected:
 };
 struct GenericEvent: public StreamPacket {
     typedef std::unique_ptr<StreamPacket, Deleter> unique_ptr;
-    uint16_t streamId;
+    uint8_t streamId;
+    uint8_t sourceBps;
     StreamFormat fmt;
-    GenericEvent(StreamEvent aType, uint16_t aStreamId, StreamFormat aFmt)
-        :StreamPacket(aType, 0), streamId(aStreamId), fmt(aFmt) {}
+    GenericEvent(StreamEvent aType, uint8_t aStreamId, StreamFormat aFmt, uint8_t aSourceBps=0)
+        :StreamPacket(aType, 0), streamId(aStreamId), sourceBps(aSourceBps), fmt(aFmt)  {}
 };
 #endif

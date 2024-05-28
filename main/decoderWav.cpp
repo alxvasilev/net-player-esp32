@@ -139,7 +139,7 @@ bool DecoderWav::setupOutput()
     ESP_LOGI(TAG, "Audio format: %d-bit %s-endian %.1fkHz %s",
         bps, outputFormat.isBigEndian() ? "big" : "little", (float)outputFormat.sampleRate() / 1000,
         nChans == 1 ? "mono" : "stereo");
-    mParent.codecOnFormatDetected(outputFormat);
+    mParent.codecOnFormatDetected(outputFormat, outputFormat.bitsPerSample());
     return true;
 }
 StreamEvent DecoderWav::decode(AudioNode::PacketResult& dpr)

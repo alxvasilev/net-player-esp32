@@ -20,28 +20,28 @@ struct EqBandConfig {
     }
 };
 
-template <int N, typename S>
+template <int N, bool IsStereo>
 class Equalizer
 {
 public:
-    typedef S Sample;
     enum { kBandCount = N };
+    typedef typename std::conditional<IsStereo, BiquadStereo, BiquadMono>::type BiquadType;
 protected:
     const EqBandConfig* mBandConfigs;
-    BiQuad<Sample> mFilters[kBandCount];
+    BiquadType mFilters[kBandCount];
     int mSampleRate;
 public:
     Equalizer(const EqBandConfig* cfg)
         : mBandConfigs(cfg ? cfg : EqBandConfig::defaultForNBands(kBandCount))
     {
-        mFilters[0].init((mBandConfigs[0].width < 0) ? BiQuadType::LSH : BiQuadType::PEQ);
-        mFilters[kBandCount - 1].init((mBandConfigs[kBandCount - 1].width < 0) ? BiQuadType::HSH : BiQuadType::PEQ);
+        mFilters[0].init((mBandConfigs[0].width < 0) ? Biquad::LSH : Biquad::PEQ);
+        mFilters[kBandCount - 1].init((mBandConfigs[kBandCount - 1].width < 0) ? Biquad::HSH : Biquad::PEQ);
         for (int i = 1; i < kBandCount - 1; i++) {
-            mFilters[i].init(BiQuadType::PEQ);
+            mFilters[i].init(Biquad::PEQ);
         }
     }
     const EqBandConfig* bandConfigs() const { return mBandConfigs; }
-    const BiQuad<Sample>& filter(uint8_t band) const
+    const BiquadType& filter(uint8_t band) const
     {
         bqassert(band < kBandCount);
         return mFilters[band];
@@ -65,25 +65,12 @@ public:
             mFilters[i].clearState();
         }
     }
-    Equalizer::Sample process(Sample sample)
+    void process(float* input, int len)
     {
 #pragma GCC unroll 16
-        for (int i = kBandCount-1; i >= 0; i--) {
-            sample = mFilters[i].process(sample);
+        for (int i = 0; i < kBandCount; i++) {
+            mFilters[i].process(input, len);
         }
-        return sample;
-    }
-    template<typename T>
-    T processAndNarrow(T sample) {
-        Sample s = process(sample);
-        if (s > std::numeric_limits<T>::max()) {
-            s = std::numeric_limits<T>::max();
-        } else if (s < std::numeric_limits<T>::min()) {
-            s = std::numeric_limits<T>::min();
-        } else if (std::is_integral_v<T> && !std::is_integral_v<Sample>) {
-            s = roundf(s);
-        }
-        return s;
     }
     void setBandGain(uint8_t band, int8_t dbGain, bool clearState=false)
     {

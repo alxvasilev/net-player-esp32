@@ -1,14 +1,15 @@
 #include "equalizerNode.hpp"
 #include <nvsHandle.hpp>
 #include <esp_equalizer.h>
+#include <cmath>
 
 static const char* TAG = "eq";
 
-template <int N>
-MyEqualizerCore<N>::MyEqualizerCore(const EqBandConfig* cfg)
-: mEqualizerLeft(cfg), mEqualizerRight(cfg)
+template <int N, bool Stereo>
+MyEqualizerCore<N, Stereo>::MyEqualizerCore(const EqBandConfig* cfg)
+: mEqualizer(cfg)
 {
-    ESP_LOGI("eq", "Created %d-band custom equalizer", N);
+    ESP_LOGI("eq", "Created %d-band custom %s equalizer", N, Stereo ? "stereo" : "mono");
 }
 
 EqualizerNode::EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs)
@@ -25,7 +26,6 @@ EqualizerNode::EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs)
     } else {
         strcpy(mEqName, "default");
     }
-    equalizerReinit(StreamFormat(44100, 16, 2));
 }
 std::string EqualizerNode::eqNameKey() const
 {
@@ -55,24 +55,32 @@ void EqualizerNode::loadEqConfig(uint8_t nBands)
         ESP_LOGW(TAG, "Loaded custom band-config for %d-band equalizer '%s'", nBands, mEqName);
     }
 }
-#define CASE_N_BANDS(n) \
-    case n: mCore.reset(new MyEqualizerCore<n>(mBandConfigs.get())); break
+#define CASE_N_BANDS(N, Stereo) \
+    case N: mCore.reset(new MyEqualizerCore<N, Stereo>(mBandConfigs.get())); break
+
+#define SWITCH_CASES(Stereo)      \
+    switch (nBands) {             \
+        CASE_N_BANDS(10, Stereo); \
+        CASE_N_BANDS(9, Stereo);  \
+        CASE_N_BANDS(8, Stereo);  \
+        CASE_N_BANDS(7, Stereo);  \
+        CASE_N_BANDS(6, Stereo);  \
+        CASE_N_BANDS(5, Stereo);  \
+        CASE_N_BANDS(4, Stereo);  \
+        CASE_N_BANDS(3, Stereo);  \
+        default:                  \
+            ESP_LOGW(TAG, "createCustomCore: Unsupported number of bands: %d", nBands); \
+            assert(false);                                                              \
+    }
 
 void EqualizerNode::createCustomCore(uint8_t nBands, StreamFormat fmt)
 {
     loadEqConfig(nBands);
-    switch(nBands) {
-        CASE_N_BANDS(10);
-        CASE_N_BANDS(9);
-        CASE_N_BANDS(8);
-        CASE_N_BANDS(7);
-        CASE_N_BANDS(6);
-        CASE_N_BANDS(5);
-        CASE_N_BANDS(4);
-        CASE_N_BANDS(3);
-        default:
-            ESP_LOGW(TAG, "createCustomCore: Unsupported number of bands: %d", nBands);
-            assert(false);
+    if (fmt.numChannels() >= 2) {
+        SWITCH_CASES(true);
+    }
+    else {
+        SWITCH_CASES(false);
     }
     mGains.reset(new int8_t[nBands]);
 }
@@ -80,11 +88,26 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
 {
     ESP_LOGI(TAG, "Equalizer reinit");
     mFormat = fmt;
+    mEspFormat = fmt;
     bool justCreated = false;
-    if (mUseEspEq && fmt.bitsPerSample() <= 16 && fmt.sampleRate() <= 48000) {
+    if (mUseEspEq && fmt.sampleRate() <= 48000) {
         if (!mCore || mCore->type() != IEqualizerCore::kTypeEsp) {
             mCore.reset(new EspEqualizerCore);
             mGains.reset(new int8_t[10]);
+            auto bps = fmt.bitsPerSample();
+            if (bps <= 16) {
+                mPreConvertFunc = nullptr; // no conversion and VolumeInterface for volume
+            }
+            else if (bps == 24) {
+                mPreConvertFunc = &EqualizerNode::samplesTo16bitAndApplyVolume<24>;
+            }
+            else if (bps == 32) {
+                mPreConvertFunc = &EqualizerNode::samplesTo16bitAndApplyVolume<32>;
+            }
+            else {
+                myassert(false);
+            }
+            mEspFormat.setBitsPerSample(16);
             justCreated = true;
         }
     }
@@ -98,6 +121,7 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
                 (len >= kMyEqMinBands && len <= kMyEqMaxBands))
             ? len : mMyEqDefaultNumBands;
             createCustomCore(nBands, fmt);
+            mPreConvertFunc = &EqualizerNode::samplesToFloatAndApplyVolume;
             justCreated = true;
         }
     }
@@ -112,7 +136,7 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
         }
     }
     mCore->init(fmt, mGains.get());
-    mProcessFunc = mCore->getProcessFunc(fmt, mProcFuncArg);
+    mProcessFunc = mCore->getProcessFunc(fmt);
 }
 bool EqualizerNode::setMyEqNumBands(uint8_t n) {
     if (n < kMyEqMinBands || n > kMyEqMaxBands) {
@@ -203,35 +227,18 @@ void EqualizerNode::useEspEqualizer(bool use)
     mUseEspEq = use;
     mNvsHandle.write("eq.useStock", (uint8_t)mUseEspEq);
     equalizerReinit(mFormat, true);
+    mCoreChanged = true;
 }
 
-template<int N>
-void MyEqualizerCore<N>::process16bitStereo(DataPacket& pkt, void* arg) {
-    auto& self = *static_cast<MyEqualizerCore<N>*>(arg);
-    auto end = (int16_t*)(pkt.data + pkt.dataLen);
-    for (auto sample = (int16_t*)pkt.data; sample < end;) {
-        *sample = self.mEqualizerLeft.processAndNarrow(*sample);
-        sample++;
-        *sample = self.mEqualizerRight.processAndNarrow(*sample);
-        sample++;
-    }
+template<int N, bool Stereo>
+void MyEqualizerCore<N, Stereo>::processFloat(DataPacket& pkt, void* arg) {
+    auto& self = *static_cast<MyEqualizerCore<N, Stereo>*>(arg);
+    self.mEqualizer.process((float*)pkt.data, pkt.dataLen / ((Stereo ? 2 : 1) * sizeof(float)));
 }
-template<int N>
-void MyEqualizerCore<N>::process32bitStereo(DataPacket& pkt, void* arg) {
-    auto& self = *static_cast<MyEqualizerCore<N>*>(arg);
-    auto end = (int32_t*)(pkt.data + pkt.dataLen);
-    for (auto sample = (int32_t*)pkt.data; sample < end;) {
-        *sample = self.mEqualizerLeft.process(*sample);
-        sample++;
-        *sample = self.mEqualizerRight.process(*sample);
-        sample++;
-    }
-}
-template<int N>
-IEqualizerCore::ProcessFunc MyEqualizerCore<N>::getProcessFunc(StreamFormat fmt, void*& arg)
+template<int N, bool Stereo>
+IEqualizerCore::ProcessFunc MyEqualizerCore<N, Stereo>::getProcessFunc(StreamFormat fmt)
 {
-    arg = this;
-    return(fmt.bitsPerSample() <= 16) ? process16bitStereo : process32bitStereo;
+    return processFloat;
 }
 
 EspEqualizerCore::EspEqualizerCore()
@@ -286,31 +293,107 @@ EspEqualizerCore::~EspEqualizerCore()
         esp_equalizer_uninit(mEqualizer);
     }
 }
+void EqualizerNode::samplesToFloatAndApplyVolume(DataPacket& pkt)
+{
+    myassert(mFormat.bitsPerSample() == 24);
+    int32_t* end = (int32_t*)(pkt.data + pkt.dataLen);
+    for (int32_t* sptr = (int32_t*)pkt.data; sptr < end; sptr++) {
+        *((float*)sptr) = (float)(*sptr) * mFloatVolumeMul;
+    }
+}
+void EqualizerNode::floatSamplesTo24bitAndGetLevelsStereo(DataPacket& pkt) {
+    float* end = (float*)(pkt.data + pkt.dataLen);
+    int32_t leftPeak = 0;
+    int32_t rightPeak = 0;
+    for (float* sptr = (float*)pkt.data; sptr < end;) {
+        int32_t ival = *((int32_t*)sptr) = lroundf(*sptr) << 8; // I2S requires samples to be left-aligned
+        if (ival > leftPeak) {
+            leftPeak = ival;
+        }
+        sptr++;
+        ival = *((int32_t*)sptr) = lroundf(*sptr) << 8;
+        if (ival > rightPeak) {
+            rightPeak = ival;
+        }
+        sptr++;
+    }
+    mAudioLevels.left = leftPeak >> 16;
+    mAudioLevels.right = rightPeak >> 16;
+}
+void EqualizerNode::floatSamplesTo24bitAndGetLevelsMono(DataPacket& pkt) {
+    float* end = (float*)(pkt.data + pkt.dataLen);
+    int32_t peak = 0;
+    for (float* sptr = (float*)pkt.data; sptr < end; sptr++) {
+        int32_t ival = *((int32_t*)sptr) = lroundf(*sptr) << 8;
+        if (ival > peak) {
+            peak = ival;
+        }
+    }
+    mAudioLevels.left = mAudioLevels.right = peak;
+}
+
+template<int Bps>
+void EqualizerNode::samplesTo16bitAndApplyVolume(DataPacket& pkt)
+{
+    static_assert(Bps > 16, "");
+    // shift right to both decrease bps and volume-divide
+    enum { kShift = Bps - 16 + kVolumeDivShift, kHalfDiv = 1 << (kShift-1) };
+    int32_t* end = (int32_t*)(pkt.data + pkt.dataLen);
+    int16_t* wptr = (int16_t*)pkt.data;
+    for(int32_t* rptr = (int32_t*)pkt.data; rptr < end; rptr++) {
+        auto val = *rptr;
+        *wptr++ = (val * mVolume + ((val >= 0) ? kHalfDiv : -kHalfDiv)) >> kShift;
+    }
+    pkt.dataLen >>= 1;
+}
+
 StreamEvent EqualizerNode::pullData(PacketResult& dpr)
 {
+    if (mCoreChanged) {
+        mCoreChanged = false;
+        dpr.packet.reset(new GenericEvent(kEvtStreamChanged, mStreamId, mUseEspEq ? mEspFormat : mFormat, mSourceBps));
+        printf("==========posting kEvtStreamChanged before core changed, bps: %d\n", dpr.genericEvent().fmt.bitsPerSample());
+        return kEvtStreamChanged;
+    }
     auto event = mPrev->pullData(dpr);
     if (!event) {
         MutexLocker locker(mMutex);
-        if (mVolLevelMeasurePoint == 0) {
-            volumeNotifyLevelCallback(); // notify previous levels to compensate output buffering delay
-            volumeGetLevel(dpr);
+        if (mCore->type() == IEqualizerCore::kTypeEsp) {
+            if (mFormat.bitsPerSample() > 16) {
+                (this->*mPreConvertFunc)(dpr.dataPacket());
+            }
+            else {
+                volumeProcess(dpr.dataPacket());
+            }
+            if (!mBypass) {
+                mProcessFunc(dpr.dataPacket(), mCore.get());
+            }
+            if (mVolLevelMeasurePoint == 1) {
+                volumeNotifyLevelCallback(); // notify previous levels to compensate output buffering delay
+                volumeGetLevel(dpr.dataPacket());
+            }
         }
-        if (volProcessingEnabled()) {
-            volumeProcess(dpr);
-        }
-        if (!mBypass) {
-            mProcessFunc(dpr.dataPacket(), this->mProcFuncArg);
-        }
-        if (mVolLevelMeasurePoint == 1) {
-            volumeNotifyLevelCallback(); // notify previous levels to compensate output buffering delay
-            volumeGetLevel(dpr);
+        else {
+            (this->*mPreConvertFunc)(dpr.dataPacket());
+            if (!mBypass) {
+                mProcessFunc(dpr.dataPacket(), mCore.get());
+            }
+            floatSamplesTo24bitAndGetLevelsStereo(dpr.dataPacket());
+            volumeNotifyLevelCallback();
         }
         return kEvtData;
     }
     else if (event == kEvtStreamChanged) {
+        auto& pkt = dpr.genericEvent();
         MutexLocker locker(mMutex);
-        volumeProcess(dpr);
-        equalizerReinit(dpr.genericEvent().fmt);
+        mStreamId = pkt.streamId;
+        mSourceBps = pkt.sourceBps;
+        auto& fmt = pkt.fmt;
+        equalizerReinit(fmt);
+        volumeUpdateFormat(mEspFormat);
+        if (mCore->type() == IEqualizerCore::kTypeEsp) {
+            fmt.setBitsPerSample(16); // For the ESP core we transform to 16bit
+        }
         return event;
     }
     else {

@@ -221,38 +221,25 @@ bool updateVolumeFormat(StreamFormat fmt, bool leftAligned)
     }
 }
 protected:
-void volumeProcess(AudioNode::PacketResult& dpr)
+void volumeProcess(DataPacket& pkt)
 {
-    if (mVolume == kVolumeDiv) { // 100% volume, nothing to change
-        return;
-    }
-    auto& pkt = *dpr.packet.get();
-    if (pkt.type == kEvtData) {
-        (this->*mProcessVolumeFunc)(static_cast<DataPacket&>(pkt));
-    }
-    else if (pkt.type == kEvtStreamChanged) {
-        auto fmt = dpr.genericEvent().fmt;
-        if (fmt != mFormat) {
-            updateVolumeFormat(fmt, false);
-        }
+    if (mVolume != kVolumeDiv) { // 100% volume, nothing to change
+        (this->*mProcessVolumeFunc)(pkt);
     }
 }
-void volumeGetLevel(AudioNode::PacketResult& dpr)
+void volumeUpdateFormat(StreamFormat fmt)
 {
-    auto& pkt = *dpr.packet.get();
-    if (pkt.type == kEvtData) {
-        uint8_t laFlag = (pkt.flags & StreamPacket::kFlagLeftAlignedSamples);
-        if (laFlag != mGetLevelLeftAlignedFlag) {
-            updateVolumeFormat(mFormat, laFlag);
-        }
-        (this->*mGetLevelFunc)((DataPacket&)pkt);
+    if (fmt != mFormat) {
+        updateVolumeFormat(fmt, false);
     }
-    else if (pkt.type == kEvtStreamChanged) {
-        auto fmt = dpr.genericEvent().fmt;
-        if (fmt != mFormat) {
-            updateVolumeFormat(fmt, false);
-        }
+}
+void volumeGetLevel(DataPacket& pkt)
+{
+    uint8_t laFlag = (pkt.flags & StreamPacket::kFlagLeftAlignedSamples);
+    if (laFlag != mGetLevelLeftAlignedFlag) {
+        updateVolumeFormat(mFormat, laFlag);
     }
+    (this->*mGetLevelFunc)((DataPacket&)pkt);
 }
 void volumeNotifyLevelCallback()
 {

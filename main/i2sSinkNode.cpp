@@ -14,6 +14,7 @@
 #include <type_traits>
 #include <limits>
 #include <math.h> // for roundf
+#define DEBUG_TIMING 1
 
 void I2sOutputNode::adjustSamplesForInternalDac(char* sBuff, int len)
 {
