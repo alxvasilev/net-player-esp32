@@ -205,15 +205,19 @@ public:
         Float dlyL1 = mDelayL[1];
         Float dlyR0 = mDelayR[0];
         Float dlyR1 = mDelayR[1];
-
+        auto b0 = mCoeffs[0];
+        auto b1 = mCoeffs[1];
+        auto b2 = mCoeffs[2];
+        auto a1 = mCoeffs[3];
+        auto a2 = mCoeffs[4];
         for (int i = 0; i < len; i++) {
-            Float d0 = *samples - mCoeffs[3] * dlyL0 - mCoeffs[4] * dlyL1;
-            *(samples++) = mCoeffs[0] * d0 +  mCoeffs[1] * dlyL0 + mCoeffs[2] * dlyL1;
+            Float d0 = *samples - a1 * dlyL0 - a2 * dlyL1;
+            *(samples++) = b0 * d0 +  b1 * dlyL0 + b2 * dlyL1;
             dlyL1 = dlyL0;
             dlyL0 = d0;
 
-            d0 = *samples - mCoeffs[3] * dlyR0 - mCoeffs[4] * dlyR1;
-            *(samples++) = mCoeffs[0] * d0 +  mCoeffs[1] * dlyR0 + mCoeffs[2] * dlyR1;
+            d0 = *samples - a1 * dlyR0 - a2 * dlyR1;
+            *(samples++) = b0 * d0 +  b1 * dlyR0 + b2 * dlyR1;
             dlyR1 = dlyR0;
             dlyR0 = d0;
         }
