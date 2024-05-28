@@ -194,10 +194,7 @@ public:
     }
     inline void process(Float* samples, int len)
     {
-        //printf("asm process %d\n", len);
-        //asmBiquad_f32_df2_stereo(samples, samples, len, mCoeffs, mDelayL, mDelayR);
-        asmBiquad_f32_df2_mono(samples, samples, len * 2, mCoeffs, mDelayL);
-        //printf("asm process done\n");
+        asmBiquad_f32_df2_stereo(samples, samples, len, mCoeffs, mDelayL, mDelayR);
     }
     void process_C(Float* samples, int len)
     {

@@ -116,7 +116,7 @@ asmBiquad_f32_df2_stereo:
     // f11 is d0, f12 is output
     addi  a3, a3, -4        // output--
     lsi   f11, a2, 0        // d0 = *input
-    loopnez a3, loop_bq_end_stereo
+    loopnez a4, loop_bq_end_stereo
         madd.s  f11, f5, f7  // d0 += -a1 * wL0
         mul.s   f12, f1, f7  // y = b1 * wL0
         madd.s  f11, f6, f8  // d0 += -a2 * wL1
