@@ -1062,7 +1062,7 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
                 case AudioNode::kEventBufUnderrun:
                     return lcdShowBufUnderrunImmediate(); break;
                 case AudioNode::kEventNewStream:
-                    return onNewStream(StreamFormat(numArg)); break;
+                    return onNewStream(StreamFormat(numArg), arg); break;
                 case AudioNode::kEventStreamEnd:
                     if (numArg == mStreamSeqNo) {
                         this->stop();
@@ -1198,9 +1198,12 @@ void AudioPlayer::lcdWriteStreamInfo(int8_t charOfs, const char* str)
     mLcd.gotoXY(x, mVuDisplay.yTop() - kStreamInfoFont.height - 2);
     mLcd.puts(str);
 }
-void AudioPlayer::onNewStream(StreamFormat fmt)
+void AudioPlayer::onNewStream(StreamFormat fmt, int sourceBps)
 {
     mStreamFormat = fmt;
+    if (sourceBps < mStreamFormat.bitsPerSample()) {
+        mStreamFormat.setBitsPerSample(sourceBps);
+    }
     lcdUpdateCodec();
     lcdUpdateAudioFormat();
     mTitleScrollEnabled = mLcdTrackTitle.dataSize() && !streamIsCpuHeavy();

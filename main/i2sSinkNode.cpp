@@ -14,7 +14,7 @@
 #include <type_traits>
 #include <limits>
 #include <math.h> // for roundf
-#define DEBUG_TIMING 1
+//#define DEBUG_TIMING 1
 
 void I2sOutputNode::adjustSamplesForInternalDac(char* sBuff, int len)
 {
@@ -143,7 +143,7 @@ void I2sOutputNode::nodeThreadFunc()
                         setFormat(pkt.fmt);
                         mSampleCtr = 0;
                         mStreamId = pkt.streamId;
-                        plSendEvent(kEventNewStream, pkt.fmt.asNumCode());
+                        plSendEvent(kEventNewStream, pkt.fmt.asNumCode(), pkt.sourceBps);
                         plSendEvent(kEventPlaying);
                     }
                     else if (evt == kEvtStreamEnd) {
@@ -206,7 +206,7 @@ bool I2sOutputNode::setFormat(StreamFormat fmt)
     if (bps == 24) {
         samplerate -= roundf(samplerate * 27.0f / 440);
     }
-
+    i2s_zero_dma_buffer(mPort);
     ESP_LOGW(mTag, "Setting output mode to %d-bit %s, %d Hz", bps,
         fmt.isStereo() ? "stereo" : "mono", samplerate);
     auto err = i2s_set_clk(mPort, samplerate, bps, (i2s_channel_t)fmt.numChannels());

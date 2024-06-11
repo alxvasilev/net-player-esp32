@@ -177,7 +177,7 @@ FLAC__StreamDecoderWriteStatus DecoderFlac::writeCb(const FLAC__StreamDecoder *d
         if (!self.selectOutputFunc(nChans, bps)) {
             return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
         }
-        self.mParent.codecOnFormatDetected(self.outputFormat, self.outputFormat.bitsPerSample());
+        self.mParent.codecOnFormatDetected(self.outputFormat, bps);
     }
     self.mHasOutput = true;
     if ((self.*self.mOutputFunc)(nSamples, buffer) == false) {

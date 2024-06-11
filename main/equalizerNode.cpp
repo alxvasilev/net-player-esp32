@@ -233,7 +233,9 @@ void EqualizerNode::useEspEqualizer(bool use)
 template<int N, bool Stereo>
 void MyEqualizerCore<N, Stereo>::processFloat(DataPacket& pkt, void* arg) {
     auto& self = *static_cast<MyEqualizerCore<N, Stereo>*>(arg);
+    ElapsedTimer t;
     self.mEqualizer.process((float*)pkt.data, pkt.dataLen / ((Stereo ? 2 : 1) * sizeof(float)));
+    printf("process %d took %d ms\n", pkt.dataLen, t.msElapsed());
 }
 template<int N, bool Stereo>
 IEqualizerCore::ProcessFunc MyEqualizerCore<N, Stereo>::getProcessFunc(StreamFormat fmt)
@@ -349,15 +351,16 @@ void EqualizerNode::samplesTo16bitAndApplyVolume(DataPacket& pkt)
 
 StreamEvent EqualizerNode::pullData(PacketResult& dpr)
 {
-    if (mCoreChanged) {
-        mCoreChanged = false;
-        dpr.packet.reset(new GenericEvent(kEvtStreamChanged, mStreamId, mUseEspEq ? mEspFormat : mFormat, mSourceBps));
-        printf("==========posting kEvtStreamChanged before core changed, bps: %d\n", dpr.genericEvent().fmt.bitsPerSample());
-        return kEvtStreamChanged;
-    }
     auto event = mPrev->pullData(dpr);
     if (!event) {
         MutexLocker locker(mMutex);
+        if (mCoreChanged) {
+            mCoreChanged = false;
+            // we have a race condition if we handle mCoreChanged before pullData, because we are unlocked
+            // during pullData and someone may set mCoreChanged. In that case we can't return both the
+            // kEvtStreamChanged and the data packet
+            return dpr.set(new GenericEvent(kEvtStreamChanged, mStreamId, mUseEspEq ? mEspFormat : mFormat, mSourceBps));
+        }
         if (mCore->type() == IEqualizerCore::kTypeEsp) {
             if (mFormat.bitsPerSample() > 16) {
                 (this->*mPreConvertFunc)(dpr.dataPacket());
