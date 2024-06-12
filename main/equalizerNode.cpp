@@ -3,8 +3,8 @@
 #include <esp_equalizer.h>
 #include <cmath>
 
-#define EQ_PERF 1
-#define CONVERT_PERF 1
+//#define EQ_PERF 1
+//#define CONVERT_PERF 1
 
 static const char* TAG = "eq";
 
@@ -103,6 +103,7 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
             auto bps = mInFormat.bitsPerSample();
             if (bps <= 16) {
                 mPreConvertFunc = nullptr; // no conversion and use DefaultVolumeImpl for volume
+                volumeUpdateFormat(mOutFormat);
             }
             else if (bps == 24) {
                 mPreConvertFunc = &EqualizerNode::samplesTo16bitAndApplyVolume<24>;
@@ -471,7 +472,6 @@ StreamEvent EqualizerNode::pullData(PacketResult& dpr)
         mSourceBps = pkt.sourceBps;
         equalizerReinit(fmt);
         fmt = mOutFormat;
-        volumeUpdateFormat(mOutFormat);
         return event;
     }
     else {

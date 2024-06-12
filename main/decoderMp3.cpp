@@ -127,14 +127,18 @@ StreamEvent DecoderMp3::output(const mad_pcm& pcmData)
         auto right_ch = pcmData.samples[1];
         int32_t* end = (int32_t*)(output->data + dataLen);
         for (int32_t* wptr = (int32_t*)output->data; wptr < end; ) {
-            *(wptr++) = *(left_ch++) >> 8;
-            *(wptr++) = *(right_ch++) >> 8;
+            *(wptr++) = *(left_ch++) >> 4;
+            *(wptr++) = *(right_ch++) >> 4;
         }
     }
     else if (pcmData.channels == 1) {
         int dataLen = nsamples * 4;
         output.reset(DataPacket::create(dataLen));
-        memcpy(output->data, pcmData.samples[0], dataLen);
+        auto rptr = pcmData.samples[0];
+        auto end = (int32_t*)(output->data + dataLen);
+        for (int32_t* wptr = (int32_t*)output->data; wptr < end; wptr++) {
+            *(wptr++) = *(rptr++) >> 4;
+        }
     }
     else {
         ESP_LOGE(TAG, "Unsupported number of channels %d", pcmData.channels);
