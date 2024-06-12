@@ -107,9 +107,9 @@ bool DecoderFlac::outputStereoSamples(int nSamples, const FLAC__int32* const cha
     if (nSamples & 1) {
         ESP_LOGW(TAG, "Uneven number of output samples: %d\n", nSamples);
     }
-    int pktNsamples = (nSamples > kOutputSplitMaxSamples ? nSamples >> 1 : nSamples) * 2;
-    int outputAlloc = pktNsamples * 4;
-    int outputLen = pktNsamples * sizeof(T);
+    int pktNsamples = nSamples > kOutputSplitMaxSamples ? nSamples >> 1 : nSamples;
+    int outputAlloc = pktNsamples * 8;
+    int outputLen = pktNsamples * 2 * sizeof(T);
     DataPacket::unique_ptr output(DataPacket::create(outputAlloc));
     output->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
     T* wptr = (T*)output->data;
