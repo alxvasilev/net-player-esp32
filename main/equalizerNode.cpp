@@ -3,6 +3,9 @@
 #include <esp_equalizer.h>
 #include <cmath>
 
+#define EQ_PERF 1
+#define CONVERT_PERF 1
+
 static const char* TAG = "eq";
 
 template <int N, bool Stereo>
@@ -87,16 +90,19 @@ void EqualizerNode::createCustomCore(uint8_t nBands, StreamFormat fmt)
 void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
 {
     ESP_LOGI(TAG, "Equalizer reinit");
-    mFormat = fmt;
-    mEspFormat = fmt;
+    bool fmtChanged = fmt.asNumCode() && (fmt != mInFormat);
+    if (fmtChanged) {
+        mOutFormat = mInFormat = fmt;
+    }
     bool justCreated = false;
-    if (mUseEspEq && fmt.sampleRate() <= 48000) {
-        if (!mCore || mCore->type() != IEqualizerCore::kTypeEsp) {
+    if (mUseEspEq && mInFormat.sampleRate() <= 48000) {
+        mOutFormat.setBitsPerSample(16);
+        if (fmtChanged || !mCore || mCore->type() != IEqualizerCore::kTypeEsp) {
             mCore.reset(new EspEqualizerCore);
             mGains.reset(new int8_t[10]);
-            auto bps = fmt.bitsPerSample();
+            auto bps = mInFormat.bitsPerSample();
             if (bps <= 16) {
-                mPreConvertFunc = nullptr; // no conversion and VolumeInterface for volume
+                mPreConvertFunc = nullptr; // no conversion and use DefaultVolumeImpl for volume
             }
             else if (bps == 24) {
                 mPreConvertFunc = &EqualizerNode::samplesTo16bitAndApplyVolume<24>;
@@ -107,21 +113,34 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
             else {
                 myassert(false);
             }
-            mEspFormat.setBitsPerSample(16);
             justCreated = true;
         }
     }
     else { // need custom eq
+        mOutFormat.setBitsPerSample(24);
         bool isDefault = (strcmp(mEqName, "default") == 0);
-        if (!mCore || mCore->type() != IEqualizerCore::kTypeCustom ||
+        if (fmtChanged || !mCore || mCore->type() != IEqualizerCore::kTypeCustom ||
           (isDefault && (mCore->numBands() != mMyEqDefaultNumBands))) {
             size_t len = 0;
             uint8_t nBands = (!isDefault &&
                 (mNvsHandle.readBlob(eqNameKey().c_str(), nullptr, len) == ESP_OK) &&
                 (len >= kMyEqMinBands && len <= kMyEqMaxBands))
             ? len : mMyEqDefaultNumBands;
-            createCustomCore(nBands, fmt);
-            mPreConvertFunc = &EqualizerNode::samplesToFloatAndApplyVolume;
+            createCustomCore(nBands, mInFormat);
+            auto bps = mInFormat.bitsPerSample();
+            if (bps == 16) {
+                mPreConvertFunc = &EqualizerNode::samples16or8ToFloatAndApplyVolume<int16_t>;
+            }
+            else if (bps == 24) {
+                mPreConvertFunc = &EqualizerNode::samples24or32ToFloatAndApplyVolume;
+            }
+            else if (bps == 8) {
+                mPreConvertFunc = &EqualizerNode::samples16or8ToFloatAndApplyVolume<int8_t>;
+            }
+            else {
+                ESP_LOGE(TAG, "Unsupported bits per sample: %d", bps);
+                assert(false);
+            }
             justCreated = true;
         }
     }
@@ -135,8 +154,8 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
             memset(mGains.get(), 0, nBands);
         }
     }
-    mCore->init(fmt, mGains.get());
-    mProcessFunc = mCore->getProcessFunc(fmt);
+    mCore->init(mInFormat, mGains.get());
+    mProcessFunc = mCore->getProcessFunc(mInFormat);
 }
 bool EqualizerNode::setMyEqNumBands(uint8_t n) {
     if (n < kMyEqMinBands || n > kMyEqMaxBands) {
@@ -144,14 +163,16 @@ bool EqualizerNode::setMyEqNumBands(uint8_t n) {
     }
     MutexLocker locker(mMutex);
     mMyEqDefaultNumBands = n;
-    equalizerReinit(mFormat);
+    equalizerReinit();
     mNvsHandle.write("eq.nbands", (uint8_t)n);
     return true;
 }
 bool EqualizerNode::setBandGain(uint8_t band, int8_t dbGain)
 {
     MutexLocker locker(mMutex);
-    assert(mCore);
+    if (!mCore) {
+        return false;
+    }
     if (band > mCore->numBands()) {
         return false;
     }
@@ -202,7 +223,7 @@ bool EqualizerNode::reconfigEqBand(uint8_t band, uint16_t freq, int8_t bw)
     ESP_LOGI(TAG, "Reconfiguring band %d: freq=%d, bw=%d", band, bandCfg->freq, bandCfg->width);
     if (mNvsHandle.writeBlob(eqConfigKey(nBands).c_str(), cfg, len) == ESP_OK) {
         mCore.reset();
-        equalizerReinit(mFormat);
+        equalizerReinit();
         return true;
     }
     return false;
@@ -215,7 +236,7 @@ bool EqualizerNode::switchPreset(const char *name)
         return false;
     }
     memcpy(mEqName, name, len + 1);
-    equalizerReinit(mFormat, true);
+    equalizerReinit(0, true);
     return true;
 }
 void EqualizerNode::useEspEqualizer(bool use)
@@ -226,16 +247,20 @@ void EqualizerNode::useEspEqualizer(bool use)
     }
     mUseEspEq = use;
     mNvsHandle.write("eq.useStock", (uint8_t)mUseEspEq);
-    equalizerReinit(mFormat, true);
+    equalizerReinit(0, true);
     mCoreChanged = true;
 }
 
 template<int N, bool Stereo>
 void MyEqualizerCore<N, Stereo>::processFloat(DataPacket& pkt, void* arg) {
     auto& self = *static_cast<MyEqualizerCore<N, Stereo>*>(arg);
-    ElapsedTimer t;
+#ifdef EQ_PERF
+    ElapsedTimer timer;
+#endif
     self.mEqualizer.process((float*)pkt.data, pkt.dataLen / ((Stereo ? 2 : 1) * sizeof(float)));
-    printf("process %d took %d ms\n", pkt.dataLen, t.msElapsed());
+#ifdef EQ_PERF
+    ESP_LOGI(TAG, "eq process(my) %d: %d ms", pkt.dataLen / 8, timer.msElapsed());
+#endif
 }
 template<int N, bool Stereo>
 IEqualizerCore::ProcessFunc MyEqualizerCore<N, Stereo>::getProcessFunc(StreamFormat fmt)
@@ -286,8 +311,14 @@ EqBandConfig EspEqualizerCore::bandConfig(uint8_t n) const
 void EspEqualizerCore::process16bitStereo(DataPacket& pkt, void *arg)
 {
     auto& self = *static_cast<EspEqualizerCore*>(arg);
+#ifdef EQ_PERF
+    ElapsedTimer timer;
+#endif
     esp_equalizer_process(self.mEqualizer, (unsigned char*)pkt.data, pkt.dataLen,
                           self.mSampleRate, self.mChanCount);
+#ifdef EQ_PERF
+    ESP_LOGI(TAG, "eq process %d (esp): %dms", pkt.dataLen / 4, timer.msElapsed());
+#endif
 }
 EspEqualizerCore::~EspEqualizerCore()
 {
@@ -295,12 +326,44 @@ EspEqualizerCore::~EspEqualizerCore()
         esp_equalizer_uninit(mEqualizer);
     }
 }
-void EqualizerNode::samplesToFloatAndApplyVolume(DataPacket& pkt)
+void EqualizerNode::samples24or32ToFloatAndApplyVolume(PacketResult& pr)
 {
-    myassert(mFormat.bitsPerSample() == 24);
+    auto& pkt = pr.dataPacket();
+    myassert(mInFormat.bitsPerSample() >= 24);
     int32_t* end = (int32_t*)(pkt.data + pkt.dataLen);
     for (int32_t* sptr = (int32_t*)pkt.data; sptr < end; sptr++) {
         *((float*)sptr) = (float)(*sptr) * mFloatVolumeMul;
+    }
+}
+template<typename S>
+void EqualizerNode::samples16or8ToFloatAndApplyVolume(PacketResult& pr)
+{
+    enum { kSampleSizeMul = 4 / sizeof(S), kShift = 24 - sizeof(S) * 8 };
+    myassert(mInFormat.bitsPerSample() == sizeof(S) * 8);
+
+    if (!(pr.packet->flags & StreamPacket::kFlagHasSpaceFor32Bit)) {
+        // no space in input packet, create new packet to fit the float samples
+        DataPacket::unique_ptr inPkt((DataPacket*)pr.packet.release());
+        pr.packet.reset(DataPacket::create(inPkt->dataLen * kSampleSizeMul));
+        auto& pkt = pr.dataPacket();
+        float* wptr = (float*)pkt.data;
+        const S* rptr = (S*)inPkt->data;
+        S* end = (S*)(inPkt->data + inPkt->dataLen);
+        while(rptr < end) {
+            *(wptr++) = ((float)(*(rptr++) << kShift)) * mFloatVolumeMul;
+        }
+    }
+    else { // in-place conversion
+        auto& pkt = pr.dataPacket();
+        float* wptr = (float*)(pkt.data + pkt.dataLen * kSampleSizeMul);
+        const S* rptr = (S*)(pkt.data + pkt.dataLen);
+        S* start = (S*)pkt.data;
+        while(rptr > start) {
+            *(--wptr) = ((float)(*(--rptr) << kShift)) * mFloatVolumeMul;
+        }
+        myassert(rptr == start);
+        myassert(wptr == (float*)start);
+        pkt.dataLen *= kSampleSizeMul;
     }
 }
 void EqualizerNode::floatSamplesTo24bitAndGetLevelsStereo(DataPacket& pkt) {
@@ -335,8 +398,10 @@ void EqualizerNode::floatSamplesTo24bitAndGetLevelsMono(DataPacket& pkt) {
 }
 
 template<int Bps>
-void EqualizerNode::samplesTo16bitAndApplyVolume(DataPacket& pkt)
+void EqualizerNode::samplesTo16bitAndApplyVolume(PacketResult& pr)
 {
+    auto& pkt = pr.dataPacket();
+    // samples are in 32bit words
     static_assert(Bps > 16, "");
     // shift right to both decrease bps and volume-divide
     enum { kShift = Bps - 16 + kVolumeDivShift, kHalfDiv = 1 << (kShift-1) };
@@ -359,11 +424,17 @@ StreamEvent EqualizerNode::pullData(PacketResult& dpr)
             // we have a race condition if we handle mCoreChanged before pullData, because we are unlocked
             // during pullData and someone may set mCoreChanged. In that case we can't return both the
             // kEvtStreamChanged and the data packet
-            return dpr.set(new GenericEvent(kEvtStreamChanged, mStreamId, mUseEspEq ? mEspFormat : mFormat, mSourceBps));
+            return dpr.set(new GenericEvent(kEvtStreamChanged, mStreamId, mOutFormat, mSourceBps));
         }
         if (mCore->type() == IEqualizerCore::kTypeEsp) {
-            if (mFormat.bitsPerSample() > 16) {
-                (this->*mPreConvertFunc)(dpr.dataPacket());
+            if (mInFormat.bitsPerSample() > 16) {
+#ifdef CONVERT_PERF
+                ElapsedTimer t;
+#endif
+                (this->*mPreConvertFunc)(dpr);
+#ifdef CONVERT_PERF
+                ESP_LOGI(TAG, "preconvert: %lld us", t.usElapsed());
+#endif
             }
             else {
                 volumeProcess(dpr.dataPacket());
@@ -377,7 +448,13 @@ StreamEvent EqualizerNode::pullData(PacketResult& dpr)
             }
         }
         else {
-            (this->*mPreConvertFunc)(dpr.dataPacket());
+#ifdef CONVERT_PERF
+            ElapsedTimer t;
+#endif
+            (this->*mPreConvertFunc)(dpr);
+#ifdef CONVERT_PERF
+            ESP_LOGI(TAG, "preconvert: %lld us", t.usElapsed());
+#endif
             if (!mBypass) {
                 mProcessFunc(dpr.dataPacket(), mCore.get());
             }
@@ -389,14 +466,12 @@ StreamEvent EqualizerNode::pullData(PacketResult& dpr)
     else if (event == kEvtStreamChanged) {
         auto& pkt = dpr.genericEvent();
         MutexLocker locker(mMutex);
+        auto& fmt = pkt.fmt;
         mStreamId = pkt.streamId;
         mSourceBps = pkt.sourceBps;
-        auto& fmt = pkt.fmt;
         equalizerReinit(fmt);
-        volumeUpdateFormat(mEspFormat);
-        if (mCore->type() == IEqualizerCore::kTypeEsp) {
-            fmt.setBitsPerSample(16); // For the ESP core we transform to 16bit
-        }
+        fmt = mOutFormat;
+        volumeUpdateFormat(mOutFormat);
         return event;
     }
     else {

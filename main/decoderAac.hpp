@@ -7,7 +7,7 @@ typedef void *HAACDecoder;
 class DecoderAac: public Decoder
 {
 protected:
-    enum { kInputBufSize = 4096, kMinAllowedAacInputSize = 1024, kOutputBufSize = 2 * 2 *
+    enum { kInputBufSize = 4096, kMinAllowedAacInputSize = 1024, kOutputMaxSize = 2 * 4 *
            2048 // 1024 if no SBR support, i.e. HELIX_FEATURE_AUDIO_CODEC_AAC_SBR not defined
     };
     HAACDecoder mDecoder;

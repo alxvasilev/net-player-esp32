@@ -73,10 +73,10 @@ class EqualizerNode: public AudioNode, public DefaultVolumeImpl
 {
 protected:
     enum { kMyEqMinBands = 3, kMyEqMaxBands = 10, kMyEqDefaultNumBands = 8 };
-    typedef void(EqualizerNode::*PreConvertFunc)(DataPacket& pkt);
+    typedef void(EqualizerNode::*PreConvertFunc)(PacketResult& pr);
     NvsHandle& mNvsHandle;
-    StreamFormat mFormat;
-    StreamFormat mEspFormat;
+    StreamFormat mInFormat;
+    StreamFormat mOutFormat;
     int mSampleRate = 0; // cached from mFormat, for performance
     std::unique_ptr<IEqualizerCore> mCore;
     IEqualizerCore::ProcessFunc mProcessFunc = nullptr;
@@ -94,14 +94,16 @@ protected:
     std::string eqNameKey() const;
     std::string eqConfigKey(uint8_t nBands) const;
     void loadEqConfig(uint8_t nBands);
-    void equalizerReinit(StreamFormat fmt, bool forceLoadGains=false);
+    void equalizerReinit(StreamFormat fmt=0, bool forceLoadGains=false);
     void updateBandGain(uint8_t band);
     void createCustomCore(uint8_t nBands, StreamFormat fmt);
-    void samplesToFloatAndApplyVolume(DataPacket& pkt);
+    void samples24or32ToFloatAndApplyVolume(PacketResult& pr);
+    template <typename S>
+    void samples16or8ToFloatAndApplyVolume(PacketResult& pr);
     void floatSamplesTo24bitAndGetLevelsStereo(DataPacket& pkt);
     void floatSamplesTo24bitAndGetLevelsMono(DataPacket& pkt);
     template<int Bps>
-    void samplesTo16bitAndApplyVolume(DataPacket& pkt);
+    void samplesTo16bitAndApplyVolume(PacketResult& pr);
 public:
     Mutex mMutex;
     EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs);

@@ -26,7 +26,7 @@ public:
         T& as() const { return *(T*)get(); }
     };
     enum: uint8_t {
-        kFlag24BitSamples = 1 << 5,
+        kFlagHasSpaceFor32Bit = 1 << 5,
         kFlagLeftAlignedSamples = 1 << 6,
         kFlagCustomAlloc = 1 << 7  // LSB bits denote the memory block size, in kB
     };

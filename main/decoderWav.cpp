@@ -175,7 +175,7 @@ StreamEvent DecoderWav::decode(AudioNode::PacketResult& dpr)
         myassert(mInBytesPerSample);
     }
     bool ok;
-    if (false && mOutputInSituFunc && !mPartialInSampleBytes) {
+    if (mOutputInSituFunc && !mPartialInSampleBytes) {
         mPartialInSampleBytes = pkt.dataLen % mInBytesPerSample;
         if (mPartialInSampleBytes) {
             pkt.dataLen -= mPartialInSampleBytes;
@@ -242,7 +242,8 @@ bool DecoderWav::outputWithNewPacket(char* input, int len)
 {
     enum { kInBytesPerChannel = Bps / 8 };
     // reserve space for adding a partial sample from previous packet (mPartialInSampleBuffer)
-    DataPacket::unique_ptr out(DataPacket::create(((len / mInBytesPerSample + 2) * sizeof(T) * mNumChans)));
+    DataPacket::unique_ptr out(DataPacket::create(((len / mInBytesPerSample + 2) * 4 * mNumChans)));
+    out->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
     auto wptr = (T*)out->data;
     if (mPartialInSampleBytes) {
         int firstByteCount = mInBytesPerSample - mPartialInSampleBytes;

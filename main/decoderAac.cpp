@@ -68,7 +68,9 @@ StreamEvent DecoderAac::decode(AudioNode::PacketResult& dpr)
             dpr.clear();
         }
         if (!output) {
-            output.reset(DataPacket::create(kOutputBufSize));
+            // output is always 16 bit, reserve space for 32-bit
+            output.reset(DataPacket::create(mOutputLen ? mOutputLen * 2 : kOutputMaxSize));
+            output->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
         }
         // printf("AACDecode: inLen=%d, offs=%d\n", mInputLen, mNextFramePtr - mInputBuf);
         auto err = AACDecode(mDecoder, &mNextFramePtr, &mInputLen, (int16_t*)output->data);
@@ -120,7 +122,7 @@ void DecoderAac::getStreamFormat()
     outputFormat.setSampleRate(info.sampRateOut);
     outputFormat.setNumChannels(info.nChans);
     outputFormat.setBitsPerSample(16);
-    mOutputLen = info.outputSamps * sizeof(uint16_t);
+    mOutputLen = info.outputSamps * sizeof(int16_t);
     bool isSbr = (info.sampRateOut != info.sampRateCore);
     if (isSbr) {
         outputFormat.codec().mode = Codec::kAacModeSbr;

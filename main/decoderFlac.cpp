@@ -107,22 +107,27 @@ bool DecoderFlac::outputStereoSamples(int nSamples, const FLAC__int32* const cha
     if (nSamples & 1) {
         ESP_LOGW(TAG, "Uneven number of output samples: %d\n", nSamples);
     }
-    int pktNsamples = nSamples > kOutputSplitMaxSamples ? nSamples >> 1 : nSamples;
-    auto outputLen = pktNsamples * sizeof(T) * 2;
-    DataPacket::unique_ptr output(DataPacket::create(outputLen));
+    int pktNsamples = (nSamples > kOutputSplitMaxSamples ? nSamples >> 1 : nSamples) * 2;
+    int outputAlloc = pktNsamples * 4;
+    int outputLen = pktNsamples * sizeof(T);
+    DataPacket::unique_ptr output(DataPacket::create(outputAlloc));
+    output->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
     T* wptr = (T*)output->data;
     for (int i = 0; i < pktNsamples; i++) {
         *(wptr++) = ch0[i];
         *(wptr++) = ch1[i];
     }
+    output->dataLen = outputLen;
     mParent.codecPostOutput(output.release());
     if (pktNsamples < nSamples) {
-        output.reset(DataPacket::create(outputLen));
+        output.reset(DataPacket::create(outputAlloc));
+        output->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
         wptr = (T*)output->data;
         for (int i = pktNsamples; i < nSamples; i++) {
             *(wptr++) = ch0[i];
             *(wptr++) = ch1[i];
         }
+        output->dataLen = outputLen;
         mParent.codecPostOutput(output.release());
     }
     return true;
@@ -135,7 +140,9 @@ bool DecoderFlac::outputMonoSamples(int nSamples, const FLAC__int32* const sampl
     }
     int pktNsamples = nSamples > kOutputSplitMaxSamples ? nSamples >> 1 : nSamples;
     int outputLen = pktNsamples * sizeof(T);
-    DataPacket::unique_ptr output(DataPacket::create(outputLen));
+    int outputAlloc = pktNsamples * 4;
+    DataPacket::unique_ptr output(DataPacket::create(outputAlloc));
+    output->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
     T* wptr = (T*)output->data;
     auto end = samples[0] + pktNsamples;
     for (auto sample = samples[0]; sample < end;) {
@@ -144,7 +151,8 @@ bool DecoderFlac::outputMonoSamples(int nSamples, const FLAC__int32* const sampl
     output->dataLen = outputLen;
     mParent.codecPostOutput(output.release());
     if (pktNsamples < nSamples) {
-        output.reset(DataPacket::create(pktNsamples));
+        output.reset(DataPacket::create(outputAlloc));
+        output->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
         wptr = (T*)output->data;
         auto end2 = samples[0] + nSamples;
         for (auto sample = end; sample < end2;) {
