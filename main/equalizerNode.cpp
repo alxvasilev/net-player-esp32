@@ -29,6 +29,7 @@ EqualizerNode::EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs)
     } else {
         strcpy(mEqName, "default");
     }
+    equalizerReinit(StreamFormat(44100, 16, 2));
 }
 std::string EqualizerNode::eqNameKey() const
 {

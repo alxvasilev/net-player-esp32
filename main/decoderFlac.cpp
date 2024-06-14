@@ -42,9 +42,14 @@ FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *dec
         auto event = self.mInputEvent = self.mSrcNode.pullData(pr);
         if (event) {
             *bytes = 0;
-            return (event == kEvtStreamEnd)
-                    ? FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM
-                    : FLAC__STREAM_DECODER_READ_STATUS_ABORT;
+            if (event == kEvtTitleChanged) {
+                return self.mParent.forwardEvent(event, pr) == kNoError
+                    ? FLAC__STREAM_DECODER_READ_STATUS_CONTINUE
+                    : FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
+            }
+            else {
+                return FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
+            }
         }
         else {
             self.mInputPacket.reset((DataPacket*)pr.packet.release());

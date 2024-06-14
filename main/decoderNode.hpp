@@ -37,7 +37,6 @@ protected:
     StreamEvent detectCodecCreateDecoder(GenericEvent& startPkt);
     bool createDecoder(StreamFormat fmt);
     StreamEvent decode();
-    StreamEvent forwardEvent(StreamEvent evt, AudioNode::PacketResult& pr);
     static int32_t heapFreeTotal(); // used to  calculate memory usage for codecs
     void deleteDecoder();
 public:
@@ -51,6 +50,7 @@ public:
     virtual void reset() override { deleteDecoder(); }
     virtual void onStopRequest() { mRingBuf.setStopSignal(); }
     virtual void onStopped() { mRingBuf.clear(); deleteDecoder(); }
+    StreamEvent forwardEvent(StreamEvent evt, AudioNode::PacketResult& pr); // currently used externally only by FLAC
     bool codecOnFormatDetected(StreamFormat fmt, uint8_t sourceBps); // called by codec when it know the sample format, and before posting any data packet
     bool codecPostOutput(DataPacket* pkt); // called by codec to output a decoded packet
     friend class Decoder;
