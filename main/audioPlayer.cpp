@@ -1022,15 +1022,11 @@ void AudioPlayer::onNodeError(AudioNode& node, int error, uintptr_t arg)
         ESP_LOGW(TAG, "Discarding error %s from node '%s' while stopping", errName, node.tag());
         return;
     }
-    asyncCall([this, streamId = this->mStreamSeqNo, error, nodeName = std::string(node.tag())]() {
+    mStopping = true;
+    asyncCall([this, error, nodeName = std::string(node.tag())]() {
         const char* errName = streamEventToStr((StreamEvent)error);
-        LOCK_PLAYER();
-        if (streamId != mStreamSeqNo) {
-            ESP_LOGW(TAG, "Discarding stale (streamId %u != %u) error %s from node '%s' while stopping",
-                streamId, mStreamSeqNo, errName, nodeName.c_str());
-            return;
-        }
         ESP_LOGW(TAG, "Error %s from node '%s', stopping pipeline", errName, nodeName.c_str());
+        LOCK_PLAYER();
         stop(errName);
     });
 }
