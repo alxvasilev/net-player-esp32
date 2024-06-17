@@ -192,11 +192,11 @@ public:
         mType = type;
         clearState();
     }
-    inline void process(Float* samples, int len)
+    inline void process_asm(Float* samples, int len)
     {
         asmBiquad_f32_df2_stereo(samples, samples, len, mCoeffs, mDelayL, mDelayR);
     }
-    void process_C(Float* samples, int len)
+    void process(Float* samples, int len)
     {
         Float dlyL0 = mDelayL[0];
         Float dlyL1 = mDelayL[1];
@@ -208,15 +208,15 @@ public:
         auto a1 = mCoeffs[3];
         auto a2 = mCoeffs[4];
         for (int i = 0; i < len; i++) {
-            Float d0 = *samples - a1 * dlyL0 - a2 * dlyL1;
-            *(samples++) = b0 * d0 +  b1 * dlyL0 + b2 * dlyL1;
-            dlyL1 = dlyL0;
-            dlyL0 = d0;
+            Float out = *samples * b0 + dlyL0;
+            dlyL0 = *samples * b1 + dlyL1 - a1 * out;
+            dlyL1 = *samples * b2 - a2 * out;
+            *(samples++) = out;
 
-            d0 = *samples - a1 * dlyR0 - a2 * dlyR1;
-            *(samples++) = b0 * d0 +  b1 * dlyR0 + b2 * dlyR1;
-            dlyR1 = dlyR0;
-            dlyR0 = d0;
+            out = *samples * b0 + dlyR0;
+            dlyR0 = *samples * b1 + dlyR1 - a1 * out;
+            dlyR1 = *samples * b2 - a2 * out;
+            *(samples++) = out;
         }
         mDelayL[0] = dlyL0;
         mDelayL[1] = dlyL1;
