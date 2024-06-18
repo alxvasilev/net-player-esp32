@@ -3,7 +3,7 @@
 #include <esp_equalizer.h>
 #include <cmath>
 
-//#define EQ_PERF 1
+#define EQ_PERF 1
 //#define CONVERT_PERF 1
 
 static const char* TAG = "eq";
@@ -222,7 +222,7 @@ bool EqualizerNode::reconfigEqBand(uint8_t band, uint16_t freq, int8_t bw)
     if (bw) {
         bandCfg->width = bw;
     }
-    ESP_LOGI(TAG, "Reconfiguring band %d: freq=%d, bw=%d", band, bandCfg->freq, bandCfg->width);
+    ESP_LOGI(TAG, "Reconfiguring band %d: freq=%d, Q=%f", band, bandCfg->freq, (float)bandCfg->width / 10);
     if (mNvsHandle.writeBlob(eqConfigKey(nBands).c_str(), cfg, len) == ESP_OK) {
         mCore.reset();
         equalizerReinit();

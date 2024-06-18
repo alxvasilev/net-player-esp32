@@ -34,10 +34,10 @@ public:
     Equalizer(const EqBandConfig* cfg)
         : mBandConfigs(cfg ? cfg : EqBandConfig::defaultForNBands(kBandCount))
     {
-        mFilters[0].init((mBandConfigs[0].width < 0) ? Biquad::LSH : Biquad::PEQ);
-        mFilters[kBandCount - 1].init((mBandConfigs[kBandCount - 1].width < 0) ? Biquad::HSH : Biquad::PEQ);
+        mFilters[0].init((mBandConfigs[0].width < 0) ? Biquad::kLowShelf : Biquad::kBand);
+        mFilters[kBandCount - 1].init((mBandConfigs[kBandCount - 1].width < 0) ? Biquad::kHighShelf : Biquad::kBand);
         for (int i = 1; i < kBandCount - 1; i++) {
-            mFilters[i].init(Biquad::PEQ);
+            mFilters[i].init(Biquad::kBand);
         }
     }
     const EqBandConfig* bandConfigs() const { return mBandConfigs; }
@@ -77,7 +77,7 @@ public:
         bqassert(band < kBandCount);
         auto& filter = mFilters[band];
         auto& cfg = mBandConfigs[band];
-        filter.set(cfg.freq, (float)cfg.width / 10, mSampleRate, dbGain);
+        filter.set(cfg.freq, ((float)abs(cfg.width)) / 10, mSampleRate, dbGain);
         if (clearState) {
             filter.clearState();
         }
@@ -87,7 +87,7 @@ public:
         if (gains) {
             for (int i = 0; i < kBandCount; i++) {
                 auto& cfg = mBandConfigs[i];
-                mFilters[i].set(cfg.freq, (float)cfg.width / 10, mSampleRate, gains[i]);
+                mFilters[i].set(cfg.freq, ((float)abs(cfg.width)) / 10, mSampleRate, gains[i]);
             }
         } else {
             for (int i = 0; i < kBandCount; i++) {

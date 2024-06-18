@@ -42,13 +42,9 @@ class Biquad
 {
 public:
     enum Type: uint8_t {
-        LPF, /* low pass filter */
-        HPF, /* High pass filter */
-        BPF, /* band pass filter */
-        NOTCH, /* Notch Filter */
-        PEQ, /* Peaking band EQ filter */
-        LSH, /* Low shelf filter */
-        HSH /* High shelf filter */
+        kBand, // Peaking (positive gain) or Notch (negative gain) filter
+        kLowShelf,
+        kHighShelf
     };
     typedef float Float; // floating-point type used for samples and calculations
 protected:
@@ -57,90 +53,78 @@ protected:
     Biquad() {}
 public:
     Type type() const { return mType; }
-    bool usesGain()
-    {
-        return (mType == HSH || mType == LSH || mType == PEQ);
-    }
     /** Reconfigure the filter, usually used for adjusting the gain during operation */
-    void set(int freq, float bw, int srate, float dbGain)
+    void set(int freq, float Q, int srate, float dbGain)
     {
-        double a0, a1, a2, b0, b1, b2;
-        /* setup variables */
-        double A = usesGain() ? powf(10.0f, dbGain / 20.0f) : 0;
-        double omega = 2.0 * M_PI * freq / srate;
-        double sn = sin(omega);
-        double cs = cos(omega);
-        double alpha = sn * sinh(M_LN2 / 2.0 * bw * omega /sn);
-        double beta = sqrt(A + A);
+        double a0inv, a1, a2, b0, b1, b2;
+        double V = powf(10.0f, fabs(dbGain) / 20.0f);
+        double K = tan(M_PI * freq / srate);
 
         switch (mType) {
-        case LPF:
-            b0 = (1.0f - cs) / 2.0f;
-            b1 = 1.0f - cs;
-            b2 = (1.0f - cs) / 2.0f;
-            a0 = 1.0f + alpha;
-            a1 = -2.0f * cs;
-            a2 = 1.0f - alpha;
+        case kBand:
+            if (dbGain >= 0) {
+                a0inv = 1 / (1 + 1/Q * K + K * K);
+                b0 = (1 + V/Q * K + K * K) * a0inv;
+                b1 = 2 * (K * K - 1) * a0inv;
+                b2 = (1 - V/Q * K + K * K) * a0inv;
+                a1 = b1;
+                a2 = (1 - 1/Q * K + K * K) * a0inv;
+            }
+            else {
+                a0inv = 1 / (1 + K / Q + K * K);
+                b0 = (1 + K * K) * a0inv;
+                b1 = 2 * (K * K - 1) * a0inv;
+                b2 = b0;
+                a1 = b1;
+                a2 = (1 - K / Q + K * K) * a0inv;
+            }
             break;
-        case HPF:
-            b0 = (1 + cs) /2;
-            b1 = -(1 + cs);
-            b2 = (1 + cs) /2;
-            a0 = 1 + alpha;
-            a1 = -2 * cs;
-            a2 = 1 - alpha;
+        case kLowShelf:
+            if (dbGain >= 0) {
+                a0inv = 1 / (1 + sqrt(2) * K + K * K);
+                b0 = (1 + sqrt(2*V) * K + V * K * K) * a0inv;
+                b1 = 2 * (V * K * K - 1) * a0inv;
+                b2 = (1 - sqrt(2*V) * K + V * K * K) * a0inv;
+                a1 = 2 * (K * K - 1) * a0inv;
+                a2 = (1 - sqrt(2) * K + K * K) * a0inv;
+            }
+            else {
+                a0inv = 1 / (1 + sqrt(2*V) * K + V * K * K);
+                b0 = (1 + sqrt(2) * K + K * K) * a0inv;
+                b1 = 2 * (K * K - 1) * a0inv;
+                b2 = (1 - sqrt(2) * K + K * K) * a0inv;
+                a1 = 2 * (V * K * K - 1) * a0inv;
+                a2 = (1 - sqrt(2*V) * K + V * K * K) * a0inv;
+            }
             break;
-        case BPF:
-            b0 = alpha;
-            b1 = 0;
-            b2 = -alpha;
-            a0 = 1 + alpha;
-            a1 = -2 * cs;
-            a2 = 1 - alpha;
-            break;
-        case NOTCH:
-            b0 = 1;
-            b1 = -2 * cs;
-            b2 = 1;
-            a0 = 1 + alpha;
-            a1 = -2 * cs;
-            a2 = 1 - alpha;
-            break;
-        case PEQ:
-            b0 = 1.0 + (alpha * A);
-            b1 = -2.0 * cs;
-            b2 = 1.0 - (alpha * A);
-            a0 = 1.0 + (alpha / A);
-            a1 = -2.0 * cs;
-            a2 = 1.0 - (alpha / A);
-            break;
-        case LSH:
-            b0 = A * ((A + 1) - (A - 1) * cs + beta * sn);
-            b1 = 2 * A * ((A - 1) - (A + 1) * cs);
-            b2 = A * ((A + 1) - (A - 1) * cs - beta * sn);
-            a0 = (A + 1) + (A - 1) * cs + beta * sn;
-            a1 = -2 * ((A - 1) + (A + 1) * cs);
-            a2 = (A + 1) + (A - 1) * cs - beta * sn;
-            break;
-        case HSH:
-            b0 = A * ((A + 1) + (A - 1) * cs + beta * sn);
-            b1 = -2 * A * ((A - 1) + (A + 1) * cs);
-            b2 = A * ((A + 1) + (A - 1) * cs - beta * sn);
-            a0 = (A + 1) - (A - 1) * cs + beta * sn;
-            a1 = 2 * ((A - 1) - (A + 1) * cs);
-            a2 = (A + 1) - (A - 1) * cs - beta * sn;
+        case kHighShelf:
+            if (dbGain >= 0) {
+                a0inv = 1 / (1 + sqrt(2) * K + K * K);
+                b0 = (V + sqrt(2*V) * K + K * K) * a0inv;
+                b1 = 2 * (K * K - V) * a0inv;
+                b2 = (V - sqrt(2*V) * K + K * K) * a0inv;
+                a1 = 2 * (K * K - 1) * a0inv;
+                a2 = (1 - sqrt(2) * K + K * K) * a0inv;
+            }
+            else {
+                a0inv = 1 / (V + sqrt(2*V) * K + K * K);
+                b0 = (1 + sqrt(2) * K + K * K) * a0inv;
+                b1 = 2 * (K * K - 1) * a0inv;
+                b2 = (1 - sqrt(2) * K + K * K) * a0inv;
+                a1 = 2 * (K * K - V) * a0inv;
+                a2 = (V - sqrt(2*V) * K + K * K) * a0inv;
+            }
             break;
         default:
-            b0 = b1 = b2 = a0 = a1 = a2 = 0; //suppress may be used uninitialized warning
+            b0 = b1 = b2 = a0inv = a1 = a2 = 0; //suppress may be used uninitialized warning
             bqassert(false);
         }
-        /* precompute the coefficients */
-        mCoeffs[0] = b0 / a0;
-        mCoeffs[1] = b1 / a0;
-        mCoeffs[2] = b2 / a0;
-        mCoeffs[3] = a1 / a0;
-        mCoeffs[4] = a2 / a0;
-        BQ_LOGD("Config band %d Hz, bw: %f, gain: %f", freq, bw, dbGain);
+        mCoeffs[0] = b0;
+        mCoeffs[1] = b1;
+        mCoeffs[2] = b2;
+        mCoeffs[3] = a1;
+        mCoeffs[4] = a2;
+        BQ_LOGD("Config band %d Hz, Q: %f, gain: %f", freq, Q, dbGain);
         BQ_LOGD("coeffs: b0 = %f, b1 = %f, b2 = %f, a1 = %f, a2 = %f",
                 mCoeffs[0], mCoeffs[1], mCoeffs[2], mCoeffs[3], mCoeffs[4]);
     }
@@ -208,14 +192,16 @@ public:
         auto a1 = mCoeffs[3];
         auto a2 = mCoeffs[4];
         for (int i = 0; i < len; i++) {
-            Float out = *samples * b0 + dlyL0;
-            dlyL0 = *samples * b1 + dlyL1 - a1 * out;
-            dlyL1 = *samples * b2 - a2 * out;
+            Float in = *samples;
+            Float out = in * b0 + dlyL0;
+            dlyL0 = in * b1 + dlyL1 - a1 * out;
+            dlyL1 = in * b2 - a2 * out;
             *(samples++) = out;
 
-            out = *samples * b0 + dlyR0;
-            dlyR0 = *samples * b1 + dlyR1 - a1 * out;
-            dlyR1 = *samples * b2 - a2 * out;
+            in = *samples;
+            out = in * b0 + dlyR0;
+            dlyR0 = in * b1 + dlyR1 - a1 * out;
+            dlyR1 = in * b2 - a2 * out;
             *(samples++) = out;
         }
         mDelayL[0] = dlyL0;
