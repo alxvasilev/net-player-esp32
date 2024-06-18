@@ -87,7 +87,7 @@ loop_bq_end_m_ae32:
 .align  4
 .global asmBiquad_f32_df2_stereo
 .type   asmBiquad_f32_df2_stereo,@function
-// void asmBiquad_f32_df2_stereo(const float* input, const float* output, int len, float* coeffs,
+// void asmBiquad_f32_df2_stereo(const float* samples, const float* output, int len, float* coeffs,
 //    float* delayL, float* delayR)
 // input  : a2
 // output : a3
@@ -95,7 +95,13 @@ loop_bq_end_m_ae32:
 // coeffs : a5
 // delayL : a6
 // delayR : a7
-
+/*
+                Float in = *samples;
+                Float out = in * b0 + w0;
+                w0 = in * b1 + w1 - a1 * out;
+                w1 = in * b2 - a2 * out;
+                *(samples++) = out;
+*/
 asmBiquad_f32_df2_stereo:
     entry	a1, 16
     // Array increment for floating point data should be 4
@@ -113,33 +119,29 @@ asmBiquad_f32_df2_stereo:
     lsi   f9, a7, 0 // f9 = wR0
     lsi   f10,a7, 4 // f10 = wR1
 
-    // f11 is d0, f12 is output
-    addi  a3, a3, -4        // output--
-    lsi   f11, a2, 0        // d0 = *input
+    // f11 is input, f12 is output
     loopnez a4, loop_bq_end_stereo
-        madd.s  f11, f5, f7  // d0 += -a1 * wL0
-        mul.s   f12, f1, f7  // y = b1 * wL0
-        madd.s  f11, f6, f8  // d0 += -a2 * wL1
-        addi    a3, a3, 4    // out++
-        madd.s  f12, f0, f11 // y += b0 * d0
-        addi    a2, a2, 4    // in++
-        madd.s  f12, f2, f8  // y += b2 * wL1
-        mov.s   f8, f7       // wL1 = wL0
-        mov.s   f7, f11      // wL0 = d0
-        lsi     f11, a2, 0   // d0 = *input
-        ssi	    f12, a3, 0   // *output = result
+        lsi     f11, a2,  0     // f11 = *input
+        mov.s   f12, f7         // out = wL0
+        madd.s  f12, f11, f0    // out += in * b0
+        mov.s   f7,  f8         // wL0 = wL1
+        ssi     f12, a2,  0     // *sample = out
+        madd.s  f7, f11, f1     // wL0 += in * b1
+        addi    a2,  a2,  4     // sample++
+        madd.s  f7,  f5,  f12   // wL0 += -a1 * out
+        mul.s   f8,  f11, f2    // wL1 = in * b2
+        madd.s  f8,  f6,  f12   // wL1 += -a2 * out
 // right channel
-        madd.s  f11, f5, f9  // d0 += -a1 * wR0
-        mul.s   f12, f1, f9  // y = b1 * wR0
-        madd.s  f11, f6, f10 // d0 += -a2 * wR1
-        addi    a3, a3, 4    // out++
-        madd.s  f12, f0, f11 // y += b0 * d0
-        addi    a2, a2, 4    // in++
-        madd.s  f12, f2, f10 // y += b2 * wR1
-        mov.s   f10, f9      // wR1 = wR0
-        mov.s   f9, f11      // wR0 = d0
-        lsi     f11, a2, 0   // d0 = *input
-        ssi	    f12, a3, 0   // *output = result
+        lsi     f11, a2,  0     // f11 = *input
+        mov.s   f12, f9         // out = wR0
+        madd.s  f12, f11, f0    // out += in * b0
+        mov.s   f9,  f10        // wR0 = wR1
+        ssi     f12, a2,  0     // *sample = out
+        madd.s  f9, f11, f1     // wR0 += in * b1
+        addi    a2,  a2,  4     // sample++
+        madd.s  f9,  f5,  f12   // wR0 += -a1 * out
+        mul.s   f10, f11, f2    // wR1 = in * b2
+        madd.s  f10, f6,  f12   // wR1 += -a2 * out
 loop_bq_end_stereo:
     // Store delay line
     ssi     f7, a6, 0
