@@ -35,7 +35,7 @@ http://www.smartelectronix.com/musicdsp/text/filters005.txt
 #endif
 
 extern "C" int asmBiquad_f32_df2_mono(const float* input, float* output, int len, float* coefs, float* delays);
-extern "C" int asmBiquad_f32_df2_stereo(const float* input, float* output, int len, float* coefs,
+extern "C" int asmBiquad_f32_df2_stereo(const float* samples, int len, float* coefs,
     float* delaysL, float* delaysR);
 
 class Biquad
@@ -185,7 +185,7 @@ public:
     }
     inline void process(Float* samples, int len)
     {
-        asmBiquad_f32_df2_stereo(samples, samples, len, mCoeffs, mDelayL, mDelayR);
+        asmBiquad_f32_df2_stereo(samples, len, mCoeffs, mDelayL, mDelayR);
     }
     void process_C(Float* samples, int len)
     {

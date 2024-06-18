@@ -87,40 +87,37 @@ loop_bq_end_m_ae32:
 .align  4
 .global asmBiquad_f32_df2_stereo
 .type   asmBiquad_f32_df2_stereo,@function
-// void asmBiquad_f32_df2_stereo(const float* samples, const float* output, int len, float* coeffs,
-//    float* delayL, float* delayR)
-// input  : a2
-// output : a3
-// len    : a4
-// coeffs : a5
-// delayL : a6
-// delayR : a7
 /*
-                Float in = *samples;
-                Float out = in * b0 + w0;
-                w0 = in * b1 + w1 - a1 * out;
-                w1 = in * b2 - a2 * out;
-                *(samples++) = out;
+  void asmBiquad_f32_df2_stereo(const float* samples, int len, float* coeffs,
+    float* delayL, float* delayR)
+  input  : a2
+  len    : a3
+  coeffs : a4
+  delayL : a5
+  delayR : a6
+
+  float in = *samples;
+  float out = in * b0 + w0;
+  w0 = in * b1 + w1 - a1 * out;
+  w1 = in * b2 - a2 * out;
+  *(samples++) = out;
 */
 asmBiquad_f32_df2_stereo:
     entry	a1, 16
     // Array increment for floating point data should be 4
-    lsi   f0, a5, 0  // f0 = b0
-    lsi   f1, a5, 4  // f1 = b1
-    lsi   f2, a5, 8  // f2 = b2
-    lsi   f3, a5, 12 // f3 = a1
-    lsi   f4, a5, 16 // f4 = a2
+    lsi   f0, a4, 0  // f0 = b0
+    lsi   f1, a4, 4  // f1 = b1
+    lsi   f2, a4, 8  // f2 = b2
+    lsi   f3, a4, 12 // f3 = a1
+    lsi   f4, a4, 16 // f4 = a2
 
-    neg.s  f5, f3   // f5 = -a1
-    neg.s  f6, f4   // f6 = -a2
-
-    lsi   f7, a6, 0 // f7 = wL0
-    lsi   f8, a6, 4 // f8 = wL1
-    lsi   f9, a7, 0 // f9 = wR0
-    lsi   f10,a7, 4 // f10 = wR1
+    lsi  f7,  a5, 0 // f7 = wL0
+    lsi  f8,  a5, 4 // f8 = wL1
+    lsi  f9,  a6, 0 // f9 = wR0
+    lsi  f10, a6, 4 // f10 = wR1
 
     // f11 is input, f12 is output
-    loopnez a4, loop_bq_end_stereo
+    loopnez a3, loop_bq_end_stereo
         lsi     f11, a2,  0     // f11 = *input
         mov.s   f12, f7         // out = wL0
         madd.s  f12, f11, f0    // out += in * b0
@@ -128,9 +125,9 @@ asmBiquad_f32_df2_stereo:
         ssi     f12, a2,  0     // *sample = out
         madd.s  f7, f11, f1     // wL0 += in * b1
         addi    a2,  a2,  4     // sample++
-        madd.s  f7,  f5,  f12   // wL0 += -a1 * out
+        msub.s  f7,  f3,  f12   // wL0 -= a1 * out
         mul.s   f8,  f11, f2    // wL1 = in * b2
-        madd.s  f8,  f6,  f12   // wL1 += -a2 * out
+        msub.s  f8,  f4,  f12   // wL1 -= a2 * out
 // right channel
         lsi     f11, a2,  0     // f11 = *input
         mov.s   f12, f9         // out = wR0
@@ -139,13 +136,13 @@ asmBiquad_f32_df2_stereo:
         ssi     f12, a2,  0     // *sample = out
         madd.s  f9, f11, f1     // wR0 += in * b1
         addi    a2,  a2,  4     // sample++
-        madd.s  f9,  f5,  f12   // wR0 += -a1 * out
+        msub.s  f9,  f3,  f12   // wR0 -= a1 * out
         mul.s   f10, f11, f2    // wR1 = in * b2
-        madd.s  f10, f6,  f12   // wR1 += -a2 * out
+        msub.s  f10, f4,  f12   // wR1 -= a2 * out
 loop_bq_end_stereo:
     // Store delay line
-    ssi     f7, a6, 0
-    ssi     f8, a6, 4
-    ssi     f9, a7, 0
-    ssi    f10, a7, 4
+    ssi     f7, a5, 0
+    ssi     f8, a5, 4
+    ssi     f9, a6, 0
+    ssi    f10, a6, 4
     retw.n
