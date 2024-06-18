@@ -2,6 +2,7 @@
 #define EQUALIZER_AV_HPP
 #include "biquad.hpp"
 #include <array>
+#include <esp_heap_caps.h>
 
 struct EqBandConfig {
     uint16_t freq;
@@ -40,6 +41,8 @@ public:
             mFilters[i].init(Biquad::kBand);
         }
     }
+    static void* operator new(size_t size) { return heap_caps_malloc(size, MALLOC_CAP_INTERNAL); }
+    static void operator delete(void* p) { free(p); }
     const EqBandConfig* bandConfigs() const { return mBandConfigs; }
     const BiquadType& filter(uint8_t band) const
     {
