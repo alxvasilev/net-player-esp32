@@ -51,8 +51,8 @@ protected:
     enum: uint8_t
     { kEventTerminating = 1, kEventScroll = 2, kEventVolLevel = 4, kEventTerminated = 8 };
     enum {
-        kI2sStackSize = 4096, kI2sCpuCore = 1,
-        kI2sDmaBufCntInternalRam = 2, kI2sDmaBufCntSpiRam = 4, // 1 buffer is 1024 samples
+        kI2sStackSize = 4096, kI2sCpuCore = 0,
+        kI2sDmaBufCnt = 4, // 1 buffer is 1024 samples
         kLcdTaskStackSize = 2200, kLcdTaskPrio = 10, kLcdTaskCore = 1
     };
     enum {

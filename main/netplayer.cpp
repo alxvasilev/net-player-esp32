@@ -29,6 +29,8 @@
 #include "../recovery/main/rtcSharedMem.hpp"
 #include "audioPlayer.hpp"
 
+#define DEV_MODE 1
+
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 static constexpr gpio_num_t kPinLed = GPIO_NUM_2;
 static constexpr ST7735Display::PinCfg lcdPins = {
@@ -189,6 +191,10 @@ extern "C" void app_main(void)
     startMdns();
     lcd.puts("Starting webserver...\n");
     startWebserver();
+#ifdef DEV_MODE
+        lcd.puts("Waiting dev http request\n");
+        msSleep(1000);
+#endif
 //===
     lcd.puts("Mounting SDCard...\n");
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };
