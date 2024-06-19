@@ -143,11 +143,11 @@ public:
         mType = type;
         clearState();
     }
-    inline void process(Float* samples, int len)
+    inline void process_asm(Float* samples, int len)
     {
         asmBiquad_f32_df2_mono(samples, samples, len, mCoeffs, mDelay);
     }
-    void process_C(Float* samples, int len)
+    void process(Float* samples, int len)
     {
         auto b0 = mCoeffs[0];
         auto b1 = mCoeffs[1];

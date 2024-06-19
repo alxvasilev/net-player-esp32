@@ -2,7 +2,6 @@
 #include <nvsHandle.hpp>
 #include <esp_equalizer.h>
 #include <cmath>
-
 #define EQ_PERF 1
 //#define CONVERT_PERF 1
 
@@ -257,11 +256,14 @@ template<int N, bool Stereo>
 void MyEqualizerCore<N, Stereo>::processFloat(DataPacket& pkt, void* arg) {
     auto& self = *static_cast<MyEqualizerCore<N, Stereo>*>(arg);
 #ifdef EQ_PERF
+    static float msAvg = 0;
     ElapsedTimer timer;
 #endif
     self.mEqualizer.process((float*)pkt.data, pkt.dataLen / ((Stereo ? 2 : 1) * sizeof(float)));
 #ifdef EQ_PERF
-    ESP_LOGI(TAG, "eq process(my) %d: %d ms", pkt.dataLen / 8, timer.msElapsed());
+    auto ms = timer.msElapsed();
+    msAvg = (msAvg * 99 + ms) / 100;
+    ESP_LOGI(TAG, "eq process(my) %d: %d (%.2f) ms", pkt.dataLen / 8, ms, msAvg);
 #endif
 }
 template<int N, bool Stereo>
@@ -314,12 +316,15 @@ void EspEqualizerCore::process16bitStereo(DataPacket& pkt, void *arg)
 {
     auto& self = *static_cast<EspEqualizerCore*>(arg);
 #ifdef EQ_PERF
+    static float avgTime = 0.0;
     ElapsedTimer timer;
 #endif
     esp_equalizer_process(self.mEqualizer, (unsigned char*)pkt.data, pkt.dataLen,
                           self.mSampleRate, self.mChanCount);
 #ifdef EQ_PERF
-    ESP_LOGI(TAG, "eq process %d (esp): %dms", pkt.dataLen / 4, timer.msElapsed());
+    auto msTime = timer.msElapsed();
+    avgTime = (avgTime * 99 + msTime) / 100;
+    ESP_LOGI(TAG, "eq process %d (esp): %dms (%.2f)", pkt.dataLen / 4, msTime, avgTime);
 #endif
 }
 EspEqualizerCore::~EspEqualizerCore()
