@@ -265,7 +265,7 @@ void AudioPlayer::lcdUpdateStationInfo()
     mLcd.cursorY = 0;
     mLcd.cursorX = (mLcd.width() - mLcd.charWidth(kSymFavorite)) / 2;
     if (station.flags() & Station::kFlagFavorite) {
-        mLcd.setFgColor(LcdColor(255, 0, 0));
+        mLcd.setFgColor(255, 0, 0);
         mLcd.putc(kSymFavorite);
     } else {
         mLcd.putc(kSymBlank);
