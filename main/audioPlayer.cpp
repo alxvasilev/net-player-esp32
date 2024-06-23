@@ -13,14 +13,15 @@
 #include <esp_netif.h> // for createDlnaHandler()
 #include <httpServer.hpp>
 #include "tostring.hpp"
+#include <st7735.hpp>
 
 #define kStreamInfoFont font_Camingo22
-const auto kLcdColorCaption = ST7735Display::rgb(255, 255, 128);
-const auto kLcdColorGrid = ST7735Display::rgb(0, 128, 128);
-const auto kLcdColorStreamInfo = ST7735Display::rgb(128, 255, 255);
-const auto kLcdColorPlayState = ST7735Display::rgb(0, 200, 0);
-const auto kLcdColorNetSpeed_Normal = kLcdColorCaption;
-const auto kLcdColorNetSpeed_Underrun = ST77XX_RED;
+const LcdColor kLcdColorCaption(255, 255, 128);
+const LcdColor kLcdColorGrid(0, 128, 128);
+const LcdColor kLcdColorStreamInfo(128, 255, 255);
+const LcdColor kLcdColorPlayState(0, 200, 0);
+const LcdColor kLcdColorNetSpeed_Normal = kLcdColorCaption;
+const LcdColor kLcdColorNetSpeed_Underrun(LcdColor::RED);
 
 #define LOCK_PLAYER() MutexLocker locker(mutex)
 
@@ -264,7 +265,7 @@ void AudioPlayer::lcdUpdateStationInfo()
     mLcd.cursorY = 0;
     mLcd.cursorX = (mLcd.width() - mLcd.charWidth(kSymFavorite)) / 2;
     if (station.flags() & Station::kFlagFavorite) {
-        mLcd.setFgColor(255, 0, 0);
+        mLcd.setFgColor(LcdColor(255, 0, 0));
         mLcd.putc(kSymFavorite);
     } else {
         mLcd.putc(kSymBlank);
@@ -1265,7 +1266,7 @@ void AudioPlayer::lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize)
         whole++;
     }
     auto end = vtsnprintf(buf, sizeof(buf), fmtInt(whole, 0, 4), '.', dec, "K/s");
-    uint16_t color;
+    LcdColor color;
     // printf("buf: %u\n", bufDataSize);
     if (bufDataSize >= mBufLowThreshold) {
         color = kLcdColorNetSpeed_Normal;
@@ -1275,7 +1276,7 @@ void AudioPlayer::lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize)
         uint8_t green = 16 + bufDataSize / mBufLowDisplayGradient;
         assert(green < 64);
         // printf("buf: %u, green=%d\n", bufDataSize, green);
-        color = mLcd.rgb(255, green << 2, 128);
+        color.rgb(255, green << 2, 128);
     }
     mLcd.setFont(kStreamInfoFont);
     mLcd.setFgColor(color);

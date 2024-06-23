@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <limits>
 #include "volume.hpp"
+#include <lcdColor.hpp>
 
 class ST7735Display;
 class NvsHandle;
@@ -34,12 +35,12 @@ class VuDisplay {
     int8_t mLedHeight;
     int8_t mChanSpacing;
     int16_t mYellowStartX;
-    uint16_t mGreenColor;
-    uint16_t mYellowColor;
+    Color565 mGreenColor;
+    Color565 mYellowColor;
     int32_t mLevelPerLed;
     uint8_t mPeakDropTicks;
     uint8_t mPeakHoldTicks;
-    inline uint16_t ledColor(int16_t ledX, int16_t level);
+    inline Color565 ledColor(int16_t ledX, int16_t level);
     void calculateLevels(ChanCtx& ctx, int16_t level);
     void drawChannel(ChanCtx& ctx, int16_t level);
     inline int16_t numLedsForLevel(int16_t level);

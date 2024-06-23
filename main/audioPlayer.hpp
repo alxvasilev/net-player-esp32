@@ -5,7 +5,8 @@
 #include "utils.hpp"
 #include "nvsHandle.hpp"
 #include "eventGroup.hpp"
-#include <st7735.hpp>
+#include <lcdColor.hpp>
+#include <font.hpp>
 #include "stationList.hpp"
 #include "recorder.hpp"
 #include "vuDisplay.hpp"
@@ -14,6 +15,7 @@
 class DecoderNode;
 class EqualizerNode;
 class ST7735Display;
+typedef Color565 LcdColor;
 namespace http { class Server; }
 namespace nvs { class NVSHandle; }
 struct TrackInfo;
@@ -88,7 +90,7 @@ protected:
     int16_t mMuteVolume = -1;
     uint8_t mVolumeCap;
 // general display stuff
-    ST7735Display::Color mFontColor = ST7735Display::rgb(255, 255, 128);
+    Color565 mFontColor = Color565(255, 255, 128);
     VuDisplay mVuDisplay;
     IAudioVolume::StereoLevels mVuLevels = {0,0};
 // track name scroll stuff

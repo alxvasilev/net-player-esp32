@@ -22,8 +22,8 @@ void VuDisplay::init(NvsHandle& nvs)
     mPeakDropTicks = (kTicksPerSec * mStepWidth + pkDropSpeed / 2) / pkDropSpeed;
     auto pkHoldMs = nvs.readDefault<uint16_t>("vuPeakHoldMs", 500);
     mPeakHoldTicks = (pkHoldMs + (1000 / kTicksPerSec) / 2) / (1000 / kTicksPerSec);
-    mGreenColor = nvs.readDefault<uint16_t>("vuClrGreen", ST77XX_GREEN);
-    mYellowColor = nvs.readDefault<uint16_t>("vuClrYellow", ST77XX_YELLOW);
+    mGreenColor = nvs.readDefault<uint16_t>("vuClrGreen", Color565::GREEN);
+    mYellowColor = nvs.readDefault<uint16_t>("vuClrYellow", Color565::YELLOW);
     ESP_LOGD(TAG, "init: stepWidth: %d, ledWidth: %d, levelPerLed: %f, yellowStartX: %d", mStepWidth, mLedWidth, mYellowStartX / (float)100, mYellowStartX);
     mLeftCtx.barY = mLcd.height() - 2 * mLedHeight - mChanSpacing;
     mRightCtx.barY = mLeftCtx.barY + mLedHeight + mChanSpacing;
@@ -35,12 +35,12 @@ void VuDisplay::update(const IAudioVolume::StereoLevels& levels)
     drawChannel(mRightCtx, levels.right);
 }
 
-inline uint16_t VuDisplay::ledColor(int16_t ledX, int16_t level)
+inline Color565 VuDisplay::ledColor(int16_t ledX, int16_t level)
 {
     if (ledX < mYellowStartX) {
         return mGreenColor;
     } else {
-        return (level >= kLevelMax) ? ST77XX_RED : mYellowColor;
+        return (level >= kLevelMax) ? Color565::RED : mYellowColor;
     }
 }
 
