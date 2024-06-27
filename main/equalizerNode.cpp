@@ -450,7 +450,6 @@ StreamEvent EqualizerNode::pullData(PacketResult& dpr)
                 mProcessFunc(dpr.dataPacket(), mCore.get());
             }
             if (mVolLevelMeasurePoint == 1) {
-                volumeNotifyLevelCallback(); // notify previous levels to compensate output buffering delay
                 volumeGetLevel(dpr.dataPacket());
             }
         }
@@ -466,8 +465,8 @@ StreamEvent EqualizerNode::pullData(PacketResult& dpr)
                 mProcessFunc(dpr.dataPacket(), mCore.get());
             }
             floatSamplesTo24bitAndGetLevelsStereo(dpr.dataPacket());
-            volumeNotifyLevelCallback();
         }
+        volumeNotifyLevelCallback();
         return kEvtData;
     }
     else if (event == kEvtStreamChanged) {

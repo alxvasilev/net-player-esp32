@@ -1042,7 +1042,9 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
         ESP_LOGI(TAG, "Received title event: '%s'", title.c_str());
         asyncCall([this, title]() {
             LOCK_PLAYER();
+            ElapsedTimer t;
             lcdUpdateTrackTitle(title.c_str());
+            printf("set title: %lld\n", t.usElapsed());
         });
     }
     else {
@@ -1056,7 +1058,7 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
                 case AudioNode::kEventPlaying:
                     return lcdUpdatePlayState(nullptr); break;
                 case HttpNode::kEventRecording:
-                    return lcdUpdatePlayState(nullptr, arg); break;
+                    return lcdUpdatePlayState(nullptr, numArg); break;
                 case AudioNode::kEventBufUnderrun:
                     return lcdShowBufUnderrunImmediate(); break;
                 case AudioNode::kEventNewStream:
@@ -1088,58 +1090,45 @@ void AudioPlayer::lcdTimedDrawTask()
         LOCK_PLAYER();
         fps = mNvsHandle.readDefault<uint8_t>("tscrollFps", kDefTitleScrollFps);
     }
-    int64_t scrollTickPeriodUs = (1000000 + fps / 2) / fps;
     int64_t now = esp_timer_get_time();
-    int64_t tsLastTitleScroll = now - scrollTickPeriodUs - 1;
-    int64_t tsLastVolEvent = now;
     int64_t tsLastSpeedUpdate = now - kLcdNetSpeedUpdateIntervalUs;
+    int8_t waitTicks = ((1000 / (2 * fps)) + portTICK_PERIOD_MS / 2) / portTICK_PERIOD_MS;
+    bool vuOrScroll = false;
     for (;;) {
+        vTaskDelay(waitTicks);
+        LOCK_PLAYER();
         now = esp_timer_get_time();
-        int64_t usTillScroll = scrollTickPeriodUs - (now - tsLastTitleScroll);
-        //ESP_LOGW(TAG, "timeout: %lld\n", timeout);
-        EventBits_t events = (usTillScroll > 0)
-            ? mEvents.waitForOneAndReset(kEventTerminating|kEventVolLevel, (usTillScroll + 500) / 1000)
-            : (EventBits_t)0; // events = 0 -> scroll title
-        if (events & kEventTerminating) {
-            break;
+        if (now - tsLastSpeedUpdate > kLcdNetSpeedUpdateIntervalUs) {
+            tsLastSpeedUpdate = now;
+            lcdUpdateNetSpeed();
         }
-        {
-            LOCK_PLAYER();
-            if (events & kEventVolLevel) {
-                tsLastVolEvent = now;
-                mLcd.waitDone();
-                mVuDisplay.update(mVuLevels);
-                mLcd.dmaBlit(0, mLcd.height() - mVuDisplay.height(), mLcd.width(), mVuDisplay.height());
+        mLcd.waitDone(); // wait while player locked, so that someone else doesn't start another operation
+        if ((vuOrScroll = !vuOrScroll)) {
+            if (now - mTsLastVuLevel > 100000 && mVolumeInterface->audioLevels().data) { // 100ms no volume event, set level to zero
+                ESP_LOGI(TAG, "No sound output, clearing VU levels");
+                mVolumeInterface->clearAudioLevelsNoEvent();
             }
-            else if (events == 0) { // timeout, due time to scroll title
-                tsLastTitleScroll = now;
-                if (mTitleScrollEnabled == 1) {
-                    mLcd.waitDone();
-                    lcdScrollTrackTitle();
-                    mLcd.dmaBlit(0, kLcdTrackTitleY, mDmaFrameBuf.width(), mDmaFrameBuf.height());
-                }
-                if (now - tsLastVolEvent > 50000) { // 50ms no volume event, force update the VU display
-                    ESP_LOGD(TAG, "No sound output, clearing VU levels");
-                    mVolumeInterface->clearAudioLevelsNoEvent();
-                    //mVuDisplay.update(self.mVuLevels);
-                }
-                if (now - tsLastSpeedUpdate > kLcdNetSpeedUpdateIntervalUs) {
-                    tsLastSpeedUpdate = now;
-                    lcdUpdateNetSpeed();
-                }
+            mVuDisplay.update(mVuLevels);
+            mLcd.dmaBlit(0, mLcd.height() - mVuDisplay.height(), mLcd.width(), mVuDisplay.height());
+        }
+        else {
+            if (mTitleScrollEnabled == 1) {
+                lcdScrollTrackTitle();
+                mLcd.dmaBlit(0, kLcdTrackTitleY, mDmaFrameBuf.width(), mDmaFrameBuf.height());
             }
         }
     }
-    mEvents.setBits(kEventTerminated);
 }
 
 void AudioPlayer::lcdUpdateTrackTitle(const char* buf)
 {
     if (!buf || !buf[0]) {
         mTitleScrollEnabled = false;
-        mLcdTrackTitle.clear();
-        mLcd.gotoXY(0, kLcdTrackTitleY);
-        mLcd.clear(mLcd.cursorX, mLcd.cursorY, mLcd.width(), kTrackTitleFont.height);
+        if (!mLcdTrackTitle.isEmpty()) {
+            mLcdTrackTitle.clear();
+            mLcd.gotoXY(0, kLcdTrackTitleY);
+            mLcd.clear(mLcd.cursorX, mLcd.cursorY, mLcd.width(), kTrackTitleFont.height);
+        }
         return;
     }
 
@@ -1157,6 +1146,7 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf)
         mTitleTextWidth = (len + 3) * (kTrackTitleFont.width + kTrackTitleFont.charSpacing);
     }
     mTitleScrollPixOffset = 0;
+    mTitleScrollStep = mLcdTrackTitle.dataSize() > 50 ? 2 : 1;
     mTitleTextFrameBuf.clear();
     mTitleTextFrameBuf.gotoXY(0, 0);
     mTitleTextFrameBuf.puts(mLcdTrackTitle.buf(), mLcd.kFlagNoAutoNewline | mLcd.kFlagAllowPartial);
@@ -1199,12 +1189,12 @@ void AudioPlayer::lcdBlitTrackTitle()
     printf("title draw: %lld us\n", t.usElapsed());
 #endif
 }
-void AudioPlayer::lcdScrollTrackTitle(int step)
+void AudioPlayer::lcdScrollTrackTitle()
 {
-    if (mLcdTrackTitle.dataSize() <= 1) {
+    if (mLcdTrackTitle.isEmpty()) {
         return;
     }
-    mTitleScrollPixOffset += step;
+    mTitleScrollPixOffset += mTitleScrollStep;
     if (mTitleScrollPixOffset >= mTitleTextWidth) {
         mTitleScrollPixOffset -= mTitleTextWidth;
     }
@@ -1323,7 +1313,7 @@ void AudioPlayer::audioLevelCb(void* ctx)
     // delay due to DMA buffering
     auto& self = *static_cast<AudioPlayer*>(ctx);
     self.mVuLevels = self.mVuLevelInterface->audioLevels();
-    self.mEvents.setBits(kEventVolLevel);
+    self.mTsLastVuLevel = esp_timer_get_time();
 }
 
 const char* AudioPlayer::playerModeToStr(PlayerMode mode) {

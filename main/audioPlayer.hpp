@@ -79,6 +79,7 @@ protected:
     std::unique_ptr<AudioNodeWithTask> mStreamOut;
     IAudioVolume* mVolumeInterface = nullptr;
     IAudioVolume* mVuLevelInterface = nullptr;
+    int64_t mTsLastVuLevel = 0;
     bool mStopping = false; // set while stopping the pipeline, to ignore error signalled by nodes during the process
     NvsHandle mNvsHandle;
     ST7735Display& mLcd;
@@ -103,6 +104,7 @@ protected:
     int16_t mTitleTextWidth = -1;
     int16_t mTitleScrollPixOffset = 0;
     bool mTitleScrollEnabled = false;
+    int8_t mTitleScrollStep = 1;
     uint32_t mLastShownNetSpeed = 0xffffffff;
     uint8_t mLatchedBufUnderrunState = 0xff;
     uint8_t mDisplayedBufUnderrunTimer = 0;
@@ -134,7 +136,7 @@ protected:
     void lcdUpdatePlayState(const char* text, bool isRecording=false);
     void lcdBlitTrackTitle();
     void lcdUpdateTrackTitle(const char* buf);
-    void lcdScrollTrackTitle(int step=1);
+    void lcdScrollTrackTitle();
     void lcdUpdateArtistName(const char* name);
     void lcdUpdateStationInfo();
     void lcdUpdateTrackDisplay();

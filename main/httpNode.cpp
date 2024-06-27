@@ -103,6 +103,10 @@ bool HttpNode::isPlaylist()
 void HttpNode::doSetUrl(UrlInfo* urlInfo)
 {
     ESP_LOGI(mTag, "Setting url to %s", urlInfo->url);
+    if (mRecorder) {
+        mRecorder.reset();
+        plSendEvent(kEventRecording, false);
+    }
     if (mClient) {
         esp_http_client_set_url(mClient, urlInfo->url); // do it here to avoid keeping reference to the old, freed one
     }

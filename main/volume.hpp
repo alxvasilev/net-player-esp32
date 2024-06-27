@@ -22,8 +22,13 @@ public:
     // the sample has the maximum possible value, the level is set to 256
     struct StereoLevels
     {
-        int16_t left;
-        int16_t right;
+        union {
+            struct {
+                int16_t left;
+                int16_t right;
+            };
+            uint32_t data;
+        };
     };
     typedef void(*AudioLevelCallbck)(void* arg);
     void volEnableLevel(AudioLevelCallbck cb, void* arg, uint8_t measurePoint)
@@ -48,12 +53,12 @@ public:
     const StereoLevels& audioLevels() const { return mAudioLevels; }
     void clearAudioLevels()
     {
-        mAudioLevels.left = mAudioLevels.right = 0;
+        mAudioLevels.data = 0;
         if (mAudioLevelCb) {
             mAudioLevelCb(mAudioLevelCbArg);
         }
     }
-    void clearAudioLevelsNoEvent() { mAudioLevels.left = mAudioLevels.right = 0; }
+    void clearAudioLevelsNoEvent() { mAudioLevels.data = 0; }
 protected:
     StereoLevels mAudioLevels;
     AudioLevelCallbck mAudioLevelCb = nullptr;
