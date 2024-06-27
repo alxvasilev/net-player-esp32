@@ -11,6 +11,8 @@
 #include "recorder.hpp"
 #include "vuDisplay.hpp"
 #include "dlna.hpp"
+#include <framebuf.hpp>
+#include <gfx.hpp>
 
 class DecoderNode;
 class EqualizerNode;
@@ -79,7 +81,8 @@ protected:
     bool mStopping = false; // set while stopping the pipeline, to ignore error signalled by nodes during the process
     NvsHandle mNvsHandle;
     ST7735Display& mLcd;
-    EventGroup mEvents;
+    LcdFrameBuf mDmaFrameBuf;
+    LcdFrameBuf mTitleTextFrameBuf;
     http::Server& mHttpServer;
     std::unique_ptr<DlnaHandler> mDlna;
     unique_ptr_mfree<TrackInfo> mTrackInfo;
@@ -160,8 +163,8 @@ public:
     std::unique_ptr<StationList> stationList;
     const TrackInfo* trackInfo() const { return mTrackInfo.get(); }
     void setLogLevel(esp_log_level_t level);
-    AudioPlayer(PlayerMode mode, AudioNode::Type outType, ST7735Display& lcd, http::Server& httpServer, bool useEq=true);
-    AudioPlayer(ST7735Display& lcd, http::Server& httpServer);
+    AudioPlayer(ST7735Display& lcd, http::Server& httpServer, PlayerMode mode=kModeInvalid,
+        AudioNode::Type outType=AudioNode::kTypeUnknown);
     ~AudioPlayer();
     AudioNode::Type inputType() const { return mStreamIn->type(); }
     AudioNode::Type outputType() const { return mStreamOut->type(); }

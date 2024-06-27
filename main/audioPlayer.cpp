@@ -14,6 +14,7 @@
 #include <httpServer.hpp>
 #include "tostring.hpp"
 #include <st7735.hpp>
+#include <esp_heap_caps.h>
 
 #define kStreamInfoFont font_Camingo22
 const LcdColor kLcdColorCaption(255, 255, 128);
@@ -54,21 +55,10 @@ void AudioPlayer::createOutputA2dp()
     */
 }
 
-AudioPlayer::AudioPlayer(PlayerMode playerMode, AudioNode::Type outType, ST7735Display& lcd, http::Server& httpServer, bool useEq)
-: mFlags(useEq ? kFlagUseEqualizer : (Flags)0), mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd),
-  mEvents(kEventTerminating), mHttpServer(httpServer), mVuDisplay(mLcd)
-{
-    init(playerMode, outType);
-}
-
-AudioPlayer::AudioPlayer(ST7735Display& lcd, http::Server& httpServer)
-: mFlags((Flags)0), mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd),
-  mHttpServer(httpServer), mVuDisplay(mLcd)
-{
-    init(kModeInvalid, AudioNode::kTypeUnknown);
-}
-
-void AudioPlayer::init(PlayerMode mode, AudioNode::Type outType)
+AudioPlayer::AudioPlayer(ST7735Display& lcd, http::Server& httpServer, PlayerMode mode, AudioNode::Type outType)
+: mFlags(kFlagUseEqualizer), mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd),
+  mDmaFrameBuf(320, 44, MALLOC_CAP_DMA), mTitleTextFrameBuf(2400, 44, MALLOC_CAP_SPIRAM),
+  mHttpServer(httpServer), mVuDisplay(mDmaFrameBuf)
 {
     lcdInit();
     mNvsHandle.enableAutoCommit(20000);
@@ -133,6 +123,9 @@ void AudioPlayer::createDlnaHandler()
 }
 void AudioPlayer::lcdInit()
 {
+    mDmaFrameBuf.setBgColor(0, 0, 128);
+    mDmaFrameBuf.clear();
+    mLcd.dmaMountFrameBuffer(mDmaFrameBuf);
     mVuDisplay.init(mNvsHandle);
 }
 
@@ -215,8 +208,9 @@ void AudioPlayer::lcdDrawGui()
     mLcd.setFgColor(kLcdColorGrid);
     mLcd.setFont(font_Camingo22);
     mLcd.hLine(0, mLcd.width()-1, mLcd.fontHeight() + 3);
-    mLcd.hLine(0, mLcd.width()-1, mVuDisplay.yTop() - kStreamInfoFont.height - 4);
-    mLcd.hLine(0, mLcd.width()-1, mVuDisplay.yTop() - 2);
+    auto vuTop = mLcd.height() - mVuDisplay.height();
+    mLcd.hLine(0, mLcd.width()-1, vuTop - kStreamInfoFont.height - 4);
+    mLcd.hLine(0, mLcd.width()-1, vuTop - 2);
 }
 void AudioPlayer::setPlayerMode(PlayerMode mode)
 {
@@ -1192,7 +1186,7 @@ void AudioPlayer::lcdWriteStreamInfo(int8_t charOfs, const char* str)
     mLcd.setFont(kStreamInfoFont);
     mLcd.setFgColor(kLcdColorStreamInfo);
     uint16_t x = (charOfs >= 0) ? mLcd.textWidth(charOfs) : mLcd.width() - mLcd.textWidth(-charOfs);
-    mLcd.gotoXY(x, mVuDisplay.yTop() - kStreamInfoFont.height - 2);
+    mLcd.gotoXY(x, mLcd.height() - mVuDisplay.height() - kStreamInfoFont.height - 2);
     mLcd.puts(str);
 }
 void AudioPlayer::onNewStream(StreamFormat fmt, int sourceBps)
