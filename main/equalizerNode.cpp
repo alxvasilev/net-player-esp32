@@ -2,7 +2,7 @@
 #include <nvsHandle.hpp>
 #include <esp_equalizer.h>
 #include <cmath>
-#define EQ_PERF 1
+//#define EQ_PERF 1
 //#define CONVERT_PERF 1
 
 static const char* TAG = "eq";

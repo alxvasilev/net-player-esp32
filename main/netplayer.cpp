@@ -195,38 +195,6 @@ extern "C" void app_main(void)
 #ifdef DEV_MODE
         lcd.puts("Waiting dev http request\n");
         msSleep(1000);
-    lcd.setBgColor(LcdColor::GREEN);
-    lcd.clear(0, 0, lcd.width(), lcd.height());
-    enum { kPixCount = 16000 };
-    auto dmaData = (ST7735Display::Color*)heap_caps_malloc(kPixCount * 2, MALLOC_CAP_DMA);
-    auto half = dmaData + kPixCount / 2;
-    auto end = dmaData + kPixCount;
-    for (auto pix = dmaData; pix < half; pix++) {
-        *pix = LcdColor::WHITE;
-    }
-    for (auto pix = half; pix < end; pix++) {
-        *pix = 0;
-    }
-    lcd.dmaMountBuffer((const char*)dmaData, kPixCount * 2);
-    lcd.dmaBlit(0, 95, lcd.width(), 50);
-    ElapsedTimer t;
-    lcd.waitDone();
-    printf("dma time: %lld us\n", t.usElapsed());
-    /*
-    for (auto pix = dmaData; pix < half; pix++) {
-        *pix = 0;
-    }
-    for (auto pix = half; pix < end; pix++) {
-        *pix = ST77XX_WHITE;
-    }
-    msDelay(500);
-    lcd.dmaBlit(0, 95, lcd.width(), 50);
-    t.reset();
-    lcd.waitDone();
-    printf("dma time: %lld us\n", t.usElapsed());
-    */
-    lcd.puts("done\n");
-    msDelay(4000);
 #endif
 //===
     lcd.puts("Mounting SDCard...\n");

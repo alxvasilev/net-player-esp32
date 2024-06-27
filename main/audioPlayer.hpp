@@ -83,6 +83,7 @@ protected:
     ST7735Display& mLcd;
     LcdFrameBuf mDmaFrameBuf;
     LcdFrameBuf mTitleTextFrameBuf;
+    EventGroup mEvents;
     http::Server& mHttpServer;
     std::unique_ptr<DlnaHandler> mDlna;
     unique_ptr_mfree<TrackInfo> mTrackInfo;
