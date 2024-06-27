@@ -5,7 +5,12 @@
 #include "volume.hpp"
 #include <lcdColor.hpp>
 
-class ST7735Display;
+template <class C>
+class FrameBuffer;
+template <class Fb>
+class Gfx;
+typedef Gfx<FrameBuffer<Color565>> LcdFrameBuf;
+
 class NvsHandle;
 
 class VuDisplay {
@@ -22,12 +27,11 @@ class VuDisplay {
         int16_t barY;
         int16_t avgLevel;
         int16_t peakLevel;
-        int16_t prevBarLen;
         uint8_t peakTimer;
-        void reset() { avgLevel = peakLevel = prevBarLen = peakTimer = 0; }
+        void reset() { avgLevel = peakLevel = peakTimer = 0; }
         ChanCtx() { reset(); }
     };
-    ST7735Display& mLcd;
+    LcdFrameBuf& mLcd;
     ChanCtx mLeftCtx;
     ChanCtx mRightCtx;
     int8_t mStepWidth; // mLedWidth + led spacing
@@ -40,16 +44,17 @@ class VuDisplay {
     int32_t mLevelPerLed;
     uint8_t mPeakDropTicks;
     uint8_t mPeakHoldTicks;
+    uint8_t mHeight;
     inline Color565 ledColor(int16_t ledX, int16_t level);
     void calculateLevels(ChanCtx& ctx, int16_t level);
     void drawChannel(ChanCtx& ctx, int16_t level);
     inline int16_t numLedsForLevel(int16_t level);
 public:
-    VuDisplay(ST7735Display& lcd): mLcd(lcd) {}
+    VuDisplay(LcdFrameBuf& lcd): mLcd(lcd) {}
     void init(NvsHandle& nvs);
     void update(const IAudioVolume::StereoLevels& levels);
     void reset(NvsHandle& nvs);
-    int16_t yTop() const { return mLeftCtx.barY; }
+    int16_t height() const { return mHeight; }
 };
 
 #endif

@@ -25,8 +25,9 @@ void VuDisplay::init(NvsHandle& nvs)
     mGreenColor = nvs.readDefault<uint16_t>("vuClrGreen", Color565::GREEN);
     mYellowColor = nvs.readDefault<uint16_t>("vuClrYellow", Color565::YELLOW);
     ESP_LOGD(TAG, "init: stepWidth: %d, ledWidth: %d, levelPerLed: %f, yellowStartX: %d", mStepWidth, mLedWidth, mYellowStartX / (float)100, mYellowStartX);
-    mLeftCtx.barY = mLcd.height() - 2 * mLedHeight - mChanSpacing;
-    mRightCtx.barY = mLeftCtx.barY + mLedHeight + mChanSpacing;
+    mLeftCtx.barY = 0;
+    mRightCtx.barY = mLedHeight + mChanSpacing;
+    mHeight = 2 * mLedHeight + mChanSpacing;
 }
 
 void VuDisplay::update(const IAudioVolume::StereoLevels& levels)
@@ -80,11 +81,10 @@ void VuDisplay::drawChannel(ChanCtx& ctx, int16_t level)
     auto nCurrLeds = numLedsForLevel(ctx.avgLevel);
     int16_t levelBarLen = mStepWidth * nCurrLeds;
     // Draw bar
-    for (int16_t x = ctx.prevBarLen; x < levelBarLen; x += mStepWidth) {
+    for (int16_t x = 0; x < levelBarLen; x += mStepWidth) {
         mLcd.setFgColor(ledColor(x, ctx.peakLevel)); // keep red color for "yellow" part, as long as peak-hold is at kMaxLevel
         mLcd.fillRect(x, ctx.barY, mLedWidth, mLedHeight);
     }
-    ctx.prevBarLen = levelBarLen;
 
     auto nPeakLeds = numLedsForLevel(ctx.peakLevel);
     // draw peak indicator and background before and after it
