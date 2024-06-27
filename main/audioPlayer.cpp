@@ -17,6 +17,8 @@
 #include <esp_heap_caps.h>
 
 #define kStreamInfoFont font_Camingo22
+#define kTrackTitleFont font_CamingoBold43
+const LcdColor kLcdColorBackground(0, 0, 128);
 const LcdColor kLcdColorCaption(255, 255, 128);
 const LcdColor kLcdColorGrid(0, 128, 128);
 const LcdColor kLcdColorStreamInfo(128, 255, 255);
@@ -57,7 +59,9 @@ void AudioPlayer::createOutputA2dp()
 
 AudioPlayer::AudioPlayer(ST7735Display& lcd, http::Server& httpServer, PlayerMode mode, AudioNode::Type outType)
 : mFlags(kFlagUseEqualizer), mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd),
-  mDmaFrameBuf(320, 44, MALLOC_CAP_DMA), mTitleTextFrameBuf(2400, 44, MALLOC_CAP_SPIRAM),
+  mDmaFrameBuf(320, kTrackTitleFont.height + kTrackTitleFont.lineSpacing, MALLOC_CAP_DMA),
+  mTitleTextFrameBuf(kMaxTrackTitleLen * (kTrackTitleFont.width + kTrackTitleFont.charSpacing),
+                     kTrackTitleFont.height + kTrackTitleFont.lineSpacing, MALLOC_CAP_SPIRAM),
   mHttpServer(httpServer), mVuDisplay(mDmaFrameBuf)
 {
     lcdInit();
@@ -123,15 +127,18 @@ void AudioPlayer::createDlnaHandler()
 }
 void AudioPlayer::lcdInit()
 {
-    mDmaFrameBuf.setBgColor(0, 0, 128);
+    mDmaFrameBuf.setBgColor(kLcdColorBackground);
     mDmaFrameBuf.clear();
     mLcd.dmaMountFrameBuffer(mDmaFrameBuf);
+    mTitleTextFrameBuf.setBgColor(kLcdColorBackground);
+    mTitleTextFrameBuf.setFgColor(kLcdColorCaption);
+    mTitleTextFrameBuf.setFont(kTrackTitleFont);
     mVuDisplay.init(mNvsHandle);
 }
 
 void AudioPlayer::initTimedDrawTask()
 {
-    xTaskCreatePinnedToCore(&lcdTimedDrawTask, "lcdTask", kLcdTaskStackSize, this, kLcdTaskPrio, nullptr, kLcdTaskCore);
+    xTaskCreatePinnedToCore(&lcdTimedDrawTaskFunc, "lcdTask", kLcdTaskStackSize, this, kLcdTaskPrio, nullptr, kLcdTaskCore);
 }
 
 bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType)
@@ -1069,13 +1076,17 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
     return true;
 }
 
-void AudioPlayer::lcdTimedDrawTask(void* ctx)
+void AudioPlayer::lcdTimedDrawTaskFunc(void* ctx)
 {
-    auto& self = *static_cast<AudioPlayer*>(ctx);
+    static_cast<AudioPlayer*>(ctx)->lcdTimedDrawTask();
+    vTaskDelete(nullptr);
+}
+void AudioPlayer::lcdTimedDrawTask()
+{
     int16_t fps;
     {
-        MutexLocker locker(self.mutex);
-        fps = self.mNvsHandle.readDefault<uint8_t>("tscrollFps", kDefTitleScrollFps);
+        LOCK_PLAYER();
+        fps = mNvsHandle.readDefault<uint8_t>("tscrollFps", kDefTitleScrollFps);
     }
     int64_t scrollTickPeriodUs = (1000000 + fps / 2) / fps;
     int64_t now = esp_timer_get_time();
@@ -1087,38 +1098,39 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
         int64_t usTillScroll = scrollTickPeriodUs - (now - tsLastTitleScroll);
         //ESP_LOGW(TAG, "timeout: %lld\n", timeout);
         EventBits_t events = (usTillScroll > 0)
-            ? self.mEvents.waitForOneAndReset(kEventTerminating|kEventVolLevel, (usTillScroll + 500) / 1000)
+            ? mEvents.waitForOneAndReset(kEventTerminating|kEventVolLevel, (usTillScroll + 500) / 1000)
             : (EventBits_t)0; // events = 0 -> scroll title
         if (events & kEventTerminating) {
             break;
         }
         {
-            MutexLocker locker(self.mutex);
+            LOCK_PLAYER();
             if (events & kEventVolLevel) {
                 tsLastVolEvent = now;
-                self.mVuDisplay.update(self.mVuLevels);
-                self.mLcd.dmaBlit(0, self.mLcd.height() - self.mVuDisplay.height(),
-                    self.mLcd.width(), self.mVuDisplay.height());
+                mLcd.waitDone();
+                mVuDisplay.update(mVuLevels);
+                mLcd.dmaBlit(0, mLcd.height() - mVuDisplay.height(), mLcd.width(), mVuDisplay.height());
             }
             else if (events == 0) { // timeout, due time to scroll title
                 tsLastTitleScroll = now;
-                if (self.mTitleScrollEnabled == 1) {
-                    self.lcdScrollTrackTitle();
+                if (mTitleScrollEnabled == 1) {
+                    mLcd.waitDone();
+                    lcdScrollTrackTitle();
+                    mLcd.dmaBlit(0, kLcdTrackTitleY, mDmaFrameBuf.width(), mDmaFrameBuf.height());
                 }
                 if (now - tsLastVolEvent > 50000) { // 50ms no volume event, force update the VU display
                     ESP_LOGD(TAG, "No sound output, clearing VU levels");
-                    self.mVolumeInterface->clearAudioLevelsNoEvent();
-                    self.mVuDisplay.update(self.mVuLevels);
+                    mVolumeInterface->clearAudioLevelsNoEvent();
+                    //mVuDisplay.update(self.mVuLevels);
                 }
                 if (now - tsLastSpeedUpdate > kLcdNetSpeedUpdateIntervalUs) {
                     tsLastSpeedUpdate = now;
-                    self.lcdUpdateNetSpeed();
+                    lcdUpdateNetSpeed();
                 }
             }
         }
     }
-    self.mEvents.setBits(kEventTerminated);
-    vTaskDelete(nullptr);
+    mEvents.setBits(kEventTerminated);
 }
 
 void AudioPlayer::lcdUpdateTrackTitle(const char* buf)
@@ -1126,62 +1138,77 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf)
     if (!buf || !buf[0]) {
         mTitleScrollEnabled = false;
         mLcdTrackTitle.clear();
-        lcdSetupForTrackTitle();
-        mLcd.clear(mLcd.cursorX, mLcd.cursorY, mLcd.width(), mLcd.fontHeight());
+        mLcd.gotoXY(0, kLcdTrackTitleY);
+        mLcd.clear(mLcd.cursorX, mLcd.cursorY, mLcd.width(), kTrackTitleFont.height);
         return;
     }
 
     size_t len = strlen(buf);
-    mLcdTrackTitle.reserve(len + 4);
-    mLcdTrackTitle.assign(buf, len);
-    mLcdTrackTitle.append(" * ", 4);
-    mTitleScrollCharOffset = mTitleScrollPixOffset = 0;
-    lcdSetupForTrackTitle();
-    mLcd.puts(mLcdTrackTitle.buf(), mLcd.kFlagNoAutoNewline | mLcd.kFlagAllowPartial);
-    mTitleScrollEnabled = !streamIsCpuHeavy();
+    if (len > kMaxTrackTitleLen - 3) {
+        mLcdTrackTitle.reserve(kMaxTrackTitleLen + 1);
+        mLcdTrackTitle.assign(buf, kMaxTrackTitleLen - 3);
+        mLcdTrackTitle.append("...", 4);
+        mTitleTextWidth = mTitleTextFrameBuf.width();
+    }
+    else {
+        mLcdTrackTitle.reserve(len + 4);
+        mLcdTrackTitle.assign(buf, len);
+        mLcdTrackTitle.append(" * ", 4);
+        mTitleTextWidth = (len + 3) * (kTrackTitleFont.width + kTrackTitleFont.charSpacing);
+    }
+    mTitleScrollPixOffset = 0;
+    mTitleTextFrameBuf.clear();
+    mTitleTextFrameBuf.gotoXY(0, 0);
+    mTitleTextFrameBuf.puts(mLcdTrackTitle.buf(), mLcd.kFlagNoAutoNewline | mLcd.kFlagAllowPartial);
+    mTitleScrollEnabled = true; //!streamIsCpuHeavy();
+    lcdBlitTrackTitle();
 }
-
-void AudioPlayer::lcdSetupForTrackTitle()
+void AudioPlayer::lcdBlitTrackTitle()
 {
-    mLcd.setFont(font_CamingoBold43);
-    mLcd.setFgColor(kLcdColorCaption);
-    mLcd.gotoXY(0, kLcdTrackTitleY);
+#ifdef PERF_TITLESCROLL
+    ElapsedTimer t;
+#endif
+    auto wptr = mDmaFrameBuf.data();
+    for (int line = 0; line < mTitleTextFrameBuf.height(); line++) {
+        auto rLineStart = mTitleTextFrameBuf.data() + line * mTitleTextFrameBuf.width();
+        auto rptr =  rLineStart + mTitleScrollPixOffset;
+        auto rend = rLineStart + mTitleTextWidth;
+        auto wend = wptr + mDmaFrameBuf.width();
+//      printf("rptr=%d, rend=%d, wptr=%d, wend=%d\n", rptr - mTitleTextFrameBuf.data(), rend - mTitleTextFrameBuf.data(),
+//             wptr - mDmaFrameBuf.data(), wend - mDmaFrameBuf.data());
+        while (wptr < wend) {
+            int toCopy = std::min(wend - wptr, rend - rptr);
+            int cnt = toCopy >> 1; // whole number of 4-byte words
+            if (cnt) {
+                cnt <<= 2; // to bytes
+                memcpy(wptr, rptr, cnt);
+                cnt >>= 1; // back to number of colors
+                wptr += cnt;
+                rptr += cnt;
+            }
+            if (toCopy & 1) { // odd one
+                *(wptr++) = *(rptr++);
+            }
+            if (rptr >= rend) {
+                rptr = rLineStart;
+            }
+        }
+        myassert(wptr == wend);
+    }
+#ifdef PERF_TITLESCROW
+    printf("title draw: %lld us\n", t.usElapsed());
+#endif
 }
-
 void AudioPlayer::lcdScrollTrackTitle(int step)
 {
     if (mLcdTrackTitle.dataSize() <= 1) {
         return;
     }
-    lcdSetupForTrackTitle();
-
-    auto title = mLcdTrackTitle.buf() + mTitleScrollCharOffset;
-    auto titleEnd = mLcdTrackTitle.buf() + mLcdTrackTitle.dataSize() - 1; // without terminating null
-    if (title >= titleEnd) {
-        title = mLcdTrackTitle.buf();
-        mTitleScrollCharOffset = mTitleScrollPixOffset = 0;
-    } else {
-        // display first partial char, if any
-        if (mTitleScrollPixOffset) {
-            mLcd.putc(*(title++), mLcd.kFlagNoAutoNewline, mTitleScrollPixOffset); // can advance to the terminating NULL
-        }
-        mTitleScrollPixOffset += step;
-        if (mTitleScrollPixOffset >= mLcd.font()->width + mLcd.font()->charSpacing) {
-            mTitleScrollPixOffset = 0;
-            mTitleScrollCharOffset++;
-        }
+    mTitleScrollPixOffset += step;
+    if (mTitleScrollPixOffset >= mTitleTextWidth) {
+        mTitleScrollPixOffset -= mTitleTextWidth;
     }
-    for(;;) {
-        char ch = *title;
-        if (!ch) {
-            title = mLcdTrackTitle.buf();
-            ch = *title;
-        }
-        title++;
-        if (!mLcd.putc(ch, mLcd.kFlagNoAutoNewline | mLcd.kFlagAllowPartial)) {
-            break;
-        }
-    }
+    lcdBlitTrackTitle();
 }
 void AudioPlayer::lcdWriteStreamInfo(int8_t charOfs, const char* str)
 {

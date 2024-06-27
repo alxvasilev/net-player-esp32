@@ -32,6 +32,11 @@ void VuDisplay::init(NvsHandle& nvs)
 
 void VuDisplay::update(const IAudioVolume::StereoLevels& levels)
 {
+    uint32_t word = mLcd.bgColor().val << 16 | mLcd.bgColor().val;
+    uint32_t* end = (uint32_t*)mLcd.data() + ((mLcd.width() * mHeight) >> 1);
+    for (auto ptr = (uint32_t*)mLcd.data(); ptr < end; ) {
+        *(ptr++) = word;
+    }
     drawChannel(mLeftCtx, levels.left);
     drawChannel(mRightCtx, levels.right);
 }
@@ -89,28 +94,13 @@ void VuDisplay::drawChannel(ChanCtx& ctx, int16_t level)
     auto nPeakLeds = numLedsForLevel(ctx.peakLevel);
     // draw peak indicator and background before and after it
     if (nPeakLeds <= nCurrLeds) { // no peak led after level bar
-        int16_t afterLen = mLcd.width() - levelBarLen;
-        if (afterLen > 0) {
-            // draw background after level bar and return
-            mLcd.clear(levelBarLen, ctx.barY, afterLen, mLedHeight);
-        }
         return;
     }
 
     int16_t peakLedX = mStepWidth * (nPeakLeds - 1);
-    if (peakLedX > levelBarLen) {
-        // draw background between end of level bar and peak led
-        mLcd.clear(levelBarLen, ctx.barY, peakLedX - levelBarLen, mLedHeight);
-    }
     mLcd.setFgColor(ledColor(peakLedX, ctx.peakLevel));
     // draw peak led
     mLcd.fillRect(peakLedX, ctx.barY, mLedWidth, mLedHeight);
-    // draw background after peak led
-    auto peakLedEndX = peakLedX + mStepWidth;
-    int16_t afterLen = mLcd.width() - peakLedEndX;
-    if (afterLen > 0) {
-        mLcd.clear(peakLedEndX, ctx.barY, afterLen, mLedHeight);
-    }
 }
 void VuDisplay::reset(NvsHandle &nvs)
 {

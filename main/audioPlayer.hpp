@@ -34,7 +34,7 @@ public:
         kHttpBufSizeInternal = 35 * 1024,
         kHttpBufSizeSpiRam = 800 * 1024,
         kHttpBufPrefillSpiRam = 65536,
-        kDefTitleScrollFps = 15,
+        kDefTitleScrollFps = 25,
         kLcdNetSpeedUpdateIntervalUs = 1 * 1000000
     };
     enum PlayerMode: uint8_t {
@@ -57,7 +57,8 @@ protected:
     enum {
         kI2sStackSize = 4096, kI2sCpuCore = 0,
         kI2sDmaBufCnt = 4, // 1 buffer is 1024 samples
-        kLcdTaskStackSize = 2200, kLcdTaskPrio = 10, kLcdTaskCore = 1
+        kLcdTaskStackSize = 2200, kLcdTaskPrio = 10, kLcdTaskCore = 1,
+        kMaxTrackTitleLen = 100
     };
     enum {
         kLcdArtistNameLineY = 38, kLcdPlayStateLineY = 76, kLcdTrackTitleY = 106
@@ -99,8 +100,8 @@ protected:
     IAudioVolume::StereoLevels mVuLevels = {0,0};
 // track name scroll stuff
     DynBuffer mLcdTrackTitle;
-    int16_t mTitleScrollCharOffset = 0;
-    int8_t mTitleScrollPixOffset = 0;
+    int16_t mTitleTextWidth = -1;
+    int16_t mTitleScrollPixOffset = 0;
     bool mTitleScrollEnabled = false;
     uint32_t mLastShownNetSpeed = 0xffffffff;
     uint8_t mLatchedBufUnderrunState = 0xff;
@@ -108,7 +109,8 @@ protected:
     StreamFormat mStreamFormat;
     static void audioLevelCb(void* ctx);
 //====
-    static void lcdTimedDrawTask(void* ctx);
+    static void lcdTimedDrawTaskFunc(void* ctx);
+    void lcdTimedDrawTask();
 
     void createInputA2dp();
     void createOutputA2dp();
@@ -130,7 +132,7 @@ protected:
     void lcdDrawGui();
     void initTimedDrawTask();
     void lcdUpdatePlayState(const char* text, bool isRecording=false);
-    void lcdSetupForTrackTitle();
+    void lcdBlitTrackTitle();
     void lcdUpdateTrackTitle(const char* buf);
     void lcdScrollTrackTitle(int step=1);
     void lcdUpdateArtistName(const char* name);
