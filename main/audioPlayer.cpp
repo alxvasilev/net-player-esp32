@@ -1097,6 +1097,8 @@ void AudioPlayer::lcdTimedDrawTask(void* ctx)
             if (events & kEventVolLevel) {
                 tsLastVolEvent = now;
                 self.mVuDisplay.update(self.mVuLevels);
+                self.mLcd.dmaBlit(0, self.mLcd.height() - self.mVuDisplay.height(),
+                    self.mLcd.width(), self.mVuDisplay.height());
             }
             else if (events == 0) { // timeout, due time to scroll title
                 tsLastTitleScroll = now;
