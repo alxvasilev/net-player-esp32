@@ -166,12 +166,17 @@ void* operator new(size_t size)
 extern "C" void* my_malloc(size_t size)
 {
     //printf("my_malloc(%zu)\n", size);
-    return utils::mallocTrySpiram(size);
+    return heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
 }
 extern "C" void* my_realloc(void* ptr, size_t size)
 {
     //printf("my_realloc(%zu): isSpi: %d\n", size, utils::isInSpiRam(ptr));
-    return utils::reallocTrySpiram(ptr, size);
+    return heap_caps_realloc(ptr, size, MALLOC_CAP_SPIRAM);
+}
+extern "C" void* my_calloc(size_t num, size_t size)
+{
+    //printf("my_calloc(%zu, %zu)\n", num, size);
+    return heap_caps_calloc(num, size, MALLOC_CAP_SPIRAM);
 }
 
 extern "C" void app_main(void)
