@@ -1146,7 +1146,7 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf)
         mTitleTextWidth = (len + 3) * (kTrackTitleFont.width + kTrackTitleFont.charSpacing);
     }
     mTitleScrollPixOffset = 0;
-    mTitleScrollStep = mLcdTrackTitle.dataSize() > 50 ? 2 : 1;
+    mTitleScrollStep = 2;
     mTitleTextFrameBuf.clear();
     mTitleTextFrameBuf.gotoXY(0, 0);
     mTitleTextFrameBuf.puts(mLcdTrackTitle.buf(), mLcd.kFlagNoAutoNewline | mLcd.kFlagAllowPartial);

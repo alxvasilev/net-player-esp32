@@ -50,9 +50,10 @@ public:
     virtual void reset() override { deleteDecoder(); }
     virtual void onStopRequest() { mRingBuf.setStopSignal(); }
     virtual void onStopped() { mRingBuf.clear(); deleteDecoder(); }
+    using AudioNode::plSendEvent;
     StreamEvent forwardEvent(StreamEvent evt, AudioNode::PacketResult& pr); // currently used externally only by FLAC
     bool codecOnFormatDetected(StreamFormat fmt, uint8_t sourceBps); // called by codec when it know the sample format, and before posting any data packet
-    bool codecPostOutput(DataPacket* pkt); // called by codec to output a decoded packet
+    bool codecPostOutput(StreamPacket* pkt); // called by codec to output a decoded or title change packet
     friend class Decoder;
 };
 

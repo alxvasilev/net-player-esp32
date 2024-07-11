@@ -45,6 +45,7 @@ struct Codec {
     operator bool() const { return this->type != 0; }
     Codec& operator=(Type aType) { type = aType; return *this; }
     uint8_t asNumCode() const { return numCode; }
+    void fromNumCode(uint8_t val) { numCode = val; }
     static const char* numCodeToStr(uint8_t aNumCode) {
         Codec inst = { .numCode = aNumCode }; return inst.toString();
     }
@@ -82,7 +83,6 @@ public:
         initSampleFormat(sr, bps, channels);
     }
     StreamFormat(Codec codec): mNumCode(0) { members.codec = codec; }
-    StreamFormat(Codec::Type type): mNumCode(0) { members.codec.type = type; }
     StreamFormat(Codec codec, uint32_t sr, uint8_t bps, uint8_t channels): mNumCode(0)
     {
         initSampleFormat(sr, bps, channels);

@@ -3,6 +3,7 @@
 #include "decoderAac.hpp"
 #include "decoderFlac.hpp"
 #include "decoderWav.hpp"
+#include "decoderVorbis.hpp"
 #include "detectorOgg.hpp"
 #include "streamPackets.hpp"
 
@@ -25,11 +26,10 @@ bool DecoderNode::createDecoder(StreamFormat fmt)
     case Codec::kCodecPcm:
         mDecoder = new DecoderWav(*this, *mPrev, fmt);
         break;
-/*
-    case kCodecOggVorbis:
-        mDecoder = new DecoderVorbis();
+    case Codec::kCodecVorbis:
+        mDecoder = new DecoderVorbis(*this, *mPrev);
         break;
-*/
+
     default:
         return false;
     }
@@ -170,7 +170,7 @@ bool DecoderNode::codecOnFormatDetected(StreamFormat fmt, uint8_t sourceBps)
     mPrev->streamFormatDetails(sourceFmt);
     return mRingBuf.pushBack(new GenericEvent(kEvtStreamChanged, mInStreamId, fmt, sourceBps));
 }
-bool DecoderNode::codecPostOutput(DataPacket *pkt)
+bool DecoderNode::codecPostOutput(StreamPacket *pkt)
 {
     return mRingBuf.pushBack(pkt);
 }

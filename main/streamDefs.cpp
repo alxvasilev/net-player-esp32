@@ -24,11 +24,10 @@ int StreamFormat::prefillAmount() const
 int16_t StreamFormat::netRecvSize() const
 {
     switch (codec().type) {
-        case Codec::kCodecFlac:
         case Codec::kCodecWav:
             return (sampleRate() > 48000 || bitsPerSample() > 16) ? 8192 : 4096;
         default:
-            return 2048;
+            return (codec().transport == Codec::kTransportOgg) ? 4096 : 2048;
     }
 }
 const char* Codec::toString() const
@@ -47,8 +46,15 @@ const char* Codec::toString() const
         case kCodecVorbis: return "vorbis"; // transport is always ogg
         case kCodecWav: return "wav";
         case kCodecPcm: return "pcm";
-        case kCodecUnknown: return "none";
-        default: return "(unknown)";
+        case kCodecUnknown:
+        default:
+            if (transport == kTransportOgg) {
+                return "unknown/ogg";
+            }
+            else if (transport == kTransportMpeg) {
+                return "unknown/mpeg";
+            }
+            return "(unknown)";
     }
 }
 const char* Codec::fileExt() const {

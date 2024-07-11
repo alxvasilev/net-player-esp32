@@ -66,9 +66,10 @@ struct DataPacket: public StreamPacket {
     typedef std::unique_ptr<DataPacket, Deleter> unique_ptr;
     int16_t dataLen;
     alignas(uint32_t) char data[];
-    static DataPacket* create(int dataSize) {
-        auto inst = allocWithDataSize<DataPacket>(kEvtData, dataSize);
-        inst->dataLen = dataSize;
+    template <bool Empty=false>
+    static DataPacket* create(int bufSize) {
+        auto inst = allocWithDataSize<DataPacket>(kEvtData, bufSize);
+        inst->dataLen = Empty ? 0 : bufSize;
         return inst;
     }
     void logData(int16_t maxLen, const char* msg, int lineLen=20)
