@@ -69,7 +69,7 @@ public:
                 if (ogg_page_bos(&mOg)) { // skip pages till beginning-of-stream page found
                     break;
                 }
-                vorb_dbg("init: Skipping non-BOS page");
+                vorb_dbg("init: Skipping non-BOS page, with EOS=%d", ogg_page_eos(&mOg));
             }
             if (ret == -1) {
                 vorb_dbg("init: No sync, retrying");
