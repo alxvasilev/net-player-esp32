@@ -127,8 +127,8 @@ StreamEvent DecoderMp3::output(const mad_pcm& pcmData)
         auto right_ch = pcmData.samples[1];
         int32_t* end = (int32_t*)(output->data + dataLen);
         for (int32_t* wptr = (int32_t*)output->data; wptr < end; ) {
-            *(wptr++) = *(left_ch++) >> 4;
-            *(wptr++) = *(right_ch++) >> 4;
+            *(wptr++) = *(left_ch++) >> 6;
+            *(wptr++) = *(right_ch++) >> 6;
         }
     }
     else if (pcmData.channels == 1) {
@@ -137,7 +137,7 @@ StreamEvent DecoderMp3::output(const mad_pcm& pcmData)
         auto rptr = pcmData.samples[0];
         auto end = (int32_t*)(output->data + dataLen);
         for (int32_t* wptr = (int32_t*)output->data; wptr < end; wptr++) {
-            *(wptr++) = *(rptr++) >> 4;
+            *(wptr++) = *(rptr++) >> 6;
         }
     }
     else {
