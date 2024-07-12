@@ -18,79 +18,7 @@
 #define LOCK() MutexLocker locker(mMutex)
 
 static const char *TAG = "node-http";
-StreamFormat HttpNode::codecFromContentType(const char* content_type)
-{
-    if (strcasecmp(content_type, "audio/mp3") == 0 ||
-        strcasecmp(content_type, "audio/mpeg") == 0) {
-        return Codec::kCodecMp3;
-    }
-    else if (strcasecmp(content_type, "audio/aac") == 0 ||
-        strcasecmp(content_type, "audio/x-aac") == 0 ||
-//      strcasecmp(content_type, "audio/mp4") == 0 ||
-        strcasecmp(content_type, "audio/aacp") == 0) {
-        return Codec::kCodecAac;
-    }
-    else if (strcasecmp(content_type, "audio/flac") == 0 ||
-             strcasecmp(content_type, "audio/x-flac") == 0) {
-        return Codec::kCodecFlac;
-    }
-    else if (strcasecmp(content_type, "audio/ogg") == 0 ||
-             strcasecmp(content_type, "application/ogg") == 0) {
-        return Codec(Codec::kCodecUnknown, Codec::kTransportOgg);
-    }
-    else if (strcasecmp(content_type, "audio/wav") == 0 ||
-             strcasecmp(content_type, "audio/x-wav") == 0) {
-        return Codec::kCodecWav;
-    }
-    else if (strncasecmp(content_type, "audio/L16", 9) == 0) {
-        return parseLpcmContentType(content_type, 16);
-    }
-    else if (strncasecmp(content_type, "audio/L24", 9) == 0) {
-        return parseLpcmContentType(content_type, 24);
-    }
-    else if (strcasecmp(content_type, "audio/opus") == 0) {
-        return Codec::kCodecOpus;
-    }
-    else if (strcasecmp(content_type, "audio/x-mpegurl") == 0 ||
-        strcasecmp(content_type, "application/vnd.apple.mpegurl") == 0 ||
-        strcasecmp(content_type, "vnd.apple.mpegURL") == 0) {
-        return Codec::kPlaylistM3u8;
-    }
-    else if (strncasecmp(content_type, "audio/x-scpls", strlen("audio/x-scpls")) == 0) {
-        return Codec::kPlaylistPls;
-    }
-    return Codec::kCodecUnknown;
-}
-StreamFormat HttpNode::parseLpcmContentType(const char* ctype, int bps)
-{
-    const char* kMsg = "Error parsing audio/Lxx";
-    ctype = strchr(ctype, ';');
-    if (!ctype) {
-        ESP_LOGW(TAG, "%s: No semicolon found", kMsg);
-        return Codec::kCodecUnknown;
-    }
-    ctype++;
-    auto len = strlen(ctype) + 1;
-    auto copy = (char*)malloc(len);
-    memcpy(copy, ctype, len);
-    KeyValParser params(copy, len, true);
-    if (!params.parse(';', '=', KeyValParser::kTrimSpaces)) {
-        ESP_LOGW(TAG, "%s params", kMsg);
-        return Codec::kCodecUnknown;
-    }
-    auto sr = params.intVal("rate", 0);
-    if (sr == 0) {
-        ESP_LOGW(TAG, "%s samplerate", kMsg);
-        return Codec::kCodecUnknown;
-    }
-    auto chans = params.intVal("channels", 1);
-    StreamFormat fmt(Codec::kCodecPcm, sr, 16, chans);
-    auto endian = params.strVal("endianness");
-    if (!endian || strcasecmp(endian.str, "little-endian") != 0) {
-        fmt.setBigEndian(true);
-    }
-    return fmt;
-}
+
 bool HttpNode::isPlaylist()
 {
     if (mInFormat.codec().type == Codec::kPlaylistM3u8 || mInFormat.codec().type == Codec::kPlaylistPls) {
@@ -154,7 +82,7 @@ esp_err_t HttpNode::httpHeaderHandler(esp_http_client_event_t *evt)
 void HttpNode::onHttpHeader(const char* key, const char* val)
 {
     if (strcasecmp(key, "Content-Type") == 0) {
-        mInFormat = codecFromContentType(val);
+        mInFormat = StreamFormat::fromMimeType(val);
         mNetRecvSize = mInFormat.netRecvSize();
         ESP_LOGI(TAG, "Parsed content-type '%s' as %s, recv chunk size set to %d",
             val, mInFormat.codec().toString(), mNetRecvSize);

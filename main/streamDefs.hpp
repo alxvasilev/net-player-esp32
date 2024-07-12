@@ -78,12 +78,14 @@ public:
     static uint8_t encodeBps(uint8_t bits) { return (bits >> 3) - 1; }
     static uint8_t decodeBps(uint8_t bits) { return (bits + 1) << 3; }
     void clear() { mNumCode = 0; }
+    StreamFormat(uint32_t code): mNumCode(code) {}
     StreamFormat(uint32_t sr, uint8_t bps, uint8_t channels): mNumCode(0)
     {
         initSampleFormat(sr, bps, channels);
     }
     StreamFormat(Codec codec): mNumCode(0) { members.codec = codec; }
-    StreamFormat(Codec codec, uint32_t sr, uint8_t bps, uint8_t channels): mNumCode(0)
+    StreamFormat(Codec::Type codec): mNumCode(0) { members.codec = codec; }
+    StreamFormat(Codec::Type codec, uint32_t sr, uint8_t bps, uint8_t channels): mNumCode(0)
     {
         initSampleFormat(sr, bps, channels);
         members.codec = codec;
@@ -92,10 +94,12 @@ public:
     {
         static_assert(sizeof(StreamFormat) == sizeof(uint32_t), "Size of StreamFormat must be 32bit");
     }
-    StreamFormat(uint32_t code): mNumCode(code) {}
     bool operator==(StreamFormat other) const { return mNumCode == other.mNumCode; }
     bool operator!=(StreamFormat other) const { return mNumCode != other.mNumCode; }
     uint32_t asNumCode() const { return mNumCode; }
+    static StreamFormat fromNumCode(uint32_t code) { return StreamFormat(code); }//{.mNumCode = code}; }
+    static StreamFormat fromMimeType(const char* mime);
+    static StreamFormat parseLpcmContentType(const char* ctype, int bps);
     void set(uint32_t sr, uint8_t bits, uint8_t channels) {
         setNumChannels(channels);
         setSampleRate(sr);

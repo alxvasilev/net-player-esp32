@@ -60,7 +60,7 @@ public:
         stream initial header) We need the first page to get the stream serialno. */
         int ret;
         int i = 0;
-        for (; i < 40; i++) { // 10 attempts to sync
+        for (; i < 40; i++) { // finite attempts to sync
             ret = ogg_sync_pageout(&mOy, &mOg);
             if (ret == 0) {
                 return setNeedMoreData();

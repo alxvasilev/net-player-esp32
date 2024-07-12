@@ -47,8 +47,6 @@ protected:
     volatile int mWaitingPrefill = 0;
     volatile bool mPrefillSentFirstData = false;
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
-    static StreamFormat parseLpcmContentType(const char* ctype, int bps);
-    static StreamFormat codecFromContentType(const char* content_type);
     void onHttpHeader(const char* key, const char* val);
     bool canResume() const { return (mContentLen != 0) && mAcceptsRangeRequests; }
     bool isPlaylist();
