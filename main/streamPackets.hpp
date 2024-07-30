@@ -26,8 +26,9 @@ public:
         T& as() const { return *(T*)get(); }
     };
     enum: uint8_t {
-        kFlagHasSpaceFor32Bit = 1 << 5,
-        kFlagLeftAlignedSamples = 1 << 6,
+        kFlagHasSpaceFor32Bit = 1 << 4,
+        kFlagLeftAlignedSamples = 1 << 5,
+        kFlagStreamHeader = 1 << 6,
         kFlagCustomAlloc = 1 << 7  // LSB bits denote the memory block size, in kB
     };
     typedef uint32_t AlignAs;  // 4-byte aligned
@@ -87,11 +88,18 @@ protected:
     DataPacket() = delete;
 };
 struct GenericEvent: public StreamPacket {
-    typedef std::unique_ptr<StreamPacket, Deleter> unique_ptr;
-    uint8_t streamId;
-    uint8_t sourceBps;
+    typedef std::unique_ptr<GenericEvent, Deleter> unique_ptr;
+    StreamId streamId;
+    GenericEvent(StreamEvent aType, StreamId aStreamId, uint8_t aFlags)
+    : StreamPacket(aType, aFlags), streamId(aStreamId) {}
+};
+
+struct NewStreamEvent: public GenericEvent {
+    typedef std::unique_ptr<NewStreamEvent, Deleter> unique_ptr;
     StreamFormat fmt;
-    GenericEvent(StreamEvent aType, uint8_t aStreamId, StreamFormat aFmt, uint8_t aSourceBps=0)
-        :StreamPacket(aType, 0), streamId(aStreamId), sourceBps(aSourceBps), fmt(aFmt)  {}
+    uint32_t seekTime;
+    uint8_t sourceBps;
+    NewStreamEvent(StreamId aStreamId, StreamFormat aFmt, uint8_t aSourceBps=0, uint32_t aSeekTime=0)
+    : GenericEvent(kEvtStreamChanged, aStreamId, 0), fmt(aFmt), seekTime(aSeekTime), sourceBps(aSourceBps) {}
 };
 #endif

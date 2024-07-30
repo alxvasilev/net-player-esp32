@@ -52,6 +52,7 @@ struct Codec {
     void clear() { numCode = 0; }
 };
 
+typedef uint8_t StreamId;
 struct StreamFormat
 {
 protected:
@@ -128,6 +129,7 @@ enum StreamEvent: int8_t {
     kEvtData = 0,
     kEvtStreamEnd = 1,
     kEvtStreamChanged = 2,
+    kEvtSeek = 3,
     kEvtTitleChanged = 4,
     kErrStreamStopped = -1,
     kErrTimeout = -2,

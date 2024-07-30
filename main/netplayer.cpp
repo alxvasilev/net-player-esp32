@@ -44,7 +44,6 @@ static constexpr St7735Driver::PinCfg lcdPins = {
 };
 
 static const char *TAG = "netplay";
-const char* kDefaultMdnsDomain = "netplayer";
 http::Server gHttpServer;
 std::unique_ptr<AudioPlayer> player;
 std::unique_ptr<WifiBase> wifi;
@@ -152,11 +151,7 @@ connectSuccess:
 }
 void startMdns()
 {
-    const char* domain = nvsSimple.getString("mdnsDomain").get();
-    if (!domain) {
-        domain = kDefaultMdnsDomain;
-    }
-    mdns.start(domain);
+    mdns.start(AudioPlayer::mdnsName());
 }
 void* operator new(size_t size)
 {
@@ -316,7 +311,7 @@ esp_err_t httpReboot(httpd_req_t* req)
 void startWebserver(bool isAp)
 {
     ESP_LOGI(TAG, "Starting server on port 80...");
-    auto err = gHttpServer.start(80, nullptr, 24, 4096);
+    auto err = gHttpServer.start(80, nullptr, 28, 4096);
     if (err != ESP_OK) {
         ESP_LOGI(TAG, "Error %s starting server", esp_err_to_name(err));
         return;

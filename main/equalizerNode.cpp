@@ -431,7 +431,7 @@ StreamEvent EqualizerNode::pullData(PacketResult& dpr)
             // we have a race condition if we handle mCoreChanged before pullData, because we are unlocked
             // during pullData and someone may set mCoreChanged. In that case we can't return both the
             // kEvtStreamChanged and the data packet
-            return dpr.set(new GenericEvent(kEvtStreamChanged, mStreamId, mOutFormat, mSourceBps));
+            return dpr.set(new NewStreamEvent(mStreamId, mOutFormat, mSourceBps));
         }
         if (mCore->type() == IEqualizerCore::kTypeEsp) {
             if (mInFormat.bitsPerSample() > 16) {
@@ -470,7 +470,7 @@ StreamEvent EqualizerNode::pullData(PacketResult& dpr)
         return kEvtData;
     }
     else if (event == kEvtStreamChanged) {
-        auto& pkt = dpr.genericEvent();
+        auto& pkt = dpr.newStreamEvent();
         MutexLocker locker(mMutex);
         auto& fmt = pkt.fmt;
         mStreamId = pkt.streamId;

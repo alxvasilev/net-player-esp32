@@ -128,8 +128,9 @@ void AudioNodeWithTask::terminate(bool wait)
         onStopRequest();
         mEvents.setBits(kEvtStopRequest);
     }
+    mCmdQueue.post(kCommandTerminate);
     if (wait) {
-        waitForTerminate();
+        waitForState(kStateTerminated);
     }
 }
 
@@ -151,6 +152,8 @@ bool AudioNodeWithTask::dispatchCommand(Command& cmd)
         } else {
             setState(kStateStopped);
         }
+        return true;
+    case kCommandTerminate: // just need to wake up the event loop
         return true;
     default:
         return false;

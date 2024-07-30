@@ -13,15 +13,19 @@
 #include "dlna.hpp"
 #include <framebuf.hpp>
 #include <gfx.hpp>
+#include <nvsSimple.hpp>
 
 class DecoderNode;
 class EqualizerNode;
 class ST7735Display;
+class MDns;
 typedef Color565 LcdColor;
 namespace http { class Server; }
 namespace nvs { class NVSHandle; }
 struct TrackInfo;
 
+extern NvsSimple nvsSimple;
+extern MDns mdns;
 extern Font font_CamingoBold43;
 extern Font font_Camingo22;
 extern Font font_Camingo32;
@@ -30,6 +34,8 @@ extern Font font_Icons22;
 class AudioPlayer: public IAudioPipeline
 {
 public:
+    static constexpr const char* kDefaultMdnsName = "netplayer";
+    static const char* mdnsName();
     enum: uint32_t {
         kHttpBufSizeInternal = 35 * 1024,
         kHttpBufSizeSpiRam = 800 * 1024,
@@ -39,19 +45,17 @@ public:
     };
     enum PlayerMode: uint8_t {
         kModeInvalid = 0,
-        kModeFlagHttp = 0x80,
-        kModeRadio = kModeFlagHttp,
-        kModeDlna = kModeFlagHttp | 1,
-        kModeUrl = kModeFlagHttp | 2,
+        kModeRadio = AudioNode::kTypeHttpIn,
+        kModeDlna = AudioNode::kTypeHttpIn | 1,
+        kModeUrl = AudioNode::kTypeHttpIn | 2,
         kModeBluetoothSink = AudioNode::kTypeA2dpIn,
+        kModeSpotify = AudioNode::kTypeSpotify,
         kModeSpdifIn = AudioNode::kTypeI2sIn,
         //====
         kModeDefault = kModeRadio
     };
     static const char* playerModeToStr(PlayerMode mode);
 protected:
-    enum Flags: uint8_t
-    { kFlagUseEqualizer = 1, kFlagListenerHooked = 2, kFlagNoWaitPrefill = 4 };
     enum: uint8_t
     { kEventTerminating = 1, kEventScroll = 2, kEventVolLevel = 4, kEventTerminated = 8 };
     enum {
@@ -72,7 +76,6 @@ protected:
     static constexpr const Font& kPictoFont = font_Icons22;
     enum { kDefaultVolume = 15 };
     static const float sDefaultEqGains[];
-    Flags mFlags;
     std::unique_ptr<AudioNodeWithState> mStreamIn;
     std::unique_ptr<DecoderNode> mDecoder;
     std::unique_ptr<EqualizerNode> mEqualizer;
@@ -160,10 +163,12 @@ protected:
     static esp_err_t nvsGetParamUrlHandler(httpd_req_t* req);
     static esp_err_t nvsSetParamUrlHandler(httpd_req_t* req);
     static esp_err_t changeInputUrlHandler(httpd_req_t *req);
+    static AudioNode::Type playerModeToInNodeType(PlayerMode mode);
     void registerHttpGetHandler(const char* path, esp_err_t(*handler)(httpd_req_t*));
     bool doPlayUrl(const char* url, PlayerMode playerMode, const char* record=nullptr);
 public:
     Mutex mutex;
+    http::Server& httpServer() const { return mHttpServer; }
     PlayerMode mode() const { return mPlayerMode; }
     std::unique_ptr<StationList> stationList;
     const TrackInfo* trackInfo() const { return mTrackInfo.get(); }
@@ -174,7 +179,7 @@ public:
     AudioNode::Type inputType() const { return mStreamIn->type(); }
     AudioNode::Type outputType() const { return mStreamOut->type(); }
     NvsHandle& nvs() { return mNvsHandle; }
-    void changeInput(PlayerMode playerMode);
+    void switchMode(PlayerMode playerMode, bool persist=false);
     bool playUrl(const char* url, PlayerMode playerMode, const char* record=nullptr);
     bool playUrl(TrackInfo* trackInfo, PlayerMode playerMode, const char* record=nullptr);
     std::string url() const;

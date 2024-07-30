@@ -187,7 +187,7 @@ bool HttpNode::connect(bool isReconnect)
         plSendEvent(kEventConnected, isReconnect);
         if (!isReconnect) {
             ESP_LOGD(TAG, "Posting kStreamChange with codec %s and streamId %d\n", mInFormat.codec().toString(), mUrlInfo->streamId);
-            mRingBuf.pushBack(new GenericEvent(kEvtStreamChanged, mUrlInfo->streamId, mInFormat));
+            mRingBuf.pushBack(new NewStreamEvent(mUrlInfo->streamId, mInFormat));
         }
         return true;
     }
@@ -319,7 +319,7 @@ void HttpNode::setUrlAndStart(UrlInfo* urlInfo)
         run();
     }
     ESP_LOGI(mTag, "Posting setUrl command");
-    mCmdQueue.post(kCommandSetUrl, urlInfo);
+    mCmdQueue.post(kCommandSetUrl, (uintptr_t)urlInfo);
 }
 
 void HttpNode::onStopRequest()
@@ -341,7 +341,7 @@ bool HttpNode::dispatchCommand(Command &cmd)
         // to clear the ringbuf in connect(). Now we don't have to wait prefill for the first audio packet
         clearRingBuffer();
         mRingBuf.clearStopSignal();
-        cmd.arg = nullptr;
+        cmd.arg = 0;
         setState(kStateRunning);
         break;
     }
@@ -384,6 +384,7 @@ void HttpNode::nodeThreadFunc()
 HttpNode::~HttpNode()
 {
     terminate(true);
+    printf("terminated\n");
     destroyClient();
 }
 
@@ -437,7 +438,7 @@ StreamEvent HttpNode::pullData(PacketResult& pr)
         return kErrStreamStopped;
     }
     if (pkt->type == kEvtStreamChanged) {
-        auto& pktChange = static_cast<GenericEvent&>(*pkt);
+        auto& pktChange = static_cast<NewStreamEvent&>(*pkt);
         mOutStreamId = pktChange.streamId;
         mWaitingPrefill = pktChange.fmt.prefillAmount();
         mPrefillSentFirstData = false;

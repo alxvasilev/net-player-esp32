@@ -34,7 +34,7 @@ protected:
     StreamId mInStreamId = 0;
     StreamRingQueue<24> mRingBuf;
     // pr in case there is a stream event that needs to be propagated
-    StreamEvent detectCodecCreateDecoder(GenericEvent& startPkt);
+    StreamEvent detectCodecCreateDecoder(NewStreamEvent& startPkt);
     bool createDecoder(StreamFormat fmt);
     StreamEvent decode();
     static int32_t heapFreeTotal(); // used to  calculate memory usage for codecs

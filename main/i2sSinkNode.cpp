@@ -136,8 +136,8 @@ void I2sOutputNode::nodeThreadFunc()
                     plSendEvent(kEventTrackInfo, 0, (uintptr_t)(*(TitleChangeEvent*)dpr.packet.get()).title);
                 }
                 else { // any other generic event
-                    auto& pkt = dpr.genericEvent();
                     if (evt == kEvtStreamChanged) {
+                        auto& pkt = dpr.newStreamEvent();
                         ESP_LOGI(mTag, "Got start of new stream with streamId %u", pkt.streamId);
                         MutexLocker locker(mutex);
                         setFormat(pkt.fmt);
@@ -147,7 +147,7 @@ void I2sOutputNode::nodeThreadFunc()
                         plSendEvent(kEventPlaying);
                     }
                     else if (evt == kEvtStreamEnd) {
-                        plSendEvent(kEventStreamEnd, 0, pkt.streamId);
+                        plSendEvent(kEventStreamEnd, 0, dpr.genericEvent().streamId);
                     }
                 }
                 continue;

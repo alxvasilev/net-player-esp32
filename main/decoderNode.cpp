@@ -50,7 +50,7 @@ void DecoderNode::deleteDecoder()
     ESP_LOGI(mTag, "\e[34mDeleted %s decoder freed %d bytes",
         Codec::numCodeToStr(codec), heapFreeTotal() - freeBefore);
 }
-StreamEvent DecoderNode::detectCodecCreateDecoder(GenericEvent& startPkt)
+StreamEvent DecoderNode::detectCodecCreateDecoder(NewStreamEvent& startPkt)
 {
     mInStreamId = startPkt.streamId;
     Codec& codec = startPkt.fmt.codec();
@@ -115,7 +115,7 @@ StreamEvent DecoderNode::decode()
             return forwardEvent(evt, pr);
         }
         myassert(pr.packet);
-        evt = detectCodecCreateDecoder(pr.genericEvent());
+        evt = detectCodecCreateDecoder(pr.newStreamEvent());
         if (evt) { // evt can only be an error here
             return evt;
         }
@@ -130,7 +130,7 @@ StreamEvent DecoderNode::decode()
         }
         else if (evt == kEvtStreamChanged) {
             deleteDecoder();
-            return detectCodecCreateDecoder(pr.genericEvent());
+            return detectCodecCreateDecoder(pr.newStreamEvent());
         }
         else if (evt == kEvtStreamEnd) {
             ESP_LOGI(mTag, "Stream end, deleting decoder");
@@ -168,7 +168,7 @@ bool DecoderNode::codecOnFormatDetected(StreamFormat fmt, uint8_t sourceBps)
     StreamFormat sourceFmt(fmt);
     sourceFmt.setBitsPerSample(sourceBps);
     mPrev->streamFormatDetails(sourceFmt);
-    return mRingBuf.pushBack(new GenericEvent(kEvtStreamChanged, mInStreamId, fmt, sourceBps));
+    return mRingBuf.pushBack(new NewStreamEvent(mInStreamId, fmt, sourceBps));
 }
 bool DecoderNode::codecPostOutput(StreamPacket *pkt)
 {

@@ -50,8 +50,8 @@ public:
         kTypeHttpIn = 0x80, // convenient for subcategories
         kTypeA2dpIn = 1,
         kTypeI2sIn = 2,
-        kTypeDecoder = 3,
-        kTypeEncoder = 4,
+        kTypeSpotify = 3,
+        kTypeDecoder = 4,
         kTypeEqualizer = 5,
         kTypeI2sOut = 6,
         kTypeHttpOut = 7,
@@ -76,7 +76,6 @@ public:
     virtual StreamPacket* peek() { return nullptr; }
     void linkToPrev(AudioNode* prev) { mPrev = prev; }
     AudioNode* prev() const { return mPrev; }
-    typedef uint8_t StreamId;
     struct PacketResult
     {
         StreamPacket::unique_ptr packet;
@@ -88,6 +87,10 @@ public:
         GenericEvent& genericEvent() {
             myassert(packet->type == kEvtStreamChanged || packet->type == kEvtStreamEnd);
             return *(GenericEvent*)packet.get();
+        }
+        NewStreamEvent& newStreamEvent() {
+            myassert(packet->type == kEvtStreamChanged);
+            return *(NewStreamEvent*)packet.get();
         }
         void clear()
         {
@@ -143,11 +146,11 @@ protected:
     struct Command
     {
         uint16_t opcode;
-        void* arg;
-        Command(uint8_t aCmd, void* aArg=nullptr): opcode(aCmd), arg(aArg){}
+        uintptr_t arg;
+        Command(uint8_t aCmd, uintptr_t aArg = 0): opcode(aCmd), arg(aArg){}
         Command(){} //no init, used for retrieving commands
     };
-    enum: uint8_t { kCommandStop = 1, kCommandRun, kCommandLast = kCommandRun };
+    enum: uint8_t { kCommandRun = 1, kCommandStop, kCommandTerminate, kCommandLast = kCommandTerminate };
     enum { kDefaultPrio = 4 };
     TaskHandle_t mTaskId = NULL;
     uint32_t mStackSize;

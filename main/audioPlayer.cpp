@@ -8,6 +8,7 @@
 #include "decoderNode.hpp"
 #include "equalizerNode.hpp"
 #include "a2dpInputNode.hpp"
+#include "spotify.hpp"
 #include <stdfonts.hpp>
 #include <string>
 #include <esp_netif.h> // for createDlnaHandler()
@@ -34,7 +35,11 @@ void AudioPlayer::setLogLevel(esp_log_level_t level)
 {
     esp_log_level_set(TAG, level);
 }
-
+const char* AudioPlayer::mdnsName()
+{
+    const char* name = nvsSimple.getString("mdnsName").get();
+    return name ? name : kDefaultMdnsName;
+}
 void AudioPlayer::createOutputA2dp()
 {
     /*
@@ -56,9 +61,13 @@ void AudioPlayer::createOutputA2dp()
 //  Move this to execute only once
     */
 }
+AudioNode::Type AudioPlayer::playerModeToInNodeType(PlayerMode mode)
+{
+    return mode & AudioNode::kTypeHttpIn ? AudioNode::kTypeHttpIn : (AudioNode::Type)mode;
+}
 
 AudioPlayer::AudioPlayer(ST7735Display& lcd, http::Server& httpServer, PlayerMode mode, AudioNode::Type outType)
-: mFlags(kFlagUseEqualizer), mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd),
+: mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd),
   mDmaFrameBuf(320, kTrackTitleFont.height + kTrackTitleFont.lineSpacing, MALLOC_CAP_DMA),
   mTitleTextFrameBuf(kMaxTrackTitleLen * (kTrackTitleFont.width + kTrackTitleFont.charSpacing),
                      kTrackTitleFont.height + kTrackTitleFont.lineSpacing, MALLOC_CAP_SPIRAM),
@@ -77,7 +86,7 @@ AudioPlayer::AudioPlayer(ST7735Display& lcd, http::Server& httpServer, PlayerMod
                 mode, playerModeToStr(kModeDefault));
             mode = kModeDefault;
         }
-        createPipeline((AudioNode::Type)(mode & ~kModeFlagHttp), outType);
+        createPipeline(playerModeToInNodeType(mode), outType);
     }
     auto inType = inputType();
     if (inType == AudioNode::kTypeHttpIn) {
@@ -91,19 +100,15 @@ AudioPlayer::AudioPlayer(ST7735Display& lcd, http::Server& httpServer, PlayerMod
         createDlnaHandler();
         mDlna->start();
     }
+    SpotifyNode::registerService(*this, mdns);
 }
 AudioPlayer::PlayerMode AudioPlayer::initFromNvs()
 {
-    uint8_t useEq = mNvsHandle.readDefault<uint8_t>("useEq", 1);
-    if (useEq) {
-        mFlags = (Flags)(mFlags | kFlagUseEqualizer);
-    }
     auto playerMode = (PlayerMode)mNvsHandle.readDefault<uint8_t>("playerMode", kModeRadio);
     if (!playerModeIsValid(playerMode)) {
         playerMode = kModeRadio;
     }
-    AudioNode::Type inType = (playerMode & kModeFlagHttp) ? AudioNode::kTypeHttpIn : (AudioNode::Type)playerMode;
-    bool ok = createPipeline(inType, AudioNode::kTypeI2sOut);
+    bool ok = createPipeline(playerModeToInNodeType(playerMode), AudioNode::kTypeI2sOut);
     if (!ok) {
         ESP_LOGE(TAG, "Failed to create audio pipeline");
         myassert(false);
@@ -146,8 +151,11 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
     ESP_LOGI(TAG, "Creating audio pipeline");
     AudioNode* pcmSource = nullptr;
     switch(inType) {
-    case AudioNode::kTypeHttpIn: {
-        mStreamIn.reset(new HttpNode(*this));
+    case AudioNode::kTypeHttpIn:
+    case AudioNode::kTypeSpotify: {
+        mStreamIn.reset(inType == AudioNode::kTypeHttpIn
+                        ? (AudioNodeWithState*)new HttpNode(*this)
+                        : (AudioNodeWithState*)new SpotifyNode(*this));
         mDecoder.reset(new DecoderNode(*this));
         mDecoder->linkToPrev(mStreamIn.get());
         pcmSource = mDecoder.get();
@@ -162,11 +170,10 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         ESP_LOGE(TAG, "Unknown pipeline input node type %d", inType);
         return false;
     }
-    if (mFlags & kFlagUseEqualizer) {
-        mEqualizer.reset(new EqualizerNode(*this, mNvsHandle));
-        mEqualizer->linkToPrev(pcmSource);
-        pcmSource = mEqualizer.get();
-    }
+    mEqualizer.reset(new EqualizerNode(*this, mNvsHandle));
+    mEqualizer->linkToPrev(pcmSource);
+    pcmSource = mEqualizer.get();
+
     switch(outType) {
     case AudioNode::kTypeI2sOut: {
         uint8_t dmaBufCnt = mNvsHandle.readDefault<uint8_t>("i2s.dmaBufCnt", kI2sDmaBufCnt);
@@ -333,19 +340,27 @@ std::string AudioPlayer::printPipeline()
     return result;
 }
 
-void AudioPlayer::changeInput(PlayerMode playerMode)
+void AudioPlayer::switchMode(PlayerMode playerMode, bool persist)
 {
+    LOCK_PLAYER();
     if (mPlayerMode == playerMode) {
         return;
     }
-    mNvsHandle.write("playerMode", (uint8_t)playerMode);
-    auto oldType = (AudioNode::Type)(mPlayerMode & kModeFlagHttp);
-    mPlayerMode = playerMode;
-    if (mStreamIn && oldType == mStreamIn->type()) {
-        return;
+    if (persist) {
+        mNvsHandle.write("playerMode", (uint8_t)playerMode);
     }
-    destroyPipeline();
-    initFromNvs();
+    auto oldType = mStreamIn ? mStreamIn->type() : 0;
+    auto newType = playerModeToInNodeType(playerMode);
+    mPlayerMode = playerMode;
+    if (newType != oldType) {
+        destroyPipeline();
+        if (persist) {
+            initFromNvs();
+        }
+        else {
+            createPipeline(newType, AudioNode::kTypeI2sOut);
+        }
+    }
 }
 
 void AudioPlayer::loadSettings()
@@ -372,7 +387,7 @@ void AudioPlayer::destroyPipeline()
 
 bool AudioPlayer::doPlayUrl(const char* url, PlayerMode playerMode, const char* record)
 {
-    if (!(playerMode & kModeFlagHttp) || !mStreamIn) {
+    if (!(playerMode & AudioNode::kTypeHttpIn) || !mStreamIn) {
         mTrackInfo.reset();
         return false;
     }
@@ -985,11 +1000,11 @@ esp_err_t AudioPlayer::changeInputUrlHandler(httpd_req_t *req)
     }
     switch(type.str[0]) {
         case 'b':
-            self->changeInput(kModeBluetoothSink);
+            self->switchMode(kModeBluetoothSink);
             httpd_resp_sendstr(req, "Switched to Bluetooth A2DP sink");
             break;
         case 'h':
-            self->changeInput(kModeRadio);
+            self->switchMode(kModeRadio);
             httpd_resp_sendstr(req, "Switched to HTTP client (net radio)");
             break;
         default:
