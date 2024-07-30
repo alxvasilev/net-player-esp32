@@ -1,3 +1,6 @@
 [submodule "esp32-mylibs"]
 	path = esp32-mylibs
 	url = git@github.com:alxvasilev/esp32-mylibs.git
+[submodule "components/cspot/nanopb"]
+	path = components/cspot/nanopb
+	url = https://github.com/nanopb/nanopb.git
