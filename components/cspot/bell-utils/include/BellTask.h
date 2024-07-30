@@ -56,8 +56,8 @@ class Task {
       return (xTaskCreateStaticPinnedToCore(
                   taskEntryFuncPSRAM, this->TASK.c_str(), this->stackSize, this,
                   this->priority, xStack, xTaskBuffer, this->core) != NULL);
-    } else {
-      printf("task on internal %s", this->TASK.c_str());
+    }
+    else {
       esp_pthread_cfg_t cfg = esp_pthread_get_default_config();
       cfg.stack_size = stackSize;
       cfg.inherit_cfg = true;

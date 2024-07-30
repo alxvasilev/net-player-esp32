@@ -80,7 +80,6 @@ void SpotifyNode::registerService(AudioPlayer& audioPlayer, MDns& mdns)
 SpotifyNode::SpotifyNode(IAudioPipeline& parent)
     : AudioNodeWithTask(parent, "spotify", 4096, 10, -1), mSpirc(*sLoginBlob, *this)
 {
-    printf("=============spotify node created\n");
 }
 
 void SpotifyNode::onStopRequest()
