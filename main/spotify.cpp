@@ -6,6 +6,7 @@
 #include <mdns.hpp>
 #include <SpircHandler.h>
 #include <Utils.h> // for bigNumAdd
+#include <BellLogger.h>
 
 static const char* TAG = "spotify";
 std::unique_ptr<cspot::LoginBlob> SpotifyNode::sLoginBlob;
@@ -18,6 +19,8 @@ void SpotifyNode::registerService(AudioPlayer& audioPlayer, MDns& mdns)
 {
     sAudioPlayer = &audioPlayer;
     auto& httpSvr = audioPlayer.httpServer();
+    bell::setDefaultLogger();
+    bell::enableTimestampLogging();
     httpSvr.on("/spotify_info", HTTP_GET, [](httpd_req_t* req) {
         if (!sLoginBlob.get()) {
             sLoginBlob = std::make_unique<cspot::LoginBlob>(AudioPlayer::mdnsName());
@@ -92,7 +95,10 @@ void SpotifyNode::onStopRequest()
 }
 bool SpotifyNode::dispatchCommand(Command &cmd)
 {
-    ESP_LOGI(TAG, "Received command %d(%x)", cmd.opcode, cmd.arg);
+    ESP_LOGI(TAG, "Received command %d(0x%x)", cmd.opcode, cmd.arg);
+    if (AudioNodeWithTask::dispatchCommand(cmd)) {
+        return true;
+    }
     switch(cmd.opcode) {
         case kCmdRestartPlayback:
             startCurrentTrack(cmd.arg);
@@ -143,6 +149,7 @@ bool SpotifyNode::startNextTrack(cspot::TrackQueue::SkipDirection dir)
 }
 void SpotifyNode::restart(uint32_t pos, bool paused)
 {
+    printf("================cb restart\n");
     mCmdQueue.post(paused ? kCmdRestartPlayback : kCmdRestartPlaybackPaused, pos);
 }
 void SpotifyNode::pause(bool paused)
@@ -151,6 +158,7 @@ void SpotifyNode::pause(bool paused)
 }
 void SpotifyNode::nextTrack(cspot::TrackQueue::SkipDirection dir)
 {
+    printf("================cb nextTrack\n");
     mCmdQueue.post(kCmdNextTrack, (int)dir);
 }
 void SpotifyNode::stopPlayback()

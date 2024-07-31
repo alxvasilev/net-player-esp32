@@ -523,7 +523,7 @@ void DlnaHandler::notify(EventSrc service, std::string& xml)
 void DlnaHandler::doNotify(EventSrc service, const std::string& innerXml)
 {
     auto xml = createEventXml(service, innerXml);
-    printf("NOTIFY tx: %s\n", xml.c_str());
+    //printf("NOTIFY tx: %s\n", xml.c_str());
     uint32_t now = esp_timer_get_time() / 1000000;
     for (auto it = mEventSubs.begin(); it != mEventSubs.end();) {
         if (it->tsTill < now) {

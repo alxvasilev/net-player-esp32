@@ -22,7 +22,8 @@
 using namespace cspot;
 
 MercurySession::MercurySession(const LoginBlob& loginBlob, TimeProvider& aTimeProvider)
-    : bell::Task("mercury_dispatcher", 4 * 1024, 3, 1), Session(loginBlob), mTimeProvider(aTimeProvider)
+    : bell::Task("mercury_dispatcher", 4 * 1024, 3, 1, false),
+      Session(loginBlob), mTimeProvider(aTimeProvider)
 {
 }
 

@@ -25,16 +25,13 @@ std::string ApResolve::fetchFirstApAddress() {
     return apOverride;
   }
 
-  HttpClient client;
-  DynBuffer response = client.get("https://apresolve.spotify.com/");
-  printf("============apresolve: response: '%.*s'\n", response.dataSize(), response.data());
-  // parse json with nlohmann
+  DynBuffer response = httpGet("https://apresolve.spotify.com/");
 #ifdef BELL_ONLY_CJSON
   cJSON* json = cJSON_Parse(response.buf());
-  auto ap_string = std::string(
-      cJSON_GetArrayItem(cJSON_GetObjectItem(json, "ap_list"), 0)->valuestring);
+  const char* apstr = cJSON_GetArrayItem(cJSON_GetObjectItem(json, "ap_list"), 0)->valuestring;
+  std::string result(apstr ? apstr : "");
   cJSON_Delete(json);
-  return ap_string;
+  return result;
 #else
   auto json = nlohmann::json::parse(responseStr);
   return json["ap_list"][0];
