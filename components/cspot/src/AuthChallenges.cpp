@@ -29,7 +29,7 @@ AuthChallenges::~AuthChallenges() {
 }
 
 std::vector<uint8_t> AuthChallenges::prepareAuthPacket(
-    std::vector<uint8_t>& authData, int authType, const std::string& deviceId,
+    const std::vector<uint8_t>& authData, int authType, const std::string& deviceId,
     const std::string& username) {
   // prepare authentication request proto
   pbPutString(username, authRequest.login_credentials.username);

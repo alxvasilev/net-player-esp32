@@ -21,8 +21,8 @@
 
 using namespace cspot;
 
-MercurySession::MercurySession(TimeProvider& aTimeProvider)
-    : bell::Task("mercury_dispatcher", 4 * 1024, 3, 1), mTimeProvider(aTimeProvider)
+MercurySession::MercurySession(const LoginBlob& loginBlob, TimeProvider& aTimeProvider)
+    : bell::Task("mercury_dispatcher", 4 * 1024, 3, 1), Session(loginBlob), mTimeProvider(aTimeProvider)
 {
 }
 
@@ -46,8 +46,9 @@ void MercurySession::runTask() {
 
         this->lastPingTimestamp = mTimeProvider.getSyncedTimestamp();
         this->shanConn->sendPacket(0x49, packet.data);
-      } else {
-        this->packetQueue.push(packet);
+      }
+      else {
+        handlePacket(packet);
       }
     } catch (const std::runtime_error& e) {
       CSPOT_LOG(error, "Error while receiving packet: %s", e.what());
@@ -70,7 +71,7 @@ void MercurySession::reconnect() {
     this->shanConn = nullptr;
 
     this->connectWithRandomAp();
-    this->authenticate(this->authBlob);
+    this->authenticate();
 
     CSPOT_LOG(info, "Reconnection successful");
 
@@ -135,10 +136,7 @@ std::string MercurySession::getCountryCode() {
   return this->countryCode;
 }
 
-void MercurySession::handlePacket() {
-  Packet packet = {};
-
-  this->packetQueue.wtpop(packet, 200);
+void MercurySession::handlePacket(Packet& packet) {
 
   if (executeEstabilishedCallback && this->connectionReadyCallback != nullptr) {
     executeEstabilishedCallback = false;

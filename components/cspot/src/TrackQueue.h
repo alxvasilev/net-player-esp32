@@ -33,7 +33,7 @@ struct TrackInfo {
     void loadPbEpisode(Episode* pbEpisode, const std::vector<uint8_t>& gid);
 };
 
-class TrackItem: public TrackInfo {
+class TrackItem: public std::enable_shared_from_this<TrackItem>, public TrackInfo {
 public:
     enum class State: uint8_t {
         QUEUED, PENDING_META, KEY_REQUIRED, PENDING_KEY, CDN_REQUIRED, READY, FAILED
@@ -58,7 +58,7 @@ public:
     bool resetForLoadRetry(bool force=false); // clear metadata and reset loading state to QUEUED to retry loading
     bool parseMetadata(Track* pbTrack, Episode* pbEpisode);
     // --- Steps ---
-    void stepLoadMetadata(Track* pbTrack, Episode* pbEpisode);
+    void stepLoadMetadata();
     void stepLoadAudioKey();
     void stepLoadCDNUrl(const std::string& accessKey);
     //===
@@ -93,9 +93,6 @@ protected:
   int mRequestedPos = -1;
   int mLoadedCnt = 0;
   std::recursive_mutex mTracksMutex;
-  // PB data
-  Track pbTrack;
-  Episode pbEpisode;
   void freeMostDistantTrack();
   /** @param immediateRetry - retry failure before returning. This is unline the normal retry where the function
    *  returns after a failed load attempt, and the next retry would be done after the round-robin completes

@@ -351,7 +351,7 @@ void AudioPlayer::switchMode(PlayerMode playerMode, bool persist)
     }
     auto oldType = mStreamIn ? mStreamIn->type() : 0;
     auto newType = playerModeToInNodeType(playerMode);
-    mPlayerMode = playerMode;
+    setPlayerMode(playerMode);
     if (newType != oldType) {
         destroyPipeline();
         if (persist) {
@@ -1335,6 +1335,7 @@ const char* AudioPlayer::playerModeToStr(PlayerMode mode) {
     switch(mode) {
         case kModeRadio: return "Radio";
         case kModeDlna: return "DLNA";
+        case kModeSpotify: return "Spotify";
         case kModeUrl: return "User URL";
         case kModeBluetoothSink: return "Bluetooth";
         case kModeSpdifIn: return "SPDIF";

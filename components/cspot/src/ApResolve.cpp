@@ -27,7 +27,7 @@ std::string ApResolve::fetchFirstApAddress() {
 
   HttpClient client;
   DynBuffer response = client.get("https://apresolve.spotify.com/");
-  response.nullTerminate();
+  printf("============apresolve: response: '%.*s'\n", response.dataSize(), response.data());
   // parse json with nlohmann
 #ifdef BELL_ONLY_CJSON
   cJSON* json = cJSON_Parse(response.buf());

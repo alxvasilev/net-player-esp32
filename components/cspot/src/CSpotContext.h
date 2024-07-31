@@ -61,7 +61,7 @@ struct Context {
 #endif
   }
 
-  Context(const LoginBlob& blob): mSession(mTimeProvider)
+  Context(const LoginBlob& blob): mSession(blob, mTimeProvider)
   {
       mConfig.deviceId = blob.getDeviceId();
       mConfig.deviceName = blob.getDeviceName();

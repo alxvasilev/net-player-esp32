@@ -26,7 +26,7 @@ struct ITrackPlayer {
 
 class SpircHandler {
  public:
-  SpircHandler(cspot::LoginBlob& loginBlob, cspot::ITrackPlayer& player);
+  SpircHandler(const cspot::LoginBlob& loginBlob, cspot::ITrackPlayer& player);
 
   enum class EventType {
     PLAY_PAUSE,
@@ -42,6 +42,7 @@ class SpircHandler {
   };
   void subscribeToMercury();
   ITrackPlayer& getTrackPlayer() { return mPlayer; }
+  void start();
   void setPause(bool pause);
   bool previousSong();
   bool nextSong();

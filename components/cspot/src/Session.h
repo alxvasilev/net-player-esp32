@@ -4,9 +4,9 @@
 #include <memory>    // for shared_ptr, unique_ptr
 #include <string>    // for string
 #include <vector>    // for vector
+#include "AuthChallenges.h"
 
 namespace cspot {
-class AuthChallenges;
 class LoginBlob;
 class PlainConnection;
 class ShannonConnection;
@@ -19,15 +19,14 @@ class ShannonConnection;
 namespace cspot {
 class Session {
  protected:
-  std::unique_ptr<cspot::AuthChallenges> challenges;
+  const LoginBlob& mLoginBlob;
+  cspot::AuthChallenges mChallenges;
   std::shared_ptr<cspot::PlainConnection> conn;
-  std::shared_ptr<LoginBlob> authBlob;
-
   std::string deviceId = "142137fd329622137a14901634264e6f332e2411";
 
  public:
-  Session();
-  ~Session();
+  Session(const LoginBlob& loginBlob);
+  ~Session() {}
 
   std::shared_ptr<cspot::ShannonConnection> shanConn;
 
@@ -35,6 +34,6 @@ class Session {
   void connectWithRandomAp();
   void close();
   virtual bool triggerTimeout() = 0;
-  std::vector<uint8_t> authenticate(std::shared_ptr<LoginBlob> blob);
+  std::vector<uint8_t> authenticate();
 };
 }  // namespace cspot

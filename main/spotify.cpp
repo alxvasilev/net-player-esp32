@@ -67,8 +67,11 @@ void SpotifyNode::registerService(AudioPlayer& audioPlayer, MDns& mdns)
         sLoginBlob->loadZeroconfQuery(queryMap);
 
         // We have the blob, proceed to login
-        ESP_LOGI(TAG, "Spotify auth successful, starting client");
-        sAudioPlayer->switchMode(AudioPlayer::kModeSpotify, false);
+        if (sAudioPlayer->mode() != AudioPlayer::kModeSpotify) {
+            ESP_LOGI(TAG, "Spotify auth successful, starting client");
+            sAudioPlayer->switchMode(AudioPlayer::kModeSpotify, false);
+            sAudioPlayer->play();
+        }
         return httpd_resp_sendstr(req,
             "{\"status\"=101,\"spotifyError\"=0,\"statusString\"=\"ERROR-OK\"}");
     }, nullptr);
@@ -80,24 +83,40 @@ void SpotifyNode::registerService(AudioPlayer& audioPlayer, MDns& mdns)
 SpotifyNode::SpotifyNode(IAudioPipeline& parent)
     : AudioNodeWithTask(parent, "spotify", 4096, 10, -1), mSpirc(*sLoginBlob, *this)
 {
+    mRingBuf.clearStopSignal();
 }
 
 void SpotifyNode::onStopRequest()
 {
     mRingBuf.setStopSignal();
 }
-/*
-void SpotifyNode::doSetUrl(UrlInfo* urlInfo)
-{
-    ESP_LOGI(mTag, "Setting url to %s", urlInfo->url.c_str());
-    mHttp.close();
-    mRingBuf.clear();
-    mRingBuf.clearStopSignal();
-    mUrlInfo.reset(urlInfo);
-}
-*/
 bool SpotifyNode::dispatchCommand(Command &cmd)
 {
+    ESP_LOGI(TAG, "Received command %d(%x)", cmd.opcode, cmd.arg);
+    switch(cmd.opcode) {
+        case kCmdRestartPlayback:
+            startCurrentTrack(cmd.arg);
+            break;
+        case kCmdRestartPlaybackPaused:
+            startCurrentTrack(cmd.arg);
+            stop(false);
+            break;
+        case kCmdNextTrack:
+            startNextTrack((cspot::TrackQueue::SkipDirection)cmd.arg);
+            break;
+        case kCmdPause:
+            stop(false);
+            break;
+        case kCmdStop:
+        case kCmdStopPlayback:
+            mCurrentTrack.reset();
+            mHttp.close();
+            mFileSize = 0;
+            mRecvPos = 0;
+            break;
+        default:
+            return false;
+    }
     return true;
 }
 bool SpotifyNode::startCurrentTrack(uint32_t tsSeek)
@@ -149,12 +168,15 @@ void SpotifyNode::setVolume(int vol)
 void SpotifyNode::nodeThreadFunc()
 {
     ESP_LOGI(TAG, "Task started");
-    mRingBuf.clearStopSignal();
+    mSpirc.start();
     for (;;) {
         try {
             processMessages();
-            if (mTerminate) {
+            if (mState == kStateTerminated) {
                 return;
+            }
+            else if (mState == kStateStopped) {
+                continue;
             }
             if (!mCurrentTrack.get()) {
                 continue;
@@ -228,4 +250,10 @@ bool SpotifyNode::recv()
     }
     mRingBuf.pushBack(pkt.release());
     return true;
+}
+StreamEvent SpotifyNode::pullData(PacketResult &pr)
+{
+    StreamPacket::unique_ptr pkt;
+    pkt.reset(mRingBuf.popFront());
+    return pkt ? pr.set(pkt) : kErrStreamStopped;
 }

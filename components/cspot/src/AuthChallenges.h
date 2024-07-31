@@ -24,7 +24,7 @@ class AuthChallenges {
   *
   * @returns vector containing bytes of the authentication packet
   */
-  std::vector<uint8_t> prepareAuthPacket(std::vector<uint8_t>& authBlob,
+  std::vector<uint8_t> prepareAuthPacket(const std::vector<uint8_t>& authBlob,
                                          int authType,
                                          const std::string& deviceId,
                                          const std::string& username);

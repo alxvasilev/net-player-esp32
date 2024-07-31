@@ -61,6 +61,6 @@ public:
     static void registerService(AudioPlayer& audioPlayer, MDns& mdns);
     SpotifyNode(IAudioPipeline& parent);
     virtual Type type() const override { return kTypeSpotify; }
-    virtual StreamEvent pullData(PacketResult &pr) override { return kErrStreamStopped; }
+    virtual StreamEvent pullData(PacketResult &pr) override;
 };
 #endif

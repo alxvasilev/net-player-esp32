@@ -20,13 +20,18 @@
 
 using namespace cspot;
 
-SpircHandler::SpircHandler(cspot::LoginBlob& loginBlob, ITrackPlayer& trackPlayer)
+SpircHandler::SpircHandler(const LoginBlob& loginBlob, ITrackPlayer& trackPlayer)
     : mCtx(loginBlob), mPlaybackState(mCtx), mTrackQueue(*this), mPlayer(trackPlayer)
 {
   // Subscribe to mercury on session ready
   mCtx.mSession.setConnectedHandler([this]() { this->subscribeToMercury(); });
 }
-
+void SpircHandler::start()
+{
+    mCtx.mSession.connectWithRandomAp();
+    mCtx.mConfig.authData = mCtx.mSession.authenticate();
+    mCtx.mSession.startTask();
+}
 void SpircHandler::subscribeToMercury() {
   auto responseLambda = [this](MercurySession::Response& res) {
     if (res.fail)

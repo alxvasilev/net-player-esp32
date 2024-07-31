@@ -240,7 +240,10 @@ bool TrackItem::parseMetadata(Track* pbTrack, Episode* pbEpisode) {
 void TrackItem::stepLoadAudioKey() {
   // Request audio key
   mPendingAudioKeyRequest = mQueue.mSpirc.mCtx.mSession.requestAudioKey(trackId, fileId,
-      [this](bool success, const std::vector<uint8_t>& audioKey) {
+      [this, wptr = weak_from_this()](bool success, const std::vector<uint8_t>& audioKey) {
+        if (wptr.expired()) {
+            return;
+        }
         std::scoped_lock lock(mQueue.mTracksMutex);
         if (success) {
           CSPOT_LOG(info, "Got audio key");
@@ -293,7 +296,7 @@ void TrackItem::stepLoadCDNUrl(const std::string& accessKey) {
   }
 }
 
-void TrackItem::stepLoadMetadata(Track* pbTrack, Episode* pbEpisode)
+void TrackItem::stepLoadMetadata()
 {
   // Prepare request ID
   std::string requestUrl = string_format(
@@ -301,8 +304,11 @@ void TrackItem::stepLoadMetadata(Track* pbTrack, Episode* pbEpisode)
       mRef.type == TrackReference::Type::TRACK ? "track" : "episode",
       bytesToHexString(mRef.gid).c_str());
 
-  auto responseHandler = [this, pbTrack, pbEpisode](MercurySession::Response& res)
+  auto responseHandler = [this, wptr = weak_from_this()](MercurySession::Response& res)
   {
+    if (wptr.expired()) {
+        return;
+    }
     std::scoped_lock lock(mQueue.mTracksMutex);
     if (res.parts.size() == 0) {
       // Invalid metadata, cannot proceed
@@ -311,23 +317,26 @@ void TrackItem::stepLoadMetadata(Track* pbTrack, Episode* pbEpisode)
       return;
     }
 
+    Track pbTrack = Track_init_zero;
+    Episode pbEpisode = Episode_init_zero;
+
     // Parse the metadata
     if (mRef.type == TrackReference::Type::TRACK) {
-      pb_release(Track_fields, pbTrack);
-      pbDecode(*pbTrack, Track_fields, res.parts[0]);
+      pbDecode(pbTrack, Track_fields, res.parts[0]);
     }
     else {
-      pb_release(Episode_fields, pbEpisode);
-      pbDecode(*pbEpisode, Episode_fields, res.parts[0]);
+      pbDecode(pbEpisode, Episode_fields, res.parts[0]);
     }
 
     // Parse received metadata
-    if (parseMetadata(pbTrack, pbEpisode)) {
+    if (parseMetadata(&pbTrack, &pbEpisode)) {
         mState = State::KEY_REQUIRED;
     }
     else {
         mState = State::FAILED;
     }
+    pb_release(Track_fields, &pbTrack);
+    pb_release(Episode_fields, &pbEpisode);
     signalLoadStep();
   };
   // Execute the request
@@ -351,8 +360,6 @@ TrackQueue::TrackQueue(SpircHandler& spirc)
     // Assign encode callback to track list
     mSpirc.mPlaybackState.innerFrame.state.track.funcs.encode = &TrackReference::pbEncodeTrackList;
     mSpirc.mPlaybackState.innerFrame.state.track.arg = &mTracks;
-    pbTrack = Track_init_zero;
-    pbEpisode = Episode_init_zero;
     // Start the task
     startTask();
 }
@@ -361,8 +368,6 @@ TrackQueue::~TrackQueue()
 {
   stopTask();
   std::scoped_lock lock(mTracksMutex);
-  pb_release(Track_fields, &pbTrack);
-  pb_release(Episode_fields, &pbEpisode);
 }
 
 bool TrackQueue::loadTrack(int idx, bool retry, int requestedPos)
@@ -493,7 +498,7 @@ bool TrackItem::load(bool retry)
         }
         switch (mState) {
             case State::QUEUED:
-                stepLoadMetadata(&mQueue.pbTrack, &mQueue.pbEpisode);
+                stepLoadMetadata();
                 break;
             case State::KEY_REQUIRED:
                 stepLoadAudioKey();

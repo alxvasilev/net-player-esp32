@@ -26,11 +26,9 @@ using random_bytes_engine =
 
 using namespace cspot;
 
-Session::Session() {
-  this->challenges = std::make_unique<cspot::AuthChallenges>();
-}
-
-Session::~Session() {}
+Session::Session(const LoginBlob& loginBlob)
+: mLoginBlob(loginBlob)
+{}
 
 void Session::connect(std::unique_ptr<cspot::PlainConnection> connection) {
   this->conn = std::move(connection);
@@ -38,11 +36,11 @@ void Session::connect(std::unique_ptr<cspot::PlainConnection> connection) {
     return this->triggerTimeout();
   };
   auto helloPacket = this->conn->sendPrefixPacket(
-      {0x00, 0x04}, this->challenges->prepareClientHello());
+      {0x00, 0x04}, mChallenges.prepareClientHello());
   auto apResponse = this->conn->recvPacket();
   CSPOT_LOG(info, "Received APHello response");
 
-  auto solvedHello = this->challenges->solveApHello(helloPacket, apResponse);
+  auto solvedHello = mChallenges.solveApHello(helloPacket, apResponse);
 
   conn->sendPrefixPacket({}, solvedHello);
   CSPOT_LOG(debug, "Received shannon keys");
@@ -51,8 +49,7 @@ void Session::connect(std::unique_ptr<cspot::PlainConnection> connection) {
   this->shanConn = std::make_shared<ShannonConnection>();
 
   // Init shanno-encrypted connection
-  this->shanConn->wrapConnection(this->conn, challenges->shanSendKey,
-                                 challenges->shanRecvKey);
+  this->shanConn->wrapConnection(this->conn, mChallenges.shanSendKey, mChallenges.shanRecvKey);
 }
 
 void Session::connectWithRandomAp() {
@@ -70,12 +67,11 @@ void Session::connectWithRandomAp() {
   this->connect(std::move(conn));
 }
 
-std::vector<uint8_t> Session::authenticate(std::shared_ptr<LoginBlob> blob) {
+std::vector<uint8_t> Session::authenticate() {
   // save auth blob for reconnection purposes
-  authBlob = blob;
   // prepare authentication request proto
-  auto data = challenges->prepareAuthPacket(blob->authData, blob->authType,
-                                            deviceId, blob->username);
+  auto data = mChallenges.prepareAuthPacket(
+      mLoginBlob.authData, mLoginBlob.authType, deviceId, mLoginBlob.username);
 
   // Send login request
   this->shanConn->sendPacket(LOGIN_REQUEST_COMMAND, data);

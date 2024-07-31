@@ -20,7 +20,7 @@ class TimeProvider;
 
 class MercurySession : public bell::Task, public cspot::Session {
  public:
-  MercurySession(TimeProvider& timeProvider);
+  MercurySession(const LoginBlob& loginBlob, TimeProvider& timeProvider);
   ~MercurySession();
   typedef std::vector<std::vector<uint8_t>> DataParts;
 
@@ -60,8 +60,6 @@ class MercurySession : public bell::Task, public cspot::Session {
       {RequestType::SUB, "SUB"},
       {RequestType::UNSUB, "UNSUB"},
   };
-
-  void handlePacket();
 
   uint64_t executeSubscription(RequestType type, const std::string& uri,
                                ResponseCallback callback,
@@ -106,10 +104,9 @@ class MercurySession : public bell::Task, public cspot::Session {
   Header tempMercuryHeader = {};
   ConnectionEstabilishedCallback connectionReadyCallback = nullptr;
 
-  bell::Queue<cspot::Packet> packetQueue;
-
   void runTask() override;
   void reconnect();
+  void handlePacket(Packet& packet);
 
   std::unordered_map<uint64_t, ResponseCallback> callbacks;
   std::unordered_map<std::string, ResponseCallback> subscriptions;
