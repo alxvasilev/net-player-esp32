@@ -46,7 +46,7 @@ public:
     virtual Type type() const { return kTypeDecoder; }
     virtual void nodeThreadFunc();
     virtual StreamEvent pullData(PacketResult &pr);
-    virtual ~DecoderNode() { deleteDecoder(); }
+    virtual ~DecoderNode() { deleteDecoder(); terminate(true); }
     virtual void reset() override { deleteDecoder(); }
     virtual void onStopRequest() { mRingBuf.setStopSignal(); }
     virtual void onStopped() { mRingBuf.clear(); deleteDecoder(); }

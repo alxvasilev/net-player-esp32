@@ -16,12 +16,11 @@ namespace http { class Server; }
 class MDns;
 class AudioPlayer;
 
-class SpotifyNode: public AudioNodeWithTask, cspot::ITrackPlayer {
+class SpotifyNode: public AudioNodeWithTask, public cspot::ITrackPlayer, public IPlayerCtrl {
 protected:
     enum { kRecvSize = 4096 };
     enum: uint8_t {
-        kCmdRestartPlayback = AudioNodeWithTask::kCommandLast + 1, /* int pos */
-        kCmdRestartPlaybackPaused,
+        kCmdPlay = AudioNodeWithTask::kCommandLast + 1, /* int pos */
         kCmdStopPlayback,
         kCmdPause, /* bool paused */
         kCmdNextTrack, /* bool prev */
@@ -34,29 +33,34 @@ protected:
     // AES IV for decrypting the audio stream
     static const std::vector<uint8_t> sAudioAesIV;
     cspot::SpircHandler mSpirc;
-    StreamRingQueue<200> mRingBuf;
+    StreamRingQueue<100> mRingBuf;
     HttpClient mHttp;
     std::shared_ptr<cspot::TrackItem> mCurrentTrack;
     Crypto mCrypto;
     int32_t mFileSize = 0;
     int32_t mRecvPos = 0;
     int32_t mTsSeek = 0;
-    uint8_t mStreamId = 0;
+    StreamId mInStreamId = 0;
+    StreamId mOutStreamId = 0;
 
     void onStopRequest() override;
     void nodeThreadFunc();
     virtual bool dispatchCommand(Command &cmd) override;
     void connect();
     bool recv();
+    void clearRingQueue();
     bool startCurrentTrack(uint32_t tsSeek = 0);
-    bool startNextTrack(cspot::TrackQueue::SkipDirection dir = cspot::TrackQueue::SkipDirection::NEXT);
-    // ITrackPlayer interface
-    virtual void restart(uint32_t pos, bool paused = false) override;
+    bool startNextTrack(bool flush, bool nextPrev = true);
+    // cspot::TrackPlayer interface
+    virtual void play(uint32_t pos) override;
     virtual void pause(bool paused) override;
-    virtual void nextTrack(cspot::TrackQueue::SkipDirection dir) override;
+    virtual void nextTrack(bool nextPrev) override;
     virtual void stopPlayback() override;
-    virtual void seekMs(size_t pos) override;
-    virtual void setVolume(int vol) override;
+    virtual void seekMs(uint32_t pos) override;
+    virtual void setVolume(uint8_t vol) override;
+    // IPlayerCtrl interface
+    virtual void onTrackPlaying(StreamId id, uint32_t pos) override;
+    virtual IPlayerCtrl* playerCtrl() { return this; }
 public:
     static void registerService(AudioPlayer& audioPlayer, MDns& mdns);
     SpotifyNode(IAudioPipeline& parent);

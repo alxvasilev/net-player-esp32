@@ -384,7 +384,6 @@ void HttpNode::nodeThreadFunc()
 HttpNode::~HttpNode()
 {
     terminate(true);
-    printf("terminated\n");
     destroyClient();
 }
 

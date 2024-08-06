@@ -118,8 +118,8 @@ void TrackInfo::loadPbEpisode(Episode* pbEpisode,
   duration = pbEpisode->duration;
 }
 
-TrackItem::TrackItem(TrackQueue& queue, TrackReference& aRef, uint32_t aRequestedPos)
-  : mRef(aRef), mQueue(queue)
+TrackItem::TrackItem(TrackQueue& queue, TrackReference& aRef)
+  : mRef(&aRef), mQueue(queue)
 {
     mQueue.mLoadedCnt++;
 }
@@ -158,7 +158,7 @@ bool TrackItem::parseMetadata(Track* pbTrack, Episode* pbEpisode) {
   AudioFile* selectedFiles = nullptr;
   const char* countryCode = mQueue.mSpirc.mCtx.mConfig.countryCode.c_str();
 
-  if (mRef.type == TrackReference::Type::TRACK) {
+  if (mRef->type == TrackReference::Type::TRACK) {
     CSPOT_LOG(info, "Track name: %s", pbTrack->name);
     CSPOT_LOG(info, "Track duration: %d", pbTrack->duration);
 
@@ -301,12 +301,13 @@ void TrackItem::stepLoadMetadata()
   // Prepare request ID
   std::string requestUrl = string_format(
       "hm://metadata/3/%s/%s",
-      mRef.type == TrackReference::Type::TRACK ? "track" : "episode",
-      bytesToHexString(mRef.gid).c_str());
+      mRef->type == TrackReference::Type::TRACK ? "track" : "episode",
+      bytesToHexString(mRef->gid).c_str());
 
   auto responseHandler = [this, wptr = weak_from_this()](MercurySession::Response& res)
   {
     if (wptr.expired()) {
+        printf("============wptr expired\n");
         return;
     }
     std::scoped_lock lock(mQueue.mTracksMutex);
@@ -321,7 +322,7 @@ void TrackItem::stepLoadMetadata()
     Episode pbEpisode = Episode_init_zero;
 
     // Parse the metadata
-    if (mRef.type == TrackReference::Type::TRACK) {
+    if (mRef->type == TrackReference::Type::TRACK) {
       pbDecode(pbTrack, Track_fields, res.parts[0]);
     }
     else {
@@ -360,8 +361,6 @@ TrackQueue::TrackQueue(SpircHandler& spirc)
     // Assign encode callback to track list
     mSpirc.mPlaybackState.innerFrame.state.track.funcs.encode = &TrackReference::pbEncodeTrackList;
     mSpirc.mPlaybackState.innerFrame.state.track.arg = &mTracks;
-    // Start the task
-    startTask();
 }
 
 TrackQueue::~TrackQueue()
@@ -370,20 +369,22 @@ TrackQueue::~TrackQueue()
   std::scoped_lock lock(mTracksMutex);
 }
 
-bool TrackQueue::loadTrack(int idx, bool retry, int requestedPos)
+bool TrackQueue::loadTrack(int idx)
 {
+    std::scoped_lock lock(mTracksMutex);
     if (idx < 0 || idx >= mTracks.size()) {
         return false; // it's valid to try an invalid index, fail silently
     }
     auto& track = mTracks[idx];
-    if (track.mTrackItem.get()) {
-        if (track.mTrackItem->state() == TrackItem::State::FAILED) { // retry a previous fail
-            if (!track.mTrackItem->resetForLoadRetry()) {
+    if (track.mDetails.get()) {
+        if (track.mDetails->state() == TrackItem::State::FAILED) { // retry a previous fail
+            if (!track.mDetails->resetForLoadRetry()) {
                 return false;
             }
             CSPOT_LOG(info, "Re-trying failed loading of track %d", idx);
         }
         else { // in progress or done
+            printf("loadTrack[%d]: already loading or loaded: state: %d\n", idx, (int)track.mDetails->state());
             return true;
         }
     }
@@ -391,37 +392,42 @@ bool TrackQueue::loadTrack(int idx, bool retry, int requestedPos)
         if (mLoadedCnt >= kMaxTracksPreload) {
             freeMostDistantTrack();
         }
-        track.mTrackItem = std::make_shared<TrackItem>(*this, track, requestedPos);
+        track.mDetails = std::make_shared<TrackItem>(*this, track);
     }
-    return track.mTrackItem->load(retry);
+    return track.mDetails->load(true, idx);
 }
 void TrackQueue::runTask()
 {
-    mEvents.clearBits(kStateTerminated);
+    CSPOT_LOG(info, "Track queue task started");
+    mEvents.clearBits(0xff);
     try {
         for (;;) {
             if (mTaskStopReq) { // track update requires that we pause
                 mEvents.setBits(kStateStopped);
                 while(mTaskStopReq) {
-                    if (!waitEvent(0xff)) { // any event
-                        break;
-                    }
+                    printf("=======waiting any event to release stop\n");
+                    waitForEvents(0xff, false); // any event
                 }
                 mEvents.clearBits(kStateStopped);
             }
-            if (!waitEvent(kEvtTracksUpdated)) {
-                break;
-            }
+            CSPOT_LOG(info, "Monitoring playlist/curr track for changes(kEvtTracksUpdated)...");
+            waitForEvents(kEvtTracksUpdated);
+            CSPOT_LOG(info, "Playlist or current track changed, preloading track info...");
             if (mCurrentTrackIdx < 0) {
                 continue;
             }
             // Make sure we have the newest access key
             accessKey = mAccessKeyFetcher.getAccessKey();
-            std::scoped_lock lock(mTracksMutex);
-            loadTrack(mCurrentTrackIdx, true);
-            loadTrack(mCurrentTrackIdx + 1, false);
-            loadTrack(mCurrentTrackIdx + 2, false);
-            loadTrack(mCurrentTrackIdx - 1, false);
+            CSPOT_LOG(info, "Loading tracks around current index %d", mCurrentTrackIdx);
+            loadTrack(mCurrentTrackIdx);
+            vTaskDelay(100 / portTICK_PERIOD_MS); // give a chance to currentTrack() to return here
+            printf("=========loading track +1 details...\n");
+            loadTrack(mCurrentTrackIdx + 1);
+            printf("=========loading track +2 details...\n");
+            loadTrack(mCurrentTrackIdx + 2);
+            printf("=========loading track -1 details...\n");
+            loadTrack(mCurrentTrackIdx - 1);
+            printf("==========done loading all track details...\n");
         }
     }
     catch(std::exception& ex) {
@@ -446,12 +452,22 @@ void TrackQueue::freeMostDistantTrack()
             break;
         }
     }
+    int chosen = -1;
+    if (firstBefore < 0) {
+        chosen = lastAfter;
+    }
+    else if (lastAfter < 0) {
+        chosen = firstBefore;
+    }
     // if distance to left >= distance to right
-    if (mCurrentTrackIdx - firstBefore >= lastAfter - mCurrentTrackIdx) {
-        mTracks[firstBefore].mTrackItem.reset();
+    else if (mCurrentTrackIdx - firstBefore >= lastAfter - mCurrentTrackIdx) {
+        chosen = firstBefore;
     }
     else {
-        mTracks[lastAfter].mTrackItem.reset();
+        chosen = lastAfter;
+    }
+    if (chosen > -1) {
+        mTracks[chosen].mDetails.reset();
     }
 }
 void TrackQueue::stopTask()
@@ -472,30 +488,26 @@ std::shared_ptr<TrackItem> TrackQueue::currentTrack()
     for(;;) {
         if (mCurrentTrackIdx >= 0 && mCurrentTrackIdx < mTracks.size()) {
             auto& track = mTracks[mCurrentTrackIdx];
-            if (track.mTrackItem.get()) {
-                auto state = track.mTrackItem->state();
+            if (track.mDetails.get()) {
+                auto state = track.mDetails->state();
                 if (state == TrackItem::State::READY) {
-                    return track.mTrackItem;
-                }
-                else if (state == TrackItem::State::FAILED) {
-                    track.mTrackItem->resetForLoadRetry(true);
+                    return track.mDetails;
                 }
             }
         }
         scoped_unlock unlock(mTracksMutex);
-        if (!waitEvent(kEvtTrackLoaded)) {
-            return nullptr;
-        }
+        waitForEvents(kEvtTrackLoaded);
     }
 }
 
-bool TrackItem::load(bool retry)
+bool TrackItem::load(bool retry, int idx)
 {
     // assumes trackMutex is locked!
     for (;;) {
         if (mQueue.mTaskStopReq) {
             return false;
         }
+        printf("==========load[%d]: state %d\n", idx, (int)mState);
         switch (mState) {
             case State::QUEUED:
                 stepLoadMetadata();
@@ -506,34 +518,32 @@ bool TrackItem::load(bool retry)
             case State::CDN_REQUIRED:
                 stepLoadCDNUrl(mQueue.accessKey);
                 break;
+            case State::READY:
+                mLoadRetryCtr = 0;
+                mQueue.mEvents.setBits(TrackQueue::kEvtTrackLoaded);
+                CSPOT_LOG(info, "Details loaded for track %d: name: '%s'", idx, name.c_str());
+                return true;
+            case State::FAILED:
+                CSPOT_LOG(info, "Details load failed for track %d", idx);
+                if (retry && resetForLoadRetry()) {
+                    delayBeforeRetry();
+                    continue;
+                }
+                mQueue.mEvents.setBits(TrackQueue::kEvtTrackLoaded);
+                return false;
             default:
-                return mState == State::READY ? true : false; // Do not perform any action
-        }
-        if (mState == State::READY) {
-            mLoadRetryCtr = 0;
-            mQueue.mEvents.setBits(TrackQueue::kEvtTrackLoaded);
-            return true;
-        }
-        else if (mState == State::FAILED) {
-            if (retry && resetForLoadRetry()) {
-                delayBeforeRetry();
-                continue;
-            }
-            mQueue.mEvents.setBits(TrackQueue::kEvtTrackLoaded);
-            return false;
+                break;
         }
         scoped_unlock unlock(mQueue.mTracksMutex);
-        if (!mQueue.waitEvent(TrackQueue::kEvtTrackLoadStep)) {
-            throw std::runtime_error("loadTrackInfo interrupted by stop event");
-        }
+        mQueue.waitForEvents(TrackQueue::kEvtTrackLoadStep);
     }
 }
 
-bool TrackQueue::nextTrack(SkipDirection dir)
+bool TrackQueue::nextTrack(bool nextPrev)
 {
   std::scoped_lock lock(mTracksMutex);
   auto& pbState = mSpirc.mPlaybackState;
-  if (dir == SkipDirection::PREV) {
+  if (nextPrev == false) { // prev
       uint64_t position = !mSpirc.mPlaybackState.innerFrame.state.has_position_ms
           ? 0
           : pbState.innerFrame.state.position_ms +
@@ -552,11 +562,15 @@ bool TrackQueue::nextTrack(SkipDirection dir)
       mCurrentTrackIdx++;
   }
   mEvents.setBits(kEvtTracksUpdated);
-  // Update frame data
-  mSpirc.notifyCurrTrackUpdate(mCurrentTrackIdx);
   return true;
 }
-
+void TrackQueue::notifyCurrentTrackPlaying(uint32_t pos)
+{
+    // Update frame data
+    printf("===============Notifying current track playing\n");
+    mSpirc.mPlaybackState.updatePositionMs(pos);
+    mSpirc.notifyCurrTrackUpdate(mCurrentTrackIdx);
+}
 bool TrackQueue::hasTracks() {
     std::scoped_lock lock(mTracksMutex);
     return mTracks.size() > 0;
@@ -570,7 +584,8 @@ bool TrackQueue::isFinished() {
 void TrackQueue::updateTracks(bool initial)
 {
     mTaskStopReq = true;
-    if (!waitEvent(kStateStopped, false)) {
+    mEvents.setBits(kEvtTracksUpdated);
+    if (mEvents.waitForOneNoReset(kStateStopped|kEvtTerminateReq, -1) & kEvtTerminateReq) {
         mTaskStopReq = false;
         return; // terminating
     }

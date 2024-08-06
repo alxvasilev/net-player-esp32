@@ -173,6 +173,7 @@ extern "C" void* my_calloc(size_t num, size_t size)
     //printf("my_calloc(%zu, %zu)\n", num, size);
     return heap_caps_calloc(num, size, MALLOC_CAP_SPIRAM);
 }
+extern "C" void esp_restart_noos(void) __attribute__ ((noreturn));
 
 extern "C" void app_main(void)
 {
@@ -303,8 +304,9 @@ esp_err_t httpReboot(httpd_req_t* req)
     }
     httpd_resp_sendstr(req, "ok");
     ESP_LOGI(TAG, "Rebooting%s...", toRecovery ? " to recovery" : "");
+    player.release();
     asyncCall([]() {
-        esp_restart();
+        esp_restart_noos();
     }, 400000);
     return ESP_OK;
 }

@@ -394,10 +394,7 @@ bool AudioPlayer::doPlayUrl(const char* url, PlayerMode playerMode, const char* 
     setPlayerMode(playerMode);
     lcdResetNetSpeedIndication();
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
-    if (++mStreamSeqNo == 0) {
-        mStreamSeqNo = 1;
-    }
-    auto urlInfo = HttpNode::UrlInfo::Create(url, mStreamSeqNo, record);
+    auto urlInfo = HttpNode::UrlInfo::Create(url, getNewStreamId(), record);
     // setUrl will start the http node, if it's stopped. However, this may take a while.
     // If we meanwhile start the i2s out node, it will start to pull data from the not-yet-started http node,
     // whose state may not be set up correctly for the new stream (i.e. waitingPrefill not set)
@@ -548,7 +545,7 @@ uint32_t AudioPlayer::positionTenthSec() const
     }
     auto& i2sOut = *static_cast<I2sOutputNode*>(mStreamOut.get());
     MutexLocker locker(i2sOut.mutex);
-    if (i2sOut.mStreamId != mStreamSeqNo) {
+    if (i2sOut.mStreamId != mCurrentStreamId) {
         return 0;
     }
     return i2sOut.positionTenthSec();
@@ -1062,7 +1059,18 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
             printf("set title: %lld\n", t.usElapsed());
         });
     }
-    else {
+    else if (event == AudioNode::kEventNewStream) {
+        auto& evt = *(NewStreamEvent*)arg;
+        asyncCall([this, streamId = evt.streamId, fmt = evt.fmt, sourceBps = evt.sourceBps]() {
+            LOCK_PLAYER();
+            onNewStream(fmt, sourceBps);
+            auto ctrl = playController();
+            if (ctrl) {
+                ctrl->onTrackPlaying(streamId, 0);
+            }
+        });
+    }
+    else{
         asyncCall([this, event, arg, numArg]() {
             LOCK_PLAYER();
             switch(event) {
@@ -1076,10 +1084,11 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
                     return lcdUpdatePlayState(nullptr, numArg); break;
                 case AudioNode::kEventBufUnderrun:
                     return lcdShowBufUnderrunImmediate(); break;
-                case AudioNode::kEventNewStream:
-                    return onNewStream(StreamFormat(numArg), arg); break;
                 case AudioNode::kEventStreamEnd:
-                    if (numArg == mStreamSeqNo) {
+                    if (mPlayerMode & AudioNode::kTypeFlagPlayerCtrl) {
+                        break;
+                    }
+                    else if (numArg == mCurrentStreamId) {
                         this->stop();
                     }
                     else {

@@ -143,7 +143,7 @@ void I2sOutputNode::nodeThreadFunc()
                         setFormat(pkt.fmt);
                         mSampleCtr = 0;
                         mStreamId = pkt.streamId;
-                        plSendEvent(kEventNewStream, pkt.fmt.asNumCode(), pkt.sourceBps);
+                        plSendEvent(kEventNewStream, 0, (uintptr_t)dpr.packet.get());
                         plSendEvent(kEventPlaying);
                     }
                     else if (evt == kEvtStreamEnd) {
@@ -271,6 +271,7 @@ I2sOutputNode::I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t*
 
 I2sOutputNode::~I2sOutputNode()
 {
+    terminate(true);
     i2s_driver_uninstall(mPort);
 }
 

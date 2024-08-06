@@ -27,7 +27,7 @@ void SpotifyNode::registerService(AudioPlayer& audioPlayer, MDns& mdns)
         }
         ESP_ERROR_CHECK(httpd_resp_set_type(req, "text/json"));
         std::string blob = sLoginBlob->buildZeroconfInfo();
-        ESP_LOGI(TAG, "Sending zeroconf data:\n%s", blob.c_str());
+      //ESP_LOGI(TAG, "Sending zeroconf data:\n%s", blob.c_str());
         return httpd_resp_send(req, blob.c_str(), blob.size());
     }, nullptr);
 
@@ -61,10 +61,11 @@ void SpotifyNode::registerService(AudioPlayer& audioPlayer, MDns& mdns)
             return ESP_FAIL;
         }
         std::map<std::string, std::string> queryMap;
-        ESP_LOGI(TAG, "zeroauth POST data map:");
+
+        //ESP_LOGI(TAG, "zeroauth POST data map:");
         for (auto& item: params.keyVals()) {
             queryMap[item.key.str] = item.val.str;
-            printf("\t'%s':'%s'\n", item.key.str, item.val.str);
+        //    printf("\t'%s':'%s'\n", item.key.str, item.val.str);
         }
         // Pass user's credentials to the blob
         sLoginBlob->loadZeroconfQuery(queryMap);
@@ -75,6 +76,9 @@ void SpotifyNode::registerService(AudioPlayer& audioPlayer, MDns& mdns)
             sAudioPlayer->switchMode(AudioPlayer::kModeSpotify, false);
             sAudioPlayer->play();
         }
+        else {
+            ESP_LOGI(TAG, "==========Spotify node already running");
+        }
         return httpd_resp_sendstr(req,
             "{\"status\"=101,\"spotifyError\"=0,\"statusString\"=\"ERROR-OK\"}");
     }, nullptr);
@@ -84,7 +88,7 @@ void SpotifyNode::registerService(AudioPlayer& audioPlayer, MDns& mdns)
         {{"VERSION", "1.0"}, {"CPath", "/spotify_info"}, {"Stack", "SP"}});
 }
 SpotifyNode::SpotifyNode(IAudioPipeline& parent)
-    : AudioNodeWithTask(parent, "spotify", 4096, 10, -1), mSpirc(*sLoginBlob, *this)
+    : AudioNodeWithTask(parent, "spotify", 8192, 10, -1), mSpirc(*sLoginBlob, *this)
 {
     mRingBuf.clearStopSignal();
 }
@@ -100,15 +104,12 @@ bool SpotifyNode::dispatchCommand(Command &cmd)
         return true;
     }
     switch(cmd.opcode) {
-        case kCmdRestartPlayback:
+        case kCmdPlay:
             startCurrentTrack(cmd.arg);
-            break;
-        case kCmdRestartPlaybackPaused:
-            startCurrentTrack(cmd.arg);
-            stop(false);
             break;
         case kCmdNextTrack:
-            startNextTrack((cspot::TrackQueue::SkipDirection)cmd.arg);
+            mRingBuf.clear();
+            startNextTrack((bool)cmd.arg);
             break;
         case kCmdPause:
             stop(false);
@@ -136,41 +137,69 @@ bool SpotifyNode::startCurrentTrack(uint32_t tsSeek)
     if (!mCurrentTrack.get()) {
         return false;
     }
-    mStreamId++;
+    mInStreamId = mPipeline.getNewStreamId();
     return true;
 }
-bool SpotifyNode::startNextTrack(cspot::TrackQueue::SkipDirection dir)
+void SpotifyNode::clearRingQueue()
 {
-    if (!mSpirc.mTrackQueue.nextTrack(dir)) {
+    mRingBuf.clear();
+    if (mOutStreamId) { // properly terminate current stream, if its end packet was not read yet
+        mRingBuf.pushBack(new StreamEndEvent(mOutStreamId));
+    }
+}
+bool SpotifyNode::startNextTrack(bool flush, bool nextPrev)
+{
+    ESP_LOGI(TAG, "Starting next track...");
+    if (!mSpirc.mTrackQueue.nextTrack(nextPrev)) {
         ESP_LOGI(TAG, "nextTrack: No more tracks");
         return false;
     }
+    if (flush) {
+        clearRingQueue();
+    }
     return startCurrentTrack();
 }
-void SpotifyNode::restart(uint32_t pos, bool paused)
+void SpotifyNode::onTrackPlaying(StreamId id, uint32_t pos)
 {
-    printf("================cb restart\n");
-    mCmdQueue.post(paused ? kCmdRestartPlayback : kCmdRestartPlaybackPaused, pos);
+    if (id == mInStreamId) {
+        mSpirc.mTrackQueue.notifyCurrentTrackPlaying(pos);
+    }
+    else {
+        ESP_LOGW(TAG, "onTrackPlaying: streamId %d is not the one of the currently sent stream %d", id, mInStreamId);
+    }
+}
+void SpotifyNode::play(uint32_t pos)
+{
+    ESP_LOGW(TAG, "Restart command: pos = %d", pos);
+    mCmdQueue.post(kCmdPlay, pos);
 }
 void SpotifyNode::pause(bool paused)
 {
-    mCmdQueue.post(kCmdPause, paused);
+    ESP_LOGI(TAG, "Pause command");
+    if (paused) {
+        sAudioPlayer->pause();
+    }
+    else {
+        sAudioPlayer->resume();
+    }
 }
-void SpotifyNode::nextTrack(cspot::TrackQueue::SkipDirection dir)
+void SpotifyNode::nextTrack(bool nextPrev)
 {
     printf("================cb nextTrack\n");
-    mCmdQueue.post(kCmdNextTrack, (int)dir);
+    mCmdQueue.post(kCmdNextTrack, nextPrev);
 }
 void SpotifyNode::stopPlayback()
 {
-    mCmdQueue.post(kCmdStopPlayback);
+    ESP_LOGI(TAG, "Stop command");
+    sAudioPlayer->stop();
 }
-void SpotifyNode::seekMs(size_t pos)
+void SpotifyNode::seekMs(uint32_t pos)
 {
     mCmdQueue.post(kCmdSeek, pos);
 }
-void SpotifyNode::setVolume(int vol)
+void SpotifyNode::setVolume(uint8_t vol)
 {
+    printf("=========== volume command: %d\n", vol);
     sAudioPlayer->volumeSet(vol);
 }
 void SpotifyNode::nodeThreadFunc()
@@ -179,24 +208,22 @@ void SpotifyNode::nodeThreadFunc()
     mSpirc.start();
     for (;;) {
         try {
-            processMessages();
+            while (mCmdQueue.numMessages() || !mCurrentTrack.get() || (mState == kStateStopped)) {
+                processMessages();
+            }
             if (mState == kStateTerminated) {
                 return;
             }
-            else if (mState == kStateStopped) {
-                continue;
-            }
-            if (!mCurrentTrack.get()) {
-                continue;
-            }
+            myassert(mCurrentTrack.get());
             myassert(mState == kStateRunning);
+            mRingBuf.clearStopSignal();
             if (!mHttp.connected()) {
                 connect();
                 ESP_LOGI(TAG, "Starting download...");
             }
             while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
                 if (!recv()) {
-                    startNextTrack();
+                    startNextTrack(false);
                     break;
                 }
             }
@@ -217,6 +244,7 @@ void SpotifyNode::connect()
     for (int i = 0; i < 10; i++) {
         auto ret = mHttp.request(mCurrentTrack->cdnUrl.c_str(), HTTP_METHOD_GET, hdrs.get());
         if (ret >= 0) {
+            mFileSize = mHttp.contentLen();
             return;
         }
         int msDelay = std::min(i * 500, 6000);
@@ -231,8 +259,9 @@ bool SpotifyNode::recv()
     bool isStart = (mRecvPos == 0);
     auto toRecv = std::min(mFileSize - mRecvPos, (int)kRecvSize);
     if (toRecv <= 0) {
+        assert(toRecv == 0);
         ESP_LOGI(TAG, "recv: Track download finished");
-        mRingBuf.pushBack(new GenericEvent(kEvtStreamEnd, mStreamId, 0));
+        mRingBuf.pushBack(new StreamEndEvent(mInStreamId));
         mHttp.close();
         mCurrentTrack.reset();
         return false;
@@ -250,10 +279,15 @@ bool SpotifyNode::recv()
     }
     pkt->dataLen = nRecv;
     auto calculatedIV = bigNumAdd(sAudioAesIV, mRecvPos >> 4);
+    mRecvPos += nRecv;
     mCrypto.aesCTRXcrypt(mCurrentTrack->audioKey, calculatedIV, (uint8_t*)pkt->data, pkt->dataLen);
     if (isStart) {
+        memmove(pkt->data, pkt->data + 167, pkt->dataLen - 167);
+        pkt->dataLen -= 167;
         mRingBuf.pushBack(
-            new NewStreamEvent(mStreamId, Codec(Codec::kCodecVorbis, Codec::kTransportOgg), mTsSeek));
+            new NewStreamEvent(mInStreamId, Codec(Codec::kCodecVorbis, Codec::kTransportOgg), mTsSeek)
+        );
+        mRingBuf.pushBack(TitleChangeEvent::create((mCurrentTrack->name + " - " + mCurrentTrack->artist).c_str()));
         pkt->flags |= StreamPacket::kFlagStreamHeader;
     }
     mRingBuf.pushBack(pkt.release());
@@ -263,5 +297,17 @@ StreamEvent SpotifyNode::pullData(PacketResult &pr)
 {
     StreamPacket::unique_ptr pkt;
     pkt.reset(mRingBuf.popFront());
-    return pkt ? pr.set(pkt) : kErrStreamStopped;
+    if (!pkt) {
+        return kErrStreamStopped;
+    }
+    auto type = pkt->type;
+    if (type == kEvtData) {
+    }
+    else if(type == kEvtStreamChanged) {
+        mOutStreamId = pkt.as<NewStreamEvent>().streamId;
+    }
+    else if (type == kEvtStreamEnd) {
+        mOutStreamId = 0;
+    }
+    return pr.set(pkt);
 }

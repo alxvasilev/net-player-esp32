@@ -10,23 +10,22 @@
 #include "protobuf/spirc.pb.h"  // for MessageType
 #include "CSpotContext.h"
 #include "PlaybackState.h"
+#include "IPlayer.h"
 
 namespace cspot {
-class TrackPlayer;
 class LoginBlob;
-
 struct ITrackPlayer {
-    virtual void restart(uint32_t pos, bool paused = false) = 0;
+    virtual void play(uint32_t pos) = 0;
     virtual void pause(bool paused);
-    virtual void nextTrack(TrackQueue::SkipDirection dir) = 0;
+    virtual void nextTrack(bool nextPrev) = 0;
     virtual void stopPlayback() = 0;
-    virtual void seekMs(size_t pos) = 0;
-    virtual void setVolume(int vol) = 0;
+    virtual void seekMs(uint32_t pos) = 0;
+    virtual void setVolume(uint8_t vol) = 0;
 };
 
 class SpircHandler {
  public:
-  SpircHandler(const cspot::LoginBlob& loginBlob, cspot::ITrackPlayer& player);
+  SpircHandler(const cspot::LoginBlob& loginBlob, ITrackPlayer& player);
 
   enum class EventType {
     PLAY_PAUSE,

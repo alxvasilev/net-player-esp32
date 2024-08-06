@@ -46,7 +46,7 @@ public:
     enum PlayerMode: uint8_t {
         kModeInvalid = 0,
         kModeRadio = AudioNode::kTypeHttpIn,
-        kModeDlna = AudioNode::kTypeHttpIn | 1,
+        kModeDlna = AudioNode::kTypeHttpIn | AudioNode::kTypeFlagPlayerCtrl | 1,
         kModeUrl = AudioNode::kTypeHttpIn | 2,
         kModeBluetoothSink = AudioNode::kTypeA2dpIn,
         kModeSpotify = AudioNode::kTypeSpotify,
@@ -92,7 +92,6 @@ protected:
     http::Server& mHttpServer;
     std::unique_ptr<DlnaHandler> mDlna;
     unique_ptr_mfree<TrackInfo> mTrackInfo;
-    uint32_t mStreamSeqNo = 0;
     PlayerMode mPlayerMode;
     int mBufLowThreshold = 0;
     uint16_t mBufLowDisplayGradient = 0;
@@ -125,6 +124,7 @@ protected:
     void destroyPipeline();
     void detectVolumeNode();
     std::string printPipeline();
+    IPlayerCtrl* playController() { return mStreamIn ? mStreamIn->playerCtrl() : nullptr; }
     void loadSettings();
     void init(PlayerMode mode, AudioNode::Type outType);
     PlayerMode initFromNvs();

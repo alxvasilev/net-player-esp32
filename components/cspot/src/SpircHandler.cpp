@@ -30,7 +30,9 @@ void SpircHandler::start()
 {
     mCtx.mSession.connectWithRandomAp();
     mCtx.mConfig.authData = mCtx.mSession.authenticate();
+    mTrackQueue.startTask();
     mCtx.mSession.startTask();
+
 }
 void SpircHandler::subscribeToMercury() {
   auto responseLambda = [this](MercurySession::Response& res) {
@@ -112,10 +114,10 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
       setPause(false);
       break;
     case MessageType_kMessageTypeNext:
-      mPlayer.nextTrack(TrackQueue::SkipDirection::NEXT);
+      mPlayer.nextTrack(true);
       break;
     case MessageType_kMessageTypePrev:
-      mPlayer.nextTrack(TrackQueue::SkipDirection::PREV);
+      mPlayer.nextTrack(false);
       break;
     case MessageType_kMessageTypeLoad: {
       CSPOT_LOG(info, "New play queue of %d tracks", mPlaybackState.remoteTracks.size());
@@ -129,9 +131,9 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
       mPlaybackState.syncWithRemote();
       // Update track list in case we have a new one
       mTrackQueue.updateTracks();
-      this->notify();
+//    this->notify();
       // Stop the current track, if any
-      mPlayer.restart(mPlaybackState.remoteFrame.state.position_ms);
+      mPlayer.play(mPlaybackState.remoteFrame.state.position_ms);
       break;
     }
     case MessageType_kMessageTypeReplace: {
@@ -141,7 +143,7 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
       mTrackQueue.updateTracks(false);
       notify();
       // need to re-load all if streaming track is completed
-      mPlayer.restart(mPlaybackState.remoteFrame.state.position_ms +
+      mPlayer.play(mPlaybackState.remoteFrame.state.position_ms +
           mCtx.mTimeProvider.getSyncedTimestamp() - mPlaybackState.innerFrame.state.position_measured_at);
       break;
     }

@@ -81,7 +81,19 @@ struct DataPacket: public StreamPacket {
         for (int pos = 0; pos < len; pos += lineLen) {
             auto thisLineLen = std::min(lineLen, len - pos);
             binToHex((uint8_t*)data + pos, thisLineLen, hex.get());
-            printf("  [%04d]  %s\n", pos, hex.get());
+            printf("  [%04d]  %s ", pos, hex.get());
+            auto delta = lineLen - thisLineLen;
+            if (delta) {
+                delta *= 3;
+                for (int i = 0; i < delta; i++) {
+                    putchar(' ');
+                }
+            }
+            for (int i = pos, end = pos + thisLineLen; i < end; i++) {
+                char ch = data[i];
+                putchar((ch < 32 || ch > 126) ? '.' : ch);
+            }
+            putchar('\n');
         }
     }
 protected:
@@ -102,4 +114,8 @@ struct NewStreamEvent: public GenericEvent {
     NewStreamEvent(StreamId aStreamId, StreamFormat aFmt, uint8_t aSourceBps=0, uint32_t aSeekTime=0)
     : GenericEvent(kEvtStreamChanged, aStreamId, 0), fmt(aFmt), seekTime(aSeekTime), sourceBps(aSourceBps) {}
 };
+struct StreamEndEvent: public GenericEvent {
+    StreamEndEvent(StreamId streamId): GenericEvent(kEvtStreamEnd, streamId, 0) {}
+};
+
 #endif

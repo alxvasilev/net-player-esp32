@@ -71,11 +71,11 @@ StreamEvent DecoderVorbis::decode(AudioNode::PacketResult& dpr)
                 return kErrDecode;
             }
             else if (ret == 0) {
-                if (mVorbis.eos()) {
+            /*    if (mVorbis.eos()) {
                     ESP_LOGI(TAG, "Decode needs more data, but reached end of stream, resetting");
                     reset();
                     return kNoError;
-                }
+                } */
                 auto event = mSrcNode.pullData(dpr);
                 if (event) {
                     return event;

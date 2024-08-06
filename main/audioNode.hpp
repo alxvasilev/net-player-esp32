@@ -16,16 +16,33 @@
 #include "streamPackets.hpp"
 #include "queue.hpp"
 #include "utils.hpp"
+#include <atomic>
 
 class AudioNode;
 
 class IAudioPipeline {
+protected:
+    std::atomic<StreamId> mCurrentStreamId = 0;
 public:
     virtual bool onNodeEvent(AudioNode& node, uint32_t type, size_t numArg, uintptr_t arg) = 0;
     virtual void onNodeError(AudioNode& node, int error, uintptr_t arg) = 0;
+    StreamId getNewStreamId() {
+        if (++mCurrentStreamId == 0) {
+            mCurrentStreamId = 1;
+        }
+        return mCurrentStreamId;
+    }
 };
 
 class IAudioVolume;
+
+/* This interface is implemented by remotely controlled nodes (like Spotify and DLNA) that can control
+ * the player, as a local interface, to facilitate the exchange of playback state and commands between
+ * the node and the player.
+ */
+struct IPlayerCtrl {
+    virtual void onTrackPlaying(StreamId id, uint32_t pos) = 0;
+};
 
 class AudioNode
 {
@@ -47,10 +64,11 @@ public:
     // of this class
     enum Type: uint8_t {
         kTypeUnknown = 0,
+        kTypeFlagPlayerCtrl = 0x40, // nodes that control the player, such as dlna and spotify
         kTypeHttpIn = 0x80, // convenient for subcategories
         kTypeA2dpIn = 1,
         kTypeI2sIn = 2,
-        kTypeSpotify = 3,
+        kTypeSpotify = kTypeFlagPlayerCtrl | 3,
         kTypeDecoder = 4,
         kTypeEqualizer = 5,
         kTypeI2sOut = 6,
@@ -69,6 +87,7 @@ protected:
 public:
     virtual Type type() const = 0;
     virtual IAudioVolume* volumeInterface() { return nullptr; }
+    virtual IPlayerCtrl* playerCtrl() { return nullptr; }
     virtual ~AudioNode() {}
     virtual void reset() {}
     virtual void streamFormatDetails(StreamFormat fmt) {}

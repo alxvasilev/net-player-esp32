@@ -189,9 +189,9 @@ public:
             return result ? result : 1;
           }
           for(;;) {
-              if (ogg_page_eos(&mOg)) {
-                  return OV_EOF;
-              }
+//              if (ogg_page_eos(&mOg)) {
+//                  return OV_EOF;
+//              }
               // get more data
               int result = ogg_sync_pageout(&mOy, &mOg);
               if (result == 0) {

@@ -159,5 +159,8 @@ public:
         mEvents.setBits(kFlagHasSpace|kFlagIsEmpty|kFlagReadOp);
         assert(mEvents.get() == (kFlagHasSpace|kFlagIsEmpty|kFlagReadOp));
     }
+    EventBits_t events() const {
+        return mEvents.get();
+    }
 };
 #endif // STREAMRINGQUEUE_HPP

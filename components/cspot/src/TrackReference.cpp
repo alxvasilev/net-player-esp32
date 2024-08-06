@@ -3,13 +3,27 @@
 #include "NanoPBExtensions.h"
 #include "Utils.h"
 #include "protobuf/spirc.pb.h"
+#include "TrackQueue.h"
 
 using namespace cspot;
 
 static constexpr auto base62Alphabet =
     "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
+TrackReference::~TrackReference()
+{
+    if (mDetails.get()) {
+        mDetails->mRef = nullptr;
+    }
+}
 TrackReference::TrackReference() : type(Type::TRACK) {}
+bool TrackReference::isLoaded() const {
+    return mDetails.get() && mDetails->state() == TrackItem::State::READY;
+}
+bool TrackReference::isLoadedOrFailed() const {
+    return mDetails.get() && (mDetails->state() == TrackItem::State::READY ||
+           mDetails->state() == TrackItem::State::FAILED);
+}
 
 void TrackReference::decodeURI() {
   if (gid.size() == 0) {
@@ -37,16 +51,16 @@ bool TrackReference::operator==(const TrackReference& other) const {
 bool TrackReference::pbEncodeTrackList(pb_ostream_t* stream,
                                        const pb_field_t* field,
                                        void* const* arg) {
-  auto trackQueue = *static_cast<std::vector<TrackReference>*>(*arg);
+  auto& trackQueue = *static_cast<std::vector<TrackReference>*>(*arg);
   static TrackRef msg = TrackRef_init_zero;
-
+  printf("=========encode tracklist: %zu\n", trackQueue.size());
   // Prepare nanopb callbacks
   msg.context.funcs.encode = &bell::nanopb::encodeString;
   msg.uri.funcs.encode = &bell::nanopb::encodeString;
   msg.gid.funcs.encode = &bell::nanopb::encodeVector;
   msg.queued.funcs.encode = &bell::nanopb::encodeBoolean;
 
-  for (auto trackRef : trackQueue) {
+  for (auto& trackRef : trackQueue) {
     if (!pb_encode_tag_for_field(stream, field)) {
       return false;
     }
@@ -66,12 +80,11 @@ bool TrackReference::pbEncodeTrackList(pb_ostream_t* stream,
 
 bool TrackReference::pbDecodeTrackList(pb_istream_t* stream,
                                        const pb_field_t* field, void** arg) {
-  auto trackQueue = static_cast<std::vector<TrackReference>*>(*arg);
+  auto& trackQueue = *static_cast<std::vector<TrackReference>*>(*arg);
 
   // Push a new reference
-  trackQueue->push_back(TrackReference());
-
-  auto& track = trackQueue->back();
+  trackQueue.push_back(TrackReference());
+  auto& track = trackQueue.back();
 
   bool eof = false;
   pb_wire_type_t wire_type;
