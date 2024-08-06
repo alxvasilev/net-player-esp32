@@ -53,13 +53,8 @@ class MercurySession : public bell::Task, public cspot::Session {
     AUDIO_KEY_FAILURE_RESPONSE = 0x0E,
     COUNTRY_CODE_RESPONSE = 0x1B,
   };
-
-  std::unordered_map<RequestType, std::string> RequestTypeMap = {
-      {RequestType::GET, "GET"},
-      {RequestType::SEND, "SEND"},
-      {RequestType::SUB, "SUB"},
-      {RequestType::UNSUB, "UNSUB"},
-  };
+  static const char* requestTypeToStr(RequestType type);
+  static const char* requestTypeToStr(uint8_t type) { return requestTypeToStr((RequestType)type); }
 
   uint64_t executeSubscription(RequestType type, const std::string& uri,
                                ResponseCallback callback,

@@ -20,9 +20,10 @@
 #include "Utils.h"              // for extract, pack, hton64
 
 using namespace cspot;
+static const char* TAG = "mercury";
 
 MercurySession::MercurySession(const LoginBlob& loginBlob, TimeProvider& aTimeProvider)
-    : bell::Task("mercury_dispatcher", 4 * 1024, 3, 1, false),
+    : bell::Task("cspot-client", 4 * 1024, 3, 1, false),
       Session(loginBlob), mTimeProvider(aTimeProvider)
 {
 }
@@ -40,7 +41,7 @@ void MercurySession::runTask() {
     cspot::Packet packet = {};
     try {
       packet = shanConn->recvPacket();
-      CSPOT_LOG(info, "Received packet, command: %d", packet.command);
+      MERCURY_LOGI("Received command: %s", requestTypeToStr(packet.command));
 
       if (static_cast<RequestType>(packet.command) == RequestType::PING) {
         mTimeProvider.syncWithPingPacket(packet.data);
@@ -170,7 +171,7 @@ void MercurySession::handlePacket(Packet& packet) {
     case RequestType::SEND:
     case RequestType::SUB:
     case RequestType::UNSUB: {
-      CSPOT_LOG(debug, "Received mercury packet");
+      MERCURY_LOGD("Received mercury packet %s", requestTypeToStr(packet.command));
 
       auto response = this->decodeResponse(packet.data);
       if (this->callbacks.count(response.sequenceId) > 0) {
@@ -218,10 +219,10 @@ MercurySession::Response MercurySession::decodeResponse(
   Response response = {};
   response.parts = {};
 
-  auto sequenceLength = ntohs(extract<uint16_t>(data, 0));
+//  auto sequenceLength = ntohs(extract<uint16_t>(data, 0));
   response.sequenceId = hton64(extract<uint64_t>(data, 2));
 
-  auto partsNumber = ntohs(extract<uint16_t>(data, 11));
+//  auto partsNumber = ntohs(extract<uint16_t>(data, 11));
 
   auto headerSize = ntohs(extract<uint16_t>(data, 13));
   auto headerBytes =
@@ -248,11 +249,11 @@ uint64_t MercurySession::executeSubscription(RequestType method,
                                              ResponseCallback subscription,
                                              DataParts& payload) {
   CSPOT_LOG(debug, "Executing Mercury Request, type %s",
-            RequestTypeMap[method].c_str());
+            requestTypeToStr(method));
 
   // Encode header
   pbPutString(uri, tempMercuryHeader.uri);
-  pbPutString(RequestTypeMap[method], tempMercuryHeader.method);
+  pbPutString(requestTypeToStr(method), tempMercuryHeader.method);
 
   tempMercuryHeader.has_method = true;
   tempMercuryHeader.has_uri = true;
@@ -343,4 +344,26 @@ uint32_t MercurySession::requestAudioKey(const std::vector<uint8_t>& trackId,
     // @TODO: Handle disconnect
   }
   return audioKeySequence - 1;
+}
+
+#define ENUM_CASE(name) case RequestType::name: return #name;
+const char* MercurySession::requestTypeToStr(RequestType type)
+{
+    switch(type) {
+        ENUM_CASE(GET);
+        ENUM_CASE(SEND);
+        ENUM_CASE(SUB);
+        ENUM_CASE(UNSUB);
+        ENUM_CASE(SUBRES);
+        ENUM_CASE(PING);
+        ENUM_CASE(PONG_ACK);
+        ENUM_CASE(AUDIO_CHUNK_REQUEST_COMMAND);
+        ENUM_CASE(AUDIO_CHUNK_SUCCESS_RESPONSE);
+        ENUM_CASE(AUDIO_CHUNK_FAILURE_RESPONSE);
+        ENUM_CASE(AUDIO_KEY_REQUEST_COMMAND);
+        ENUM_CASE(AUDIO_KEY_SUCCESS_RESPONSE);
+        ENUM_CASE(AUDIO_KEY_FAILURE_RESPONSE);
+        ENUM_CASE(COUNTRY_CODE_RESPONSE);
+        default: return "(unknown)";
+    }
 }
