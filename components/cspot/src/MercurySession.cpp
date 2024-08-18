@@ -41,7 +41,7 @@ void MercurySession::runTask() {
     cspot::Packet packet = {};
     try {
       packet = shanConn->recvPacket();
-      MERCURY_LOGI("Received command: %s", requestTypeToStr(packet.command));
+      MERCURY_LOGP("Received packet: %s", requestTypeToStr(packet.command));
 
       if (static_cast<RequestType>(packet.command) == RequestType::PING) {
         mTimeProvider.syncWithPingPacket(packet.data);
@@ -53,7 +53,7 @@ void MercurySession::runTask() {
         handlePacket(packet);
       }
     } catch (const std::runtime_error& e) {
-      CSPOT_LOG(error, "Error while receiving packet: %s", e.what());
+      MERCURY_LOGE("Error while receiving packet: %s", e.what());
       failAllPending();
 
       if (!isRunning)
@@ -104,7 +104,7 @@ bool MercurySession::triggerTimeout() {
   auto currentTimestamp = mTimeProvider.getSyncedTimestamp();
 
   if (currentTimestamp - this->lastPingTimestamp > PING_TIMEOUT_MS) {
-    CSPOT_LOG(debug, "Reconnection required, no ping received");
+    MERCURY_LOGD("Reconnection required, no ping received");
     return true;
   }
 
@@ -171,8 +171,6 @@ void MercurySession::handlePacket(Packet& packet) {
     case RequestType::SEND:
     case RequestType::SUB:
     case RequestType::UNSUB: {
-      MERCURY_LOGD("Received mercury packet %s", requestTypeToStr(packet.command));
-
       auto response = this->decodeResponse(packet.data);
       if (this->callbacks.count(response.sequenceId) > 0) {
         auto seqId = response.sequenceId;
@@ -248,8 +246,7 @@ uint64_t MercurySession::executeSubscription(RequestType method,
                                              ResponseCallback callback,
                                              ResponseCallback subscription,
                                              DataParts& payload) {
-  CSPOT_LOG(debug, "Executing Mercury Request, type %s",
-            requestTypeToStr(method));
+  MERCURY_LOGD("Executing Mercury Request, type %s", requestTypeToStr(method));
 
   // Encode header
   pbPutString(uri, tempMercuryHeader.uri);

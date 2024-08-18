@@ -39,6 +39,7 @@ class SpircHandler {
     FLUSH,
     PLAYBACK_START
   };
+  static const char* messageTypeToStr(MessageType type);
   void subscribeToMercury();
   ITrackPlayer& getTrackPlayer() { return mPlayer; }
   void start();
@@ -49,7 +50,7 @@ class SpircHandler {
   void notifyCurrTrackUpdate(int trackIdx);
   void notifyPositionMs(uint32_t position);
   void notifyPausedState(bool paused);
-  void setRemoteVolume(int volume);
+  void notifyVolumeSet(uint16_t volume);
   void loadTrackFromURI(const std::string& uri);
   TrackQueue& getTrackQueue() { return mTrackQueue; }
   void disconnect();

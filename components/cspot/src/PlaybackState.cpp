@@ -139,9 +139,10 @@ void PlaybackState::updatePositionMs(uint32_t position) {
       mCtx.mTimeProvider.getSyncedTimestamp();
 }
 
-void PlaybackState::setVolume(uint32_t volume) {
-  innerFrame.device_state.volume = volume;
-  mCtx.mConfig.volume = volume;
+void PlaybackState::setVolume(uint16_t volume)
+{
+    innerFrame.device_state.volume = volume;
+    mCtx.mConfig.volume = volume;
 }
 
 bool PlaybackState::decodeRemoteFrame(std::vector<uint8_t>& data) {

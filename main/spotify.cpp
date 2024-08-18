@@ -105,10 +105,11 @@ bool SpotifyNode::dispatchCommand(Command &cmd)
     }
     switch(cmd.opcode) {
         case kCmdPlay:
+            clearRingQueue();
             startCurrentTrack(cmd.arg);
             break;
         case kCmdNextTrack:
-            mRingBuf.clear();
+            clearRingQueue();
             startNextTrack((bool)cmd.arg);
             break;
         case kCmdPause:

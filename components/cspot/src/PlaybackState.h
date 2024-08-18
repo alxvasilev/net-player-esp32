@@ -75,7 +75,7 @@ class PlaybackState {
      *
      * @param volume volume between 0 and UINT16 max
      */
-  void setVolume(uint32_t volume);
+  void setVolume(uint16_t volume);
 
   /**
    * @brief Updates local track queue from remote data.

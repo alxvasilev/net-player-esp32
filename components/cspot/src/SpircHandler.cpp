@@ -19,6 +19,7 @@
 #include "protobuf/spirc.pb.h"  // for Frame, State, Frame_fields, MessageTy...
 
 using namespace cspot;
+static const char* TAG = "spirc";
 
 SpircHandler::SpircHandler(const LoginBlob& loginBlob, ITrackPlayer& trackPlayer)
     : mCtx(loginBlob), mPlaybackState(mCtx), mTrackQueue(*this), mPlayer(trackPlayer)
@@ -40,7 +41,7 @@ void SpircHandler::subscribeToMercury() {
       return;
 
     sendCmd(MessageType_kMessageTypeHello);
-    CSPOT_LOG(debug, "Sent kMessageTypeHello!");
+    SPIRC_LOGP("Sent kMessageTypeHello!");
 
     // Assign country code
     mCtx.mConfig.countryCode = mCtx.mSession.getCountryCode();
@@ -60,7 +61,8 @@ void SpircHandler::subscribeToMercury() {
 
 void SpircHandler::loadTrackFromURI(const std::string& uri) {}
 
-void SpircHandler::notifyPositionMs(uint32_t position) {
+void SpircHandler::notifyPositionMs(uint32_t position)
+{
     mPlaybackState.updatePositionMs(position);
     notify();
 }
@@ -75,123 +77,148 @@ void SpircHandler::notifyCurrTrackUpdate(int trackIdx)
     notify();
 }
 void SpircHandler::disconnect() {
-  mTrackQueue.stopTask();
-  mPlayer.stopPlayback();
-  mCtx.mSession.disconnect();
+    mTrackQueue.stopTask();
+    mPlayer.stopPlayback();
+    mCtx.mSession.disconnect();
 }
-
-void SpircHandler::handleFrame(std::vector<uint8_t>& data) {
+void SpircHandler::handleFrame(std::vector<uint8_t>& data)
+{
   // Decode received spirc frame
   mPlaybackState.decodeRemoteFrame(data);
+  auto typ = mPlaybackState.remoteFrame.typ;
+  SPIRC_LOGP("Received message %s", messageTypeToStr(typ));
 
-  switch (mPlaybackState.remoteFrame.typ) {
+  switch (typ) {
     case MessageType_kMessageTypeNotify: {
-      CSPOT_LOG(debug, "Notify frame");
-
       // Pause the playback if another player took control
       if (mPlaybackState.isActive() && mPlaybackState.remoteFrame.device_state.is_active) {
-        CSPOT_LOG(debug, "Another player took control, pausing playback");
-        mPlaybackState.setActive(false);
+        SPIRC_LOGW("Another player took control, pausing playback");
         mPlayer.stopPlayback();
+        mPlaybackState.setActive(false);
       }
       break;
     }
     case MessageType_kMessageTypeSeek: {
-          auto pos = mPlaybackState.remoteFrame.position;
-      mPlayer.seekMs(pos);
-      notify();
-      break;
+        auto pos = mPlaybackState.remoteFrame.position;
+        mPlayer.seekMs(pos);
+        notify();
+        break;
     }
-    case MessageType_kMessageTypeVolume:
-      mPlaybackState.setVolume(mPlaybackState.remoteFrame.volume);
-      notify();
-      mPlayer.setVolume((int)mPlaybackState.remoteFrame.volume);
-      break;
+    case MessageType_kMessageTypeVolume: {
+        auto vol = mPlaybackState.remoteFrame.volume;
+        // volume is encoded in 64 steps of 1024 each - max value is 65536
+        SPIRC_LOGI("Requested volume: %d", vol);
+        mPlayer.setVolume((((vol + 512) >> 10) * 100) / 64);
+        break;
+    }
     case MessageType_kMessageTypePause:
-      setPause(true);
-      break;
+        setPause(true);
+        break;
     case MessageType_kMessageTypePlay:
-      setPause(false);
-      break;
+        setPause(false);
+        break;
     case MessageType_kMessageTypeNext:
-      mPlayer.nextTrack(true);
-      break;
+        mPlayer.nextTrack(true);
+        break;
     case MessageType_kMessageTypePrev:
-      mPlayer.nextTrack(false);
-      break;
+        mPlayer.nextTrack(false);
+        break;
     case MessageType_kMessageTypeLoad: {
-      CSPOT_LOG(info, "New play queue of %d tracks", mPlaybackState.remoteTracks.size());
-      if (mPlaybackState.remoteTracks.size() == 0) {
-        CSPOT_LOG(debug, "No tracks in frame, stopping playback");
+        SPIRC_LOGI("New play queue of %d tracks", mPlaybackState.remoteTracks.size());
+        if (mPlaybackState.remoteTracks.size() == 0) {
+            SPIRC_LOGI("No tracks in frame, stopping playback");
+            break;
+        }
+        mPlaybackState.setActive(true);
+        mPlaybackState.updatePositionMs(mPlaybackState.remoteFrame.position);
+        mPlaybackState.setPlaybackState(PlaybackState::State::Playing);
+        mPlaybackState.syncWithRemote();
+        // Update track list in case we have a new one
+        mTrackQueue.updateTracks();
+        //    this->notify();
+        // Stop the current track, if any
+        mPlayer.play(mPlaybackState.remoteFrame.state.position_ms);
         break;
       }
-      mPlaybackState.setActive(true);
-      mPlaybackState.updatePositionMs(mPlaybackState.remoteFrame.position);
-      mPlaybackState.setPlaybackState(PlaybackState::State::Playing);
-      mPlaybackState.syncWithRemote();
-      // Update track list in case we have a new one
-      mTrackQueue.updateTracks();
-//    this->notify();
-      // Stop the current track, if any
-      mPlayer.play(mPlaybackState.remoteFrame.state.position_ms);
-      break;
-    }
     case MessageType_kMessageTypeReplace: {
-      CSPOT_LOG(debug, "Play queue replace with %d tracks", mPlaybackState.remoteTracks.size());
-      mPlaybackState.syncWithRemote();
-      // 1st track is the current one, but update the position
-      mTrackQueue.updateTracks(false);
-      notify();
-      // need to re-load all if streaming track is completed
-      mPlayer.play(mPlaybackState.remoteFrame.state.position_ms +
+        SPIRC_LOGI("Play queue replace with %d tracks", mPlaybackState.remoteTracks.size());
+        mPlaybackState.syncWithRemote();
+        // 1st track is the current one, but update the position
+        mTrackQueue.updateTracks(false);
+        notify();
+        // need to re-load all if streaming track is completed
+        mPlayer.play(mPlaybackState.remoteFrame.state.position_ms +
           mCtx.mTimeProvider.getSyncedTimestamp() - mPlaybackState.innerFrame.state.position_measured_at);
-      break;
+        break;
     }
     case MessageType_kMessageTypeShuffle: {
-      CSPOT_LOG(debug, "Got shuffle frame");
-      notify();
-      break;
+        notify();
+        break;
     }
     case MessageType_kMessageTypeRepeat: {
-      CSPOT_LOG(debug, "Got repeat frame");
-      notify();
-      break;
+        notify();
+        break;
     }
     default:
-      break;
-  }
+        break;
+    }
 }
-
-void SpircHandler::setRemoteVolume(int volume) {
-  mPlaybackState.setVolume(volume);
-  notify();
+void SpircHandler::notifyVolumeSet(uint16_t volume)
+{
+    mPlaybackState.setVolume(volume);
+    notify();
 }
-
-void SpircHandler::notify() {
-  sendCmd(MessageType_kMessageTypeNotify);
+void SpircHandler::notify()
+{
+    sendCmd(MessageType_kMessageTypeNotify);
 }
-
 void SpircHandler::sendCmd(MessageType typ) {
-  // Serialize current player state
-  auto encodedFrame = mPlaybackState.encodeCurrentFrame(typ);
+    // Serialize current player state
+    auto encodedFrame = mPlaybackState.encodeCurrentFrame(typ);
+    auto responseLambda = [=](MercurySession::Response& res) {};
+    auto parts = MercurySession::DataParts({encodedFrame});
 
-  auto responseLambda = [=](MercurySession::Response& res) {
-  };
-  auto parts = MercurySession::DataParts({encodedFrame});
-  mCtx.mSession.execute(MercurySession::RequestType::SEND,
-                        "hm://remote/user/" + mCtx.mConfig.username + "/",
-                        responseLambda, parts);
+    mCtx.mSession.execute(MercurySession::RequestType::SEND,
+      "hm://remote/user/" + mCtx.mConfig.username + "/", responseLambda, parts);
+    SPIRC_LOGP("Sent message %s", messageTypeToStr(typ));
 }
 
 void SpircHandler::setPause(bool isPaused) {
-  if (isPaused) {
-    CSPOT_LOG(debug, "External pause command");
-    mPlaybackState.setPlaybackState(PlaybackState::State::Paused);
-  }
-  else {
-    CSPOT_LOG(debug, "External play command");
-    mPlaybackState.setPlaybackState(PlaybackState::State::Playing);
-  }
-  notify();
-  mPlayer.pause(isPaused);
+    if (isPaused) {
+        SPIRC_LOGI("External pause command");
+        mPlaybackState.setPlaybackState(PlaybackState::State::Paused);
+    }
+    else {
+        SPIRC_LOGI("External play command");
+        mPlaybackState.setPlaybackState(PlaybackState::State::Playing);
+    }
+    notify();
+    mPlayer.pause(isPaused);
+}
+#define ENUM_CASE(type) case MessageType_kMessageType##type: return #type;
+
+const char* SpircHandler::messageTypeToStr(MessageType type)
+{
+    switch(type) {
+        ENUM_CASE(Hello);
+        ENUM_CASE(Goodbye);
+        ENUM_CASE(Probe);
+        ENUM_CASE(Notify);
+        ENUM_CASE(Load);
+        ENUM_CASE(Play);
+        ENUM_CASE(Pause);
+        ENUM_CASE(PlayPause);
+        ENUM_CASE(Seek);
+        ENUM_CASE(Prev);
+        ENUM_CASE(Next);
+        ENUM_CASE(Volume);
+        ENUM_CASE(Shuffle);
+        ENUM_CASE(Repeat);
+        ENUM_CASE(VolumeDown);
+        ENUM_CASE(VolumeUp);
+        ENUM_CASE(Replace);
+        ENUM_CASE(Logout);
+        ENUM_CASE(Action);
+        default: return "(unknown)";
+    }
 }
