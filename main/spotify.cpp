@@ -260,7 +260,10 @@ bool SpotifyNode::recv()
     bool isStart = (mRecvPos == 0);
     auto toRecv = std::min(mFileSize - mRecvPos, (int)kRecvSize);
     if (toRecv <= 0) {
-        assert(toRecv == 0);
+        if (toRecv < 0) {
+            ESP_LOGE(TAG, "toRecv < 0: toRecv=%d", toRecv);
+            assert(toRecv == 0);
+        }
         ESP_LOGI(TAG, "recv: Track download finished");
         mRingBuf.pushBack(new StreamEndEvent(mInStreamId));
         mHttp.close();
