@@ -104,8 +104,8 @@ A2dpInputNode::A2dpInputNode(IAudioPipeline& parent, const char* btName)
         abort();
     }
     gSelf = this;
-    if (!BluetoothStack::instance()) {
-        BluetoothStack::start(ESP_BT_MODE_CLASSIC_BT, btName);
+    if (!BtStack.started()) {
+        BtStack.start(ESP_BT_MODE_CLASSIC_BT, btName);
     }
 }
 
@@ -115,7 +115,7 @@ bool A2dpInputNode::doRun()
     esp_a2d_sink_register_data_callback(dataCallback);
     esp_a2d_sink_init();
     /* set discoverable and connectable mode, wait to be connected */
-    BluetoothStack::becomeDiscoverableAndConnectable();
+    BtStack.becomeDiscoverableAndConnectable();
     setState(kStateRunning);
     return true;
 }
