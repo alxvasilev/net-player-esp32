@@ -1,0 +1,105 @@
+diff --git a/components/driver/i2s.c b/components/driver/i2s.c
+index 224967474e..2426b302fb 100644
+--- a/components/driver/i2s.c
++++ b/components/driver/i2s.c
+@@ -70,6 +70,8 @@ typedef struct {
+     volatile int rw_pos;
+     volatile void *curr_ptr;
+     SemaphoreHandle_t mux;
++    void* queue_mem;
++    StaticQueue_t queue_obj;
+     xQueueHandle queue;
+     lldesc_t **desc;
+ } i2s_dma_t;
+@@ -822,6 +824,7 @@ static esp_err_t i2s_destroy_dma_object(i2s_port_t i2s_num, i2s_dma_t **dma)
+     vSemaphoreDelete((*dma)->mux);
+     /* Delete DMA queue */
+     vQueueDelete((*dma)->queue);
++    free((*dma)->queue_mem);
+     /* Free DMA structure */
+     free(*dma);
+     *dma = NULL;
+@@ -848,7 +851,7 @@ static esp_err_t i2s_create_dma_object(i2s_port_t i2s_num, i2s_dma_t **dma)
+     ESP_RETURN_ON_FALSE((*dma == NULL), ESP_ERR_INVALID_ARG, TAG, "DMA object has been created");
+     uint32_t buf_cnt = p_i2s[i2s_num]->dma_buf_count;
+     /* Allocate new DMA structure */
+-    *dma = (i2s_dma_t *) malloc(sizeof(i2s_dma_t));
++    *dma = (i2s_dma_t *) heap_caps_malloc(sizeof(i2s_dma_t), (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+     ESP_RETURN_ON_FALSE(*dma, ESP_ERR_NO_MEM, TAG, "DMA object allocate failed");
+     /* Allocate DMA buffer poiter */
+     (*dma)->buf = (char **)heap_caps_calloc(buf_cnt, sizeof(char *), MALLOC_CAP_DMA);
+@@ -861,7 +864,8 @@ static esp_err_t i2s_create_dma_object(i2s_port_t i2s_num, i2s_dma_t **dma)
+         goto err;
+     }
+     /* Create queue and mutex */
+-    (*dma)->queue = xQueueCreate(buf_cnt - 1, sizeof(char *));
++    void* queue_mem = (*dma)->queue_mem = heap_caps_malloc((buf_cnt - 1) * sizeof(char *), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
++    (*dma)->queue = xQueueCreateStatic(buf_cnt - 1, sizeof(char *), (uint8_t*)queue_mem, &(*dma)->queue_obj);
+     if (!(*dma)->queue) {
+         goto err;
+     }
+@@ -1961,7 +1965,7 @@ esp_err_t i2s_driver_install(i2s_port_t i2s_num, const i2s_config_t *i2s_config,
+     ESP_RETURN_ON_FALSE((i2s_config->dma_buf_len >= 8 && i2s_config->dma_buf_len <= 1024), ESP_ERR_INVALID_ARG, TAG, "I2S buffer length at most 1024 and more than 8");
+
+     /* Step 2: Allocate driver object and register to platform */
+-    i2s_obj_t *pre_alloc_i2s_obj = calloc(1, sizeof(i2s_obj_t));
++    i2s_obj_t *pre_alloc_i2s_obj = heap_caps_calloc(1, sizeof(i2s_obj_t), (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+     ESP_RETURN_ON_FALSE(pre_alloc_i2s_obj, ESP_ERR_NO_MEM, TAG, "no mem for I2S driver");
+     ret = i2s_priv_register_object(pre_alloc_i2s_obj, i2s_num);
+     if (ret != ESP_OK) {
+diff --git a/components/esp_system/ld/esp32/memory.ld.in b/components/esp_system/ld/esp32/memory.ld.in
+index 04a8f4a868..556b9c8842 100644
+--- a/components/esp_system/ld/esp32/memory.ld.in
++++ b/components/esp_system/ld/esp32/memory.ld.in
+@@ -53,7 +53,7 @@ MEMORY
+   are connected to the data port of the CPU and eg allow bytewise access. */
+
+   /* IRAM for PRO cpu. Not sure if happy with this, this is MMU area... */
+-  iram0_0_seg (RX) :                 org = 0x40080000, len = 0x20000
++  iram0_0_seg (RX) :                 org = 0x40080000, len = 0x21000
+
+ #ifdef CONFIG_APP_BUILD_USE_FLASH_SECTIONS
+   /* Even though the segment name is iram, it is actually mapped to flash
+diff --git a/components/heap/port/esp32/memory_layout.c b/components/heap/port/esp32/memory_layout.c
+index fdcc89dff5..19a7b0bcec 100644
+--- a/components/heap/port/esp32/memory_layout.c
++++ b/components/heap/port/esp32/memory_layout.c
+@@ -108,7 +108,7 @@ const soc_memory_region_t soc_memory_regions[] = {
+     { 0x3FFE8000, 0x8000, 1, 0x400B0000}, //pool 8 <- can be remapped to ROM, used for MAC dump
+     { 0x3FFF0000, 0x8000, 1, 0x400A8000}, //pool 7 <- can be used for MAC dump
+     { 0x3FFF8000, 0x4000, 1, 0x400A4000}, //pool 6 blk 1 <- can be used as trace memory
+-    { 0x3FFFC000, 0x4000, 1, 0x400A0000}, //pool 6 blk 0 <- can be used as trace memory
++    { 0x3FFFC000, 0x3000, 1, 0x400A1000}, //pool 6 blk 0 <- can be used as trace memory
+     { 0x40070000, 0x8000, 2, 0}, //pool 0
+     { 0x40078000, 0x8000, 2, 0}, //pool 1
+     { 0x40080000, 0x2000, 2, 0}, //pool 2-5, mmu page 0
+@@ -127,6 +127,7 @@ const soc_memory_region_t soc_memory_regions[] = {
+     { 0x4009A000, 0x2000, 2, 0}, //pool 2-5, mmu page 13
+     { 0x4009C000, 0x2000, 2, 0}, //pool 2-5, mmu page 14
+     { 0x4009E000, 0x2000, 2, 0}, //pool 2-5, mmu page 15
++    { 0x400A0000, 0x1000, 2, 0}, //my: extra IRAM
+ #ifdef CONFIG_ESP_SYSTEM_ALLOW_RTC_FAST_MEM_AS_HEAP
+     { SOC_RTC_DRAM_LOW, 0x2000, 16, 0}, //RTC Fast Memory
+ #endif
+diff --git a/components/soc/esp32/include/soc/soc.h b/components/soc/esp32/include/soc/soc.h
+index f9e3e87593..67bc18b8fe 100644
+--- a/components/soc/esp32/include/soc/soc.h
++++ b/components/soc/esp32/include/soc/soc.h
+@@ -243,7 +243,7 @@
+ #define SOC_CACHE_APP_LOW       0x40078000
+ #define SOC_CACHE_APP_HIGH      0x40080000
+ #define SOC_IRAM_LOW            0x40080000
+-#define SOC_IRAM_HIGH           0x400A0000
++#define SOC_IRAM_HIGH           0x400A1000
+ #define SOC_RTC_IRAM_LOW        0x400C0000
+ #define SOC_RTC_IRAM_HIGH       0x400C2000
+ #define SOC_RTC_DRAM_LOW        0x3FF80000
+@@ -256,7 +256,7 @@
+ #define SOC_EXTRAM_DATA_SIZE (SOC_EXTRAM_DATA_HIGH - SOC_EXTRAM_DATA_LOW)
+
+ //First and last words of the D/IRAM region, for both the DRAM address as well as the IRAM alias.
+-#define SOC_DIRAM_IRAM_LOW    0x400A0000
++#define SOC_DIRAM_IRAM_LOW    0x400A1000
+ #define SOC_DIRAM_IRAM_HIGH   0x400C0000
+ #define SOC_DIRAM_DRAM_LOW    0x3FFE0000
+ #define SOC_DIRAM_DRAM_HIGH   0x40000000

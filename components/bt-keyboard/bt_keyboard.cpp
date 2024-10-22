@@ -198,14 +198,15 @@ bool BTKeyboard::setup(pid_handler * handler)
     return false;
   }
 
+#ifdef CONFIG_BT_BLE_ENABLED
   // BLE GAP
   esp_err_t ret;
   if ((ret = esp_ble_gap_register_callback(ble_gap_event_handler))) {
     ESP_LOGE(TAG, "esp_ble_gap_register_callback failed: %d", ret);
     return false;
   }
-
   ESP_ERROR_CHECK(esp_ble_gattc_register_callback(esp_hidh_gattc_event_handler));
+#endif // BLE
   esp_hidh_config_t config = {
     .callback = hidh_callback,
     .event_stack_size = 4*1024, // Required with ESP-IDF 4.4
@@ -222,8 +223,8 @@ bool BTKeyboard::setup(pid_handler * handler)
   return true;
 }
 
-void
-BTKeyboard::handle_ble_device_result(esp_ble_gap_cb_param_t * param)
+#ifdef CONFIG_BT_BLE_ENABLED
+void BTKeyboard::handle_ble_device_result(esp_ble_gap_cb_param_t * param)
 {
   uint16_t uuid       = 0;
   uint16_t appearance = 0;
@@ -396,6 +397,8 @@ esp_err_t BTKeyboard::start_ble_scan(int seconds)
   }
   return ret;
 }
+#endif
+
 bool BTKeyboard::openBtHidDevice(const uint8_t* addr, int bleAddrType)
 {
     if (mHidDevice) {

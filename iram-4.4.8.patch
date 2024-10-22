@@ -1,0 +1,56 @@
+diff --git a/components/esp_system/ld/esp32/memory.ld.in b/components/esp_system/ld/esp32/memory.ld.in
+index 04a8f4a868..556b9c8842 100644
+--- a/components/esp_system/ld/esp32/memory.ld.in
++++ b/components/esp_system/ld/esp32/memory.ld.in
+@@ -53,7 +53,7 @@ MEMORY
+   are connected to the data port of the CPU and eg allow bytewise access. */
+
+   /* IRAM for PRO cpu. Not sure if happy with this, this is MMU area... */
+-  iram0_0_seg (RX) :                 org = 0x40080000, len = 0x20000
++  iram0_0_seg (RX) :                 org = 0x40080000, len = 0x22000
+
+ #ifdef CONFIG_APP_BUILD_USE_FLASH_SECTIONS
+   /* Even though the segment name is iram, it is actually mapped to flash
+diff --git a/components/heap/port/esp32/memory_layout.c b/components/heap/port/esp32/memory_layout.c
+index fdcc89dff5..19a7b0bcec 100644
+--- a/components/heap/port/esp32/memory_layout.c
++++ b/components/heap/port/esp32/memory_layout.c
+@@ -108,7 +108,7 @@ const soc_memory_region_t soc_memory_regions[] = {
+     { 0x3FFE8000, 0x8000, 1, 0x400B0000}, //pool 8 <- can be remapped to ROM, used for MAC dump
+     { 0x3FFF0000, 0x8000, 1, 0x400A8000}, //pool 7 <- can be used for MAC dump
+     { 0x3FFF8000, 0x4000, 1, 0x400A4000}, //pool 6 blk 1 <- can be used as trace memory
+-    { 0x3FFFC000, 0x4000, 1, 0x400A0000}, //pool 6 blk 0 <- can be used as trace memory
++    { 0x3FFFC000, 0x2000, 1, 0x400A2000}, //pool 6 blk 0 <- can be used as trace memory
+     { 0x40070000, 0x8000, 2, 0}, //pool 0
+     { 0x40078000, 0x8000, 2, 0}, //pool 1
+     { 0x40080000, 0x2000, 2, 0}, //pool 2-5, mmu page 0
+@@ -127,6 +127,7 @@ const soc_memory_region_t soc_memory_regions[] = {
+     { 0x4009A000, 0x2000, 2, 0}, //pool 2-5, mmu page 13
+     { 0x4009C000, 0x2000, 2, 0}, //pool 2-5, mmu page 14
+     { 0x4009E000, 0x2000, 2, 0}, //pool 2-5, mmu page 15
++    { 0x400A0000, 0x2000, 2, 0}, //my: extra IRAM
+ #ifdef CONFIG_ESP_SYSTEM_ALLOW_RTC_FAST_MEM_AS_HEAP
+     { SOC_RTC_DRAM_LOW, 0x2000, 16, 0}, //RTC Fast Memory
+ #endif
+diff --git a/components/soc/esp32/include/soc/soc.h b/components/soc/esp32/include/soc/soc.h
+index f9e3e87593..67bc18b8fe 100644
+--- a/components/soc/esp32/include/soc/soc.h
++++ b/components/soc/esp32/include/soc/soc.h
+@@ -243,7 +243,7 @@
+ #define SOC_CACHE_APP_LOW       0x40078000
+ #define SOC_CACHE_APP_HIGH      0x40080000
+ #define SOC_IRAM_LOW            0x40080000
+-#define SOC_IRAM_HIGH           0x400A0000
++#define SOC_IRAM_HIGH           0x400A2000
+ #define SOC_RTC_IRAM_LOW        0x400C0000
+ #define SOC_RTC_IRAM_HIGH       0x400C2000
+ #define SOC_RTC_DRAM_LOW        0x3FF80000
+@@ -256,7 +256,7 @@
+ #define SOC_EXTRAM_DATA_SIZE (SOC_EXTRAM_DATA_HIGH - SOC_EXTRAM_DATA_LOW)
+
+ //First and last words of the D/IRAM region, for both the DRAM address as well as the IRAM alias.
+-#define SOC_DIRAM_IRAM_LOW    0x400A0000
++#define SOC_DIRAM_IRAM_LOW    0x400A2000
+ #define SOC_DIRAM_IRAM_HIGH   0x400C0000
+ #define SOC_DIRAM_DRAM_LOW    0x3FFE0000
+ #define SOC_DIRAM_DRAM_HIGH   0x40000000

@@ -190,14 +190,12 @@ extern "C" void app_main(void)
     lcd.puts("Mounting NVS...\n");
     /* Initialize NVS — it is used to store PHY calibration data */
     nvsSimple.init("aplayer", true);
-/*
-    lcd.puts("Disabling BLE...\n");
+
     auto before = xPortGetFreeHeapSize();
-    BluetoothStack::disableBLE();
+    BtStack.disableBLE();
     ESP_LOGW(TAG, "Releasing BLE Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
-*/
     lcd.puts("Starting Bluetooth...\n");
-    BtStack.start(ESP_BT_MODE_BTDM, "netplayer");
+    BtStack.start(ESP_BT_MODE_CLASSIC_BT, "netplayer");
     lcd.puts("Mounting SPIFFS...\n");
     mountSpiffs();
     connectToWifi(!gpio_get_level(kPinButton));
@@ -208,8 +206,8 @@ extern "C" void app_main(void)
         lcd.puts("Waiting dev http request\n");
         msSleep(1000);
 #endif
-//    lcd.puts("Starting bluetooth keyboard...\n");
-//    startBtKeyaboard();
+    lcd.puts("Starting bluetooth keyboard...\n");
+    startBtKeyaboard();
 //===
     lcd.puts("Mounting SDCard...\n");
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };

@@ -265,7 +265,7 @@ const char* connectToWiFi()
     auto ySave = lcd.cursorY;
     lcd.puts("Connecting to WiFi...\n");
     wifi.reset(new WifiClient);
-    static_cast<WifiClient*>(wifi.get())->start(ssid.ptr(), pass.ptr());
+    static_cast<WifiClient*>(wifi.get())->start(ssid.get(), pass.get());
     bool success = wifi->waitForConnect(20000);
     lcd.clear(0, ySave, lcd.width(), lcd.fontHeight());
     lcd.gotoXY(0, ySave);
@@ -320,7 +320,7 @@ extern "C" void app_main(void)
         static_cast<WifiAp*>(wifi.get())->start("netplayer", "alexisthebest", 1);
         lcd.puts("ssid: netplayer, key: alexisthebest\n");
     }
-    const char* mDnsDomain = nvs.handle() ? nvs.getString("mdnsDomain").ptr() : nullptr;
+    const char* mDnsDomain = nvs.handle() ? nvs.getString("mdnsDomain").get() : nullptr;
     if (!mDnsDomain) {
         mDnsDomain = kDefaultMdnsDomain;
     }
