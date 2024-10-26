@@ -24,7 +24,7 @@
 #include "rtcSharedMem.hpp"
 
 static constexpr ST7735Display::PinCfg lcdPins = {
-    {
+    .spi = {
         .clk = GPIO_NUM_18,
         .mosi = GPIO_NUM_23,
         .cs = GPIO_NUM_5,
@@ -120,7 +120,7 @@ esp_err_t openAndEraseOtaPartition(esp_ota_handle_t& otaHandle, size_t imgSize)
         ESP_LOGE(TAG, "esp_ota_begin returned error %s, aborting OTA", esp_err_to_name(err));
         return err;
     }
-    ESP_LOGW(TAG, "Erased partition '%s' size %d KB, at offset 0x%x",
+    ESP_LOGW(TAG, "Erased partition '%s' size %ld KB, at offset 0x%lx",
         partition->label, partition->size / 1024, partition->address);
     ESP_LOGW(TAG, "Erase took %.1f seconds", (float)timer.usElapsed() / 1000000);
     return ESP_OK;
@@ -285,7 +285,7 @@ bool checkHandleRebootFlags()
         ESP_LOGI(TAG, "RTC flags: no flags found");
         return false;
     }
-    ESP_LOGW(TAG, "Detected application-sent flags: 0x%X", flags);
+    ESP_LOGW(TAG, "Detected application-sent flags: 0x%lx", flags);
     if (flags & kRecoveryFlagEraseImmediately) {
         auto err = openAndEraseOtaPartition(gOtaPreparedHandle, OTA_SIZE_UNKNOWN);
         gOtaPreparedHandleValid = (err == ESP_OK);

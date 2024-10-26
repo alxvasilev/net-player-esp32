@@ -24,7 +24,7 @@
 #include "registry.h"
 #include "codebook.h"
 #include "misc.h"
-#include "os.h"
+#include "tremor_os.h"
 #include "block.h"
 
 typedef struct {

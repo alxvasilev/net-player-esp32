@@ -107,7 +107,7 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data)
     case MessageType_kMessageTypeVolume: {
         auto vol = mPlaybackState.remoteFrame.volume;
         // volume is encoded in 64 steps of 1024 each - max value is 65536
-        SPIRC_LOGI("Requested volume: %d", vol);
+        SPIRC_LOGI("Requested volume: %lu", vol);
         mPlayer.setVolume((((vol + 512) >> 10) * 100) / 64);
         break;
     }

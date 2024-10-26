@@ -47,7 +47,7 @@ struct Codec {
     uint8_t asNumCode() const { return numCode; }
     void fromNumCode(uint8_t val) { numCode = val; }
     static const char* numCodeToStr(uint8_t aNumCode) {
-        Codec inst = { .numCode = aNumCode }; return inst.toString();
+        Codec inst(aNumCode); return inst.toString();
     }
     void clear() { numCode = 0; }
 };

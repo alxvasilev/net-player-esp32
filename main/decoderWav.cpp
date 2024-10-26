@@ -237,7 +237,7 @@ int32_t transformSample<int32_t, 32, false>(uint8_t* sample)
     return *(int32_t*)sample;
 }
 
-template <typename T, int Bps, bool BigEndian=false>
+template <typename T, int Bps, bool BigEndian>
 bool DecoderWav::outputWithNewPacket(char* input, int len)
 {
     enum { kInBytesPerChannel = Bps / 8 };

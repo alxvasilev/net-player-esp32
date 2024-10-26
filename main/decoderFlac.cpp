@@ -104,7 +104,7 @@ StreamEvent DecoderFlac::decode(AudioNode::PacketResult& dpr)
     return kNoError;
 }
 
-template <typename T, int Shift = 0>
+template <typename T, int Shift>
 bool DecoderFlac::outputStereoSamples(int nSamples, const FLAC__int32* const channels[])
 {
     auto ch0 = channels[0];
@@ -137,7 +137,7 @@ bool DecoderFlac::outputStereoSamples(int nSamples, const FLAC__int32* const cha
     }
     return true;
 }
-template <typename T, int Shift=0>
+template <typename T, int Shift>
 bool DecoderFlac::outputMonoSamples(int nSamples, const FLAC__int32* const samples[])
 {
     if (nSamples & 1) {
@@ -186,7 +186,7 @@ FLAC__StreamDecoderWriteStatus DecoderFlac::writeCb(const FLAC__StreamDecoder *d
     fmt.setBitsPerSample(bps);
     fmt.setSampleRate(header.sample_rate);
     if (fmt != oldFmt) {
-        ESP_LOGI(TAG, "Output format is %d-bit, %.1fkHz %s", bps, (float)fmt.sampleRate() / 1000, (nChans == 2) ? "stereo" : "mono");
+        ESP_LOGI(TAG, "Output format is %lu-bit, %.1fkHz %s", bps, (float)fmt.sampleRate() / 1000, (nChans == 2) ? "stereo" : "mono");
         if (!self.selectOutputFunc(nChans, bps)) {
             return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
         }

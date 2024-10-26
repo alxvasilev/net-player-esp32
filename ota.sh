@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
-source ./esp-host.sh
+
+source `dirname "$0"`/esp-host.sh
 RETRY="--retry 20 --retry-connrefused --connect-timeout 1 --retry-delay 0"
 
 ISRECOVERY=`curl -s -S $RETRY -o /dev/null -w "%{http_code}" http://${ESP_HOST}:80/isrecovery`
@@ -13,7 +14,7 @@ if [ "$ISRECOVERY" != "200" ]; then
 	curl -s -S $RETRY "$RECOVERY_URL"
     echo
     if [ "$1" == "make" ]; then
-        make -j
+        ninja
     else
         echo "Waiting target to reconnect..."
         sleep 3
@@ -21,13 +22,25 @@ if [ "$ISRECOVERY" != "200" ]; then
 else
     # already in recovery
     if [ "$1" == "make" ]; then
-        make -j
+        ninja
     fi
     echo "Target is already in recovery mode, not rebooting"
 fi
 
-echo "Erasing flash and sending image..."
-curl $RETRY -i -X POST ${ESP_HOST}:80/ota -H "Content-Type: application/octet-stream"   --data-binary "@build/netplayer.bin" --progress-bar > /dev/null
+ELF_FILE=$(ls ./*.elf)
+if [ -z "$ELF_FILE" ]; then
+    echo "No .elf file present in current directory"
+    exit 1
+fi
+BIN_FILE="$(basename -s .elf $ELF_FILE).bin"
+echo binfile=$BIN_FILE
+if [ ! -f "$BIN_FILE" ]; then
+    echo "No .bin file present in current directory"
+    exit 1
+fi
+
+echo "Erasing flash and sending image $BIN_FILE ($((`stat --printf="%s" $BIN_FILE` / 1024))KB)..."
+curl $RETRY -i -X POST ${ESP_HOST}:80/ota -H "Content-Type: application/octet-stream"   --data-binary "@$BIN_FILE" --progress-bar > /dev/null
 
 if [ "$?" -eq 0 ]; then
     echo Success, reboting....

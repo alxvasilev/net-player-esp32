@@ -25,7 +25,7 @@
 #include "ivorbiscodec.h"
 #include "ivorbisfile.h"
 
-#include "os.h"
+#include "tremor_os.h"
 #include "misc.h"
 
 /* A 'chained bitstream' is a Vorbis bitstream that contains more than

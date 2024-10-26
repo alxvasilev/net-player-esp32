@@ -24,6 +24,7 @@ class HttpNode: public AudioNodeWithTask
 {
 public:
     class UrlInfo;
+    mutable Mutex mMutex;
 protected:
     enum {
         kHttpRecvTimeoutMs = 10000, kHttpClientBufSize = 512, kRingQueueLen = 256, kStackSize = 5120
@@ -70,7 +71,6 @@ protected:
     void recordingStop();
     void recordingCancelCurrent();
 public:
-    mutable Mutex mMutex;
     IcyInfo& icyInfo() { return mIcyParser; }
     HttpNode(IAudioPipeline& parent);
     virtual ~HttpNode();

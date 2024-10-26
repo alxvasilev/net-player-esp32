@@ -33,7 +33,7 @@ bool DecoderNode::createDecoder(StreamFormat fmt)
     default:
         return false;
     }
-    ESP_LOGI(mTag, "\e[34mCreated %s decoder, approx %d bytes of RAM consumed (%d free internal)",
+    ESP_LOGI(mTag, "\e[34mCreated %s decoder, approx %ld bytes of RAM consumed (%zu free internal)",
         fmt.codec().toString(), freeBefore - heapFreeTotal(), heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     plSendEvent(kEventCodecChange, fmt.codec().asNumCode());
     return true;
@@ -47,7 +47,7 @@ void DecoderNode::deleteDecoder()
     auto freeBefore = heapFreeTotal();
     delete mDecoder;
     mDecoder = nullptr;
-    ESP_LOGI(mTag, "\e[34mDeleted %s decoder freed %d bytes",
+    ESP_LOGI(mTag, "\e[34mDeleted %s decoder freed %ld bytes",
         Codec::numCodeToStr(codec), heapFreeTotal() - freeBefore);
 }
 StreamEvent DecoderNode::detectCodecCreateDecoder(NewStreamEvent& startPkt)

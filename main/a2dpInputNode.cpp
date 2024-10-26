@@ -18,10 +18,9 @@ A2dpInputNode* A2dpInputNode::gSelf = nullptr;
 static const char* audioStateToStr(esp_a2d_audio_state_t state)
 {
     switch(state) {
-    case ESP_A2D_AUDIO_STATE_REMOTE_SUSPEND: return "suspended";
-    case ESP_A2D_AUDIO_STATE_STOPPED: return "stopped";
-    case ESP_A2D_AUDIO_STATE_STARTED: return "started";
-    default: return "(unknown)";
+        case ESP_A2D_AUDIO_STATE_SUSPEND: return "stopped";
+        case ESP_A2D_AUDIO_STATE_STARTED: return "started";
+        default: return "(unknown)";
     }
 }
 

@@ -7,6 +7,8 @@
 #include <nvs_flash.h>
 #include <esp_log.h>
 #include <esp_system.h>
+#include <esp_chip_info.h>
+#include <esp_flash.h>
 #include <esp_ota_ops.h>
 #include <esp_http_server.h>
 #include <esp_spiffs.h>
@@ -28,14 +30,14 @@
 #include <new>
 #include "../recovery/main/rtcSharedMem.hpp"
 #include "audioPlayer.hpp"
-#include "bt_keyboard.hpp"
+//#include "bt_keyboard.hpp"
 
 #define DEV_MODE 1
 
 static constexpr gpio_num_t kPinButton = GPIO_NUM_27;
 static constexpr gpio_num_t kPinLed = GPIO_NUM_2;
 static constexpr St7735Driver::PinCfg lcdPins = {
-    {
+    .spi = {
         .clk = GPIO_NUM_18,
         .mosi = GPIO_NUM_23,
         .cs = GPIO_NUM_5,
@@ -47,8 +49,7 @@ static constexpr St7735Driver::PinCfg lcdPins = {
 static const char *TAG = "netplay";
 http::Server gHttpServer;
 std::unique_ptr<AudioPlayer> player;
-std::unique_ptr<WifiBase> wifi;
-bool gIsAp = false;
+std::unique_ptr<WifiBase> gWiFi;
 TaskList taskList;
 ST7735Display lcd(VSPI_HOST);
 NvsSimple nvsSimple;
@@ -60,11 +61,11 @@ void startWebserver(bool isAp=false);
 
 void configGpios()
 {
-    gpio_pad_select_gpio(kPinButton);
+    esp_rom_gpio_pad_select_gpio(kPinButton);
     gpio_set_direction(kPinButton, GPIO_MODE_INPUT);
     gpio_pullup_en(kPinButton);
 
-    gpio_pad_select_gpio(kPinLed);
+    esp_rom_gpio_pad_select_gpio(kPinLed);
     gpio_set_direction(kPinLed, GPIO_MODE_OUTPUT);
 }
 
@@ -127,25 +128,23 @@ void connectToWifi(bool forceAP = false)
             goto startAp;
         }
         lcd.puts("Connecting to WiFi...");
-        wifi.reset(new WifiClient);
-        static_cast<WifiClient*>(wifi.get())->start(ssid.get(), pass.get());
-        if (wifi->waitForConnect(20000)) {
-            gIsAp = false;
+        gWiFi.reset(new WifiClient);
+        static_cast<WifiClient*>(gWiFi.get())->start(ssid.get(), pass.get());
+        if (gWiFi->waitForConnect(20000)) {
             lcd.puts("success\n");
             goto connectSuccess;
         }
         lcd.puts("timeout\n");
     }
 startAp:
-    gIsAp = true;
     lcd.puts("Starting Wifi AP");
     lcd.puts("ssid: netplayer\n");
     lcd.puts("key: alexisthebest\n");
-    wifi.reset(new WifiAp);
-    static_cast<WifiAp*>(wifi.get())->start("netplayer", "alexisthebest", 1);
+    gWiFi.reset(new WifiAp);
+    static_cast<WifiAp*>(gWiFi.get())->start("netplayer", "alexisthebest", 1);
 connectSuccess:
     char localIp[17];
-    snprintf(localIp, 17, IPSTR, IP2STR(&wifi->localIp()));
+    snprintf(localIp, 17, IPSTR, IP2STR(&gWiFi->localIp()));
     lcd.puts("Local IP is ");
     lcd.puts(localIp);
     lcd.newLine();
@@ -156,8 +155,7 @@ void startMdns()
 }
 void* operator new(size_t size)
 {
-    auto mem = utils::mallocTrySpiram(size);
-    return mem;
+    return heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
 }
 extern "C" void* my_malloc(size_t size)
 {
@@ -192,10 +190,10 @@ extern "C" void app_main(void)
     nvsSimple.init("aplayer", true);
 
     auto before = xPortGetFreeHeapSize();
-    BtStack.disableBLE();
+    BtStack.disableCompletely(); //BLE();
     ESP_LOGW(TAG, "Releasing BLE Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
     lcd.puts("Starting Bluetooth...\n");
-    BtStack.start(ESP_BT_MODE_CLASSIC_BT, "netplayer");
+//  BtStack.start(ESP_BT_MODE_CLASSIC_BT, "netplayer");
     lcd.puts("Mounting SPIFFS...\n");
     mountSpiffs();
     connectToWifi(!gpio_get_level(kPinButton));
@@ -204,10 +202,10 @@ extern "C" void app_main(void)
     startWebserver();
 #ifdef DEV_MODE
         lcd.puts("Waiting dev http request\n");
-        msSleep(1000);
+        msSleep(2000);
 #endif
-    lcd.puts("Starting bluetooth keyboard...\n");
-    startBtKeyaboard();
+//  lcd.puts("Starting bluetooth keyboard...\n");
+//  startBtKeyaboard();
 //===
     lcd.puts("Mounting SDCard...\n");
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };
@@ -218,7 +216,7 @@ extern "C" void app_main(void)
     MutexLocker locker(player->mutex);
     if (player->inputType() == AudioNode::kTypeHttpIn) {
         ESP_LOGI(TAG, "Player input set to HTTP stream");
-        player->playStation(nullptr);
+        //player->playStation(nullptr);
     }
     else if (player->inputType() == AudioNode::kTypeA2dpIn) {
         ESP_LOGI(TAG, "Player input set to Bluetooth A2DP sink");
@@ -263,11 +261,12 @@ static esp_err_t indexUrlHandler(httpd_req_t *req)
     );
     httpd_resp_send_chunk(req, buf.buf(), buf.dataSize());
     buf.clear();
-
+    uint32_t flashSize = 0;
+    esp_flash_get_size(nullptr, &flashSize);
     buf.printf("radio: WiFi%s%s\nflash size: %dMB\nflash type: %s\n",
         (chip_info.features & CHIP_FEATURE_BT) ? "/BT" : "",
         (chip_info.features & CHIP_FEATURE_BLE) ? "/BLE" : "",
-        spi_flash_get_chip_size() / (1024 * 1024),
+        flashSize / (1024 * 1024),
         (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external"
     );
     httpd_resp_send_chunk(req, buf.buf(), buf.dataSize());
@@ -333,6 +332,7 @@ void startWebserver(bool isAp)
     gHttpServer.on("/", HTTP_GET, indexUrlHandler);
     httpFsRegisterHandlers(gHttpServer.handle());
 }
+/*
 BTKeyboard bt_keyboard;
 void startBtKeyaboard()
 {
@@ -371,3 +371,4 @@ void startBtKeyaboard()
 #endif
     }
 }
+*/

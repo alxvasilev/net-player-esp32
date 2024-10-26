@@ -186,7 +186,7 @@ bool HttpNode::connect(bool isReconnect)
         }
         plSendEvent(kEventConnected, isReconnect);
         if (!isReconnect) {
-            ESP_LOGD(TAG, "Posting kStreamChange with codec %s and streamId %d\n", mInFormat.codec().toString(), mUrlInfo->streamId);
+            ESP_LOGD(TAG, "Posting kStreamChange with codec %s and streamId %ld\n", mInFormat.codec().toString(), mUrlInfo->streamId);
             mRingBuf.pushBack(new NewStreamEvent(mUrlInfo->streamId, mInFormat));
         }
         return true;
@@ -250,7 +250,7 @@ int8_t HttpNode::recv()
             if (rlen == 0) {
                 if (mContentLen && esp_http_client_is_complete_data_received(mClient)) {
                     // transfer complete, post end of stream
-                    ESP_LOGI(TAG, "Transfer complete, posting kStreamEnd event (streamId=%d)", mUrlInfo->streamId);
+                    ESP_LOGI(TAG, "Transfer complete, posting kStreamEnd event (streamId=%ld)", mUrlInfo->streamId);
                     mRingBuf.pushBack(new GenericEvent(kEvtStreamEnd, mUrlInfo->streamId, 0));
                     return 1; // don't stop the node, just wait for new commands
                 }

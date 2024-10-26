@@ -11,11 +11,11 @@
 #include "spotify.hpp"
 #include <stdfonts.hpp>
 #include <string>
-#include <esp_netif.h> // for createDlnaHandler()
 #include <httpServer.hpp>
 #include "tostring.hpp"
 #include <st7735.hpp>
 #include <esp_heap_caps.h>
+#include "wifi.hpp" // need reference to the global Wifi instance, for createDlnaHandler
 
 #define kStreamInfoFont font_Camingo22
 #define kTrackTitleFont font_CamingoBold43
@@ -30,6 +30,7 @@ const LcdColor kLcdColorNetSpeed_Underrun(LcdColor::RED);
 #define LOCK_PLAYER() MutexLocker locker(mutex)
 
 static constexpr const char* const TAG = "AudioPlayer";
+extern std::unique_ptr<WifiBase> gWiFi;
 
 void AudioPlayer::setLogLevel(esp_log_level_t level)
 {
@@ -123,11 +124,10 @@ bool AudioPlayer::playerModeIsValid(PlayerMode mode)
 
 void AudioPlayer::createDlnaHandler()
 {
-    tcpip_adapter_ip_info_t ipInfo;
+    assert(gWiFi);
     char url[48];
-    tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ipInfo);
     snprintf(url, sizeof(url), "http%s://" IPSTR ":%d", mHttpServer.isSsl() ? "s":"",
-             IP2STR(&ipInfo.ip), 80);
+             IP2STR(&gWiFi->localIp()), 80);
     mDlna.reset(new DlnaHandler(mHttpServer, url, *this));
 }
 void AudioPlayer::lcdInit()
@@ -942,7 +942,7 @@ esp_err_t AudioPlayer::nvsGetParamUrlHandler(httpd_req_t* req)
     httpd_resp_send_chunk(req, "{", 1);
     bool isFirst = true;
     nvs_iterator_t it;
-    for(it = nvs_entry_find("nvs", ns, NVS_TYPE_ANY); it; it = nvs_entry_next(it)) {
+    for(it = nvsEntryFind("nvs", ns, NVS_TYPE_ANY); it; it = nvsEntryNext(it)) {
         nvs_entry_info_t info;
         nvs_entry_info(it, &info);
         if (key.str && strcmp(info.key, key.str) != 0) {

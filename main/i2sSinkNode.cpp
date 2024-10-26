@@ -201,17 +201,17 @@ void I2sOutputNode::nodeThreadFunc()
 
 bool I2sOutputNode::setFormat(StreamFormat fmt)
 {
-    uint32_t bps = fmt.bitsPerSample();
+    auto bps = fmt.bitsPerSample();
     auto samplerate = fmt.sampleRate();
     if (bps == 24) {
         samplerate -= roundf(samplerate * 27.0f / 440);
     }
     i2s_zero_dma_buffer(mPort);
-    ESP_LOGW(mTag, "Setting output mode to %d-bit %s, %d Hz", bps,
+    ESP_LOGW(mTag, "Setting output mode to %u-bit %s, %lu Hz", bps,
         fmt.isStereo() ? "stereo" : "mono", samplerate);
     auto err = i2s_set_clk(mPort, samplerate, bps, (i2s_channel_t)fmt.numChannels());
     if (err == ESP_FAIL) {
-        ESP_LOGE(mTag, "i2s_set_clk failed: rate: %d, bits: %d, ch: %d. Error: %s",
+        ESP_LOGE(mTag, "i2s_set_clk failed: rate: %lu, bits: %u, ch: %u. Error: %s",
             samplerate, bps, fmt.numChannels(), esp_err_to_name(err));
         return false;
     }
@@ -234,7 +234,7 @@ I2sOutputNode::I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t*
         mPort = (i2s_port_t)port;
     }
     if (kDacMutePin != GPIO_NUM_NC) {
-        gpio_pad_select_gpio(kDacMutePin);
+        esp_rom_gpio_pad_select_gpio(kDacMutePin);
         gpio_set_direction(kDacMutePin, GPIO_MODE_OUTPUT);
         muteDac();
     }

@@ -33,7 +33,7 @@ StreamEvent detectOggCodec(DataPacket& dataPkt, Codec& codec)
     }
     OggPageHeader& hdr = *((OggPageHeader*)dataPkt.data);
     if (hdr.fourCC != fourccLittleEndian("OggS")) {
-        ESP_LOGW("OGG", "Fourcc %x doesn't match 'OggS' (%x)", hdr.fourCC, fourccLittleEndian("OggS"));
+        ESP_LOGW("OGG", "Fourcc %lx doesn't match 'OggS' (%lx)", hdr.fourCC, fourccLittleEndian("OggS"));
         return kErrDecode;
     }
     if (hdr.numSegments > kMaxNumSegments) {

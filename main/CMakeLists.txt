@@ -1,4 +1,8 @@
-set(COMPONENT_SRCS "netplayer.c")
-set(COMPONENT_ADD_INCLUDEDIRS .)
+idf_component_register(
+    SRC_DIRS .
+    INCLUDE_DIRS .
+    REQUIRES st7735 mySystem httpLib libmad libFLAC libhelix-aac tremor
+             tinyxml myeq equalizer spiffs cspot app_update
+)
 
-register_component()
+#COMPONENT_EXTRA_INCLUDES := $(BUILD_DIR_BASE)/cspot

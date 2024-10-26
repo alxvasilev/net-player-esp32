@@ -4,6 +4,7 @@
 #include "dlna.hpp"
 #include <httpServer.hpp>
 #include <esp_log.h>
+#include <esp_mac.h>
 #include "utils.hpp"
 #include "incfile.hpp"
 #include <tinyxml2.h>
@@ -15,16 +16,16 @@
 static const char* TAG = "dlna";
 static const char* TAG_NOTIFY = "dlna-notify";
 
-EMBED_TEXTFILE("../../dlna/deviceDesc.xml", xmlMain);
+EMBED_TEXTFILE("../dlna/deviceDesc.xml", xmlMain);
 extern const char xmlMain[];
 extern const int xmlMain_size;
-EMBED_TEXTFILE("../../dlna/avtrans.xml", xmlAvTrans);
+EMBED_TEXTFILE("../dlna/avtrans.xml", xmlAvTrans);
 extern const char xmlAvTrans[];
 extern const int xmlAvTrans_size;
-EMBED_TEXTFILE("../../dlna/rendctl.xml", xmlRendCtl);
+EMBED_TEXTFILE("../dlna/rendctl.xml", xmlRendCtl);
 extern const char xmlRendCtl[];
 extern const int xmlRendCtl_size;
-EMBED_TEXTFILE("../../dlna/connmgr.xml", xmlConnMgr);
+EMBED_TEXTFILE("../dlna/connmgr.xml", xmlConnMgr);
 extern const char xmlConnMgr[];
 extern const int xmlConnMgr_size;
 
@@ -182,7 +183,7 @@ esp_err_t DlnaHandler::httpDlnaCommandHandler(httpd_req_t* req)
 
     int32_t contentLen = req->content_len;
     if (!contentLen || contentLen > 3000) {
-        ESP_LOGW(TAG, "Control request has too large or missing postdata: content-length: %d", contentLen);
+        ESP_LOGW(TAG, "Control request has too large or missing postdata: content-length: %ld", contentLen);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Too large or missing POSTDATA");
         return ESP_FAIL;
     }
@@ -484,16 +485,16 @@ bool DlnaHandler::EventSubscription::notify(const std::string& xml)
             ESP_LOGW(TAG_NOTIFY, "Error posting xml: %s", strerror(errno));
             break;
         }
-        auto responseLen = esp_http_client_fetch_headers(client);
+        auto responseLen = (int)esp_http_client_fetch_headers(client);
         if (responseLen < 0) {
-            ESP_LOGW(TAG_NOTIFY, "NOTIFY request '%s': Got negative content-length %d in response, status is %d", cfg.url,
-                     responseLen, esp_http_client_get_status_code(client));
+            ESP_LOGW(TAG_NOTIFY, "NOTIFY request '%s': Got negative content-length %d in response, status is %d",
+                cfg.url, responseLen, esp_http_client_get_status_code(client));
             break;
         }
         auto code = esp_http_client_get_status_code(client);
         if (code != 200) {
             ESP_LOGW(TAG_NOTIFY, "NOTIFY request '%s' failed with code %d, response len: %d",
-                     cfg.url, code, responseLen);
+                cfg.url, code, responseLen);
             break;
         }
         if (responseLen > 0) {
@@ -512,7 +513,7 @@ bool DlnaHandler::EventSubscription::notify(const std::string& xml)
 }
 DlnaHandler::EventSubscription::~EventSubscription()
 {
-    ESP_LOGI(TAG_NOTIFY, "Deleting event subscription %u", sid);
+    ESP_LOGI(TAG_NOTIFY, "Deleting event subscription %lu", sid);
 }
 void DlnaHandler::notify(EventSrc service, std::string& xml)
 {

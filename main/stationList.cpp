@@ -6,7 +6,7 @@
 #include "utils.hpp"
 #include "autoString.hpp"
 #include <cJSON.h>
-
+#include "nvsSimple.hpp" // for nvsGetNextItem
 static const char* TAG = "STALIST";
 using namespace std;
 
@@ -49,22 +49,26 @@ bool StationList::loadCurrent()
 
 bool StationList::getNext(const char* after, Station& station)
 {
-    nvs_iterator_t it = nvs_entry_find("nvs", mNsName, NVS_TYPE_BLOB);
+    nvs_iterator_t it = nvsEntryFind("nvs", mNsName, NVS_TYPE_BLOB);
     if (after) {
-        for(; it; it = nvs_entry_next(it)) {
+        for(;;) {
+            if (!it) {
+                return false;
+            }
             nvs_entry_info_t info;
             nvs_entry_info(it, &info);
             if (strcmp(info.key, after) == 0) {
+                it = nvsEntryNext(it);
                 break;
             }
+            it = nvsEntryNext(it);
         }
+    }
+    // it may be null
+    for(;; it = nvsEntryNext(it)) {
         if (!it) {
             return false;
         }
-        it = nvs_entry_next(it);
-    }
-    // it may be null
-    for(; it; it = nvs_entry_next(it)) {
         nvs_entry_info_t info;
         nvs_entry_info(it, &info);
         char ch = info.key[0];
@@ -76,8 +80,6 @@ bool StationList::getNext(const char* after, Station& station)
             return true;
         }
     }
-    nvs_release_iterator(it); // should already be null
-    return false;
 }
 bool StationList::setCurrent(const char* id, bool noSave)
 {
@@ -427,9 +429,15 @@ bool StationList::remove(const char* id)
 template<class CB>
 void StationList::enumerate(CB&& callback)
 {
-    nvs_iterator_t it = nvs_entry_find("nvs", mNsName, NVS_TYPE_BLOB);
+    nvs_iterator_t it = nullptr;
+    auto err = nvs_entry_find("nvs", mNsName, NVS_TYPE_BLOB, &it);
+    if (err) {
+        assert(!it);
+        ESP_LOGW(TAG, "enumerate: nvs_entry_find returned error %s", esp_err_to_name(err));
+        return;
+    }
     Station station(*this);
-    for(; it; it = nvs_entry_next(it)) {
+    for(; it; it = nvsEntryNext(it)) {
         nvs_entry_info_t info;
         nvs_entry_info(it, &info);
         char first = info.key[0];

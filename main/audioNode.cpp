@@ -7,7 +7,7 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <freertos/event_groups.h>
-
+#include <freertos/projdefs.h>
 #include "esp_log.h"
 #include "errno.h"
 #include "esp_system.h"
@@ -49,20 +49,26 @@ bool AudioNodeWithState::run()
     setState(kStateRunning);
     return true;
 }
-
+static constexpr const char* kTaskCreateErr = "Error creating audio node task: ";
 bool AudioNodeWithTask::createAndStartTask()
 {
     mEvents.clearBits(kEvtStopRequest);
     mTerminate = false;
     auto ret = xTaskCreatePinnedToCore(sTaskFunc, mTag, mStackSize, this, mTaskPrio, &mTaskId,
         mCpuCore < 0 ? tskNO_AFFINITY : mCpuCore);
-    if (ret == pdPASS) {
-        assert(mTaskId);
-        return true;
-    } else {
-        assert(!mTaskId);
-        return false;
+    switch(ret) {
+        case pdPASS:
+            assert(mTaskId);
+            return true;
+        case errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY:
+            ESP_LOGE(mTag, "%s: Out of memory", kTaskCreateErr);
+            break;
+        default:
+            ESP_LOGE(mTag, "%s: %d", kTaskCreateErr, ret);
+            break;
     }
+    assert(!mTaskId);
+    return false;
 }
 void AudioNodeWithTask::sTaskFunc(void* ctx)
 {

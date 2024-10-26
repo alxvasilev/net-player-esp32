@@ -21,17 +21,17 @@ for (let i = 2; i < process.argv.length; i++) {
         addresses.push(addr);
     }
 }
-let elfs = fs.readdirSync('./build/').filter(fn => fn.endsWith('.elf'));
+let elfs = fs.readdirSync('.').filter(fn => fn.endsWith('.elf'));
 if (elfs.length < 1) {
-    console.error("No .elf file found in ./build directory");
+    console.error("No .elf file found in current directory");
     process.exit(1);
 }
 if (elfs.length > 1) {
-    console.error("More than one .elf files found in ./build directory:", JSON.stringify(elfs));
+    console.error("More than one .elf files found in current directory:", JSON.stringify(elfs));
     process.exit(1);
 }
 let elfFile = elfs[0];
-console.log(`================ Backtrace (./build/${elfFile}) ================`);
+console.log(`================ Backtrace (./${elfFile}) ================`);
 for (let addr of addresses) {
-    spawn("xtensa-esp32-elf-addr2line", ["-pfiaC", "-e", "build/" + elfFile, addr], {'stdio': 'inherit'});
+    spawn("xtensa-esp32-elf-addr2line", ["-pfiaC", "-e", "./" + elfFile, addr], {'stdio': 'inherit'});
 }

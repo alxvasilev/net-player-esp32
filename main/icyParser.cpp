@@ -8,7 +8,7 @@ bool IcyParser::parseHeader(const char* key, const char* value)
     if (strcasecmp(key, "icy-metaint") == 0) {
         mIcyInterval = atoi(value);
         mIcyCtr = 0;
-        ESP_LOGI(TAG, "Response contains ICY metadata with interval %d", mIcyInterval);
+        ESP_LOGI(TAG, "Response contains ICY metadata with interval %ld", mIcyInterval);
     } else if (strcasecmp(key, "icy-name") == 0) {
         MutexLocker locker(mInfoMutex);
         mStaName.reset(strdup(value));
