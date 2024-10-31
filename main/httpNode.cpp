@@ -315,7 +315,7 @@ uint32_t HttpNode::pollSpeed() const
 
 void HttpNode::setUrlAndStart(UrlInfo* urlInfo)
 {
-    if (!mTaskId) {
+    if (mState == AudioNodeWithTask::kStateTerminated) {
         run();
     }
     ESP_LOGI(mTag, "Posting setUrl command");
@@ -388,7 +388,7 @@ HttpNode::~HttpNode()
 }
 
 HttpNode::HttpNode(IAudioPipeline& parent)
-    : AudioNodeWithTask(parent, "node-http", kStackSize, 15, 0), mIcyParser(mMutex)
+    : AudioNodeWithTask(parent, "node-http", false, kStackSize, 15, 0), mIcyParser(mMutex)
 {
 }
 

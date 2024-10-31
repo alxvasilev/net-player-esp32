@@ -16,6 +16,7 @@
 #include "streamPackets.hpp"
 #include "queue.hpp"
 #include "utils.hpp"
+#include "task.hpp"
 #include <atomic>
 
 class AudioNode;
@@ -171,12 +172,15 @@ protected:
     };
     enum: uint8_t { kCommandRun = 1, kCommandStop, kCommandTerminate, kCommandLast = kCommandTerminate };
     enum { kDefaultPrio = 4 };
-    TaskHandle_t mTaskId = NULL;
-    uint32_t mStackSize;
     Queue<Command, 4> mCmdQueue;
     bool mTerminate = false;
-    uint8_t mTaskPrio;
-    int8_t mCpuCore;
+    uint16_t mStackSize;
+    struct {
+        bool mStackInPsram: 1;
+        uint8_t mTaskPrio: 5;
+        int8_t mCpuCore: 2;
+    };
+    Task mTask;
     static void sTaskFunc(void* ctx);
     bool createAndStartTask();
     void processMessages();
@@ -189,8 +193,9 @@ protected:
     virtual void onStopRequest() {}
     virtual void onStopped() {}
 public:
-    AudioNodeWithTask(IAudioPipeline& parent, const char* tag, uint32_t stackSize, uint8_t prio=kDefaultPrio, int8_t core=-1)
-    :AudioNodeWithState(parent, tag), mStackSize(stackSize), mTaskPrio(prio), mCpuCore(core)
+    AudioNodeWithTask(IAudioPipeline& parent, const char* tag, bool psramStack, uint32_t stackSize,
+        uint8_t prio=kDefaultPrio, int8_t core=-1)
+    :AudioNodeWithState(parent, tag), mStackSize(stackSize), mStackInPsram(psramStack), mTaskPrio(prio), mCpuCore(core)
     {}
     void setPriority(uint8_t prio) { mTaskPrio = prio; }
     virtual bool run() override;

@@ -14,6 +14,7 @@
 #include <framebuf.hpp>
 #include <gfx.hpp>
 #include <nvsSimple.hpp>
+#include <task.hpp>
 
 class DecoderNode;
 class EqualizerNode;
@@ -88,6 +89,7 @@ protected:
     ST7735Display& mLcd;
     LcdFrameBuf mDmaFrameBuf;
     LcdFrameBuf mTitleTextFrameBuf;
+    Task mLcdTask;
     EventGroup mEvents;
     http::Server& mHttpServer;
     std::unique_ptr<DlnaHandler> mDlna;
@@ -113,7 +115,6 @@ protected:
     StreamFormat mStreamFormat;
     static void audioLevelCb(void* ctx);
 //====
-    static void lcdTimedDrawTaskFunc(void* ctx);
     void lcdTimedDrawTask();
 
     void createInputA2dp();

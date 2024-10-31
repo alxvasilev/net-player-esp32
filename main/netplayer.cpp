@@ -189,11 +189,18 @@ extern "C" void app_main(void)
     /* Initialize NVS — it is used to store PHY calibration data */
     nvsSimple.init("aplayer", true);
 
-    auto before = xPortGetFreeHeapSize();
-    BtStack.disableCompletely(); //BLE();
-    ESP_LOGW(TAG, "Releasing BLE Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
+//    auto before = xPortGetFreeHeapSize();
+//    BtStack.disableCompletely(); //BLE();
+//    ESP_LOGW(TAG, "Releasing BLE Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
+
     lcd.puts("Starting Bluetooth...\n");
-//  BtStack.start(ESP_BT_MODE_CLASSIC_BT, "netplayer");
+    int beforeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    int beforeExt =heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    BtStack.start(ESP_BT_MODE_CLASSIC_BT, "netplayer");
+    ESP_LOGW(TAG, "Starting bluetooth consumed %d bytes of internal and %d bytes of external RAM",
+             beforeInt - heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             beforeExt - heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    BtStack.becomeDiscoverableAndConnectable();
     lcd.puts("Mounting SPIFFS...\n");
     mountSpiffs();
     connectToWifi(!gpio_get_level(kPinButton));
@@ -216,13 +223,10 @@ extern "C" void app_main(void)
     MutexLocker locker(player->mutex);
     if (player->inputType() == AudioNode::kTypeHttpIn) {
         ESP_LOGI(TAG, "Player input set to HTTP stream");
-        //player->playStation(nullptr);
+        player->playStation(nullptr);
     }
     else if (player->inputType() == AudioNode::kTypeA2dpIn) {
         ESP_LOGI(TAG, "Player input set to Bluetooth A2DP sink");
-        auto before = xPortGetFreeHeapSize();
-        BtStack.disableBLE();
-        ESP_LOGW(TAG, "Releasing Bluetooth BLE memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
         player->play();
         /*
                 BluetoothStack::start(ESP_BT_MODE_BLE, "test");

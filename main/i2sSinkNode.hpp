@@ -3,19 +3,25 @@
 #include <stdlib.h>
 #include <string.h>
 #include "audioNode.hpp"
-#include <driver/i2s.h>
+#include <driver/i2s_std.h>
 #include "volume.hpp"
 
 class I2sOutputNode: public AudioNodeWithTask
 {
 public:
+    struct PinCfg {
+        int8_t port;
+        int8_t dout;
+        int8_t ws;
+        int8_t bclk;
+    };
     Mutex mutex;
     StreamId mStreamId = 0;
 protected:
-    i2s_port_t mPort;
+    PinCfg mPinConfig;
+    i2s_chan_handle_t mI2sChan = nullptr;
     StreamFormat mFormat;
     uint64_t mSampleCtr;
-    bool mUseInternalDac;
     uint8_t mBytesPerSampleShiftDiv;
     uint8_t mDmaBufCount; // needed for flushing with silence
     bool mDacMuted = false;
@@ -26,6 +32,9 @@ protected:
     virtual void nodeThreadFunc();
     void adjustSamplesForInternalDac(char* sBuff, int len);
     void dmaFillWithSilence();
+    bool createChannel();
+    bool reconfigChannel();
+    bool deleteChannel();
     bool setFormat(StreamFormat fmt);
     void setDacMutePin(uint8_t level);
     void muteDac() { setDacMutePin((gpio_num_t)0); ESP_LOGI(mTag, "DAC muted"); }
@@ -36,7 +45,7 @@ protected:
     template <typename S>
     bool fadeIn(char* sampleBuf, int sampleBufSize);
 public:
-    I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t* pinCfg, uint16_t stackSize,
+    I2sOutputNode(IAudioPipeline& parent, PinCfg& pins, uint16_t stackSize,
         uint8_t dmaBufCnt, int8_t cpuCore=-1);
     ~I2sOutputNode();
     virtual Type type() const { return kTypeI2sOut; }

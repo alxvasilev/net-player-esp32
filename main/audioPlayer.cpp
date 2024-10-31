@@ -143,7 +143,8 @@ void AudioPlayer::lcdInit()
 
 void AudioPlayer::initTimedDrawTask()
 {
-    xTaskCreatePinnedToCore(&lcdTimedDrawTaskFunc, "lcdTask", kLcdTaskStackSize, this, kLcdTaskPrio, nullptr, kLcdTaskCore);
+//    xTaskCreatePinnedToCore(&lcdTimedDrawTaskFunc, "lcdTask", kLcdTaskStackSize, this, kLcdTaskPrio, nullptr, kLcdTaskCore);
+    mLcdTask.createTask("lcdTask", true, kLcdTaskStackSize, kLcdTaskCore, kLcdTaskPrio, this, &AudioPlayer::lcdTimedDrawTask);
 }
 
 bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType)
@@ -182,14 +183,8 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
                 kI2sDmaBufCnt);
             dmaBufCnt = kI2sDmaBufCnt;
         };
-        i2s_pin_config_t cfg = {
-            .mck_io_num = I2S_PIN_NO_CHANGE,
-            .bck_io_num = 26,
-            .ws_io_num = 25,
-            .data_out_num = 27,
-            .data_in_num = -1,
-        };
-        mStreamOut.reset(new I2sOutputNode(*this, 0, &cfg, kI2sStackSize, dmaBufCnt, kI2sCpuCore));
+        I2sOutputNode::PinCfg cfg = {.port = 0, .dout = 27, .ws = 25, .bclk = 26};
+        mStreamOut.reset(new I2sOutputNode(*this, cfg, kI2sStackSize, dmaBufCnt, kI2sCpuCore));
         break;
     }
     /*
@@ -1100,12 +1095,6 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
         });
     }
     return true;
-}
-
-void AudioPlayer::lcdTimedDrawTaskFunc(void* ctx)
-{
-    static_cast<AudioPlayer*>(ctx)->lcdTimedDrawTask();
-    vTaskDelete(nullptr);
 }
 void AudioPlayer::lcdTimedDrawTask()
 {

@@ -4,6 +4,7 @@
 #include <memory>
 #include <list>
 #include "utils.hpp"
+#include "task.hpp"
 #include <sys/socket.h>
 
 class AudioPlayer;
@@ -44,12 +45,12 @@ protected:
     //====
     http::Server& mHttpServer;
     char mHttpHostPort[48];
-    TaskHandle_t mSsdpRxTask;
     AudioPlayer& mPlayer;
     unique_ptr_mfree<TrackInfo> mQueuedTrack;
     char mUuid[13];
     bool mTerminate = false;
     std::list<EventSubscription> mEventSubs;
+    Task mSsdpTask;
     void sendPacket(int len, uint32_t ip);
     void sendReply(const char* name, uint32_t ip, const char* prefix);
     void sendUuidReply(uint32_t ip);

@@ -102,10 +102,8 @@ bool DlnaHandler::start()
         closeSocket();
         return false;
     }
-    auto ret = xTaskCreate([](void* arg) {
-        static_cast<DlnaHandler*>(arg)->ssdpRxTaskFunc();
-    }, "SSDP listener", 3000, this, 10, &mSsdpRxTask);
-    if (ret != pdPASS) {
+    auto ret = mSsdpTask.createTask("SSDP listener", true, 3000, tskNO_AFFINITY, 10, this, &DlnaHandler::ssdpRxTaskFunc);
+    if (!ret) {
         ESP_LOGW(TAG, "Error creating UPnP listener task");
         unregisterHttpHandlers();
         closeSocket();

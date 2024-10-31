@@ -5,16 +5,16 @@
 #include "freertos/ringbuf.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-
-#include "driver/i2s.h"
-#include "driver/dac.h"
+#include "utils.hpp"
+#include "driver/i2s_std.h"
+#include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "i2sSinkNode.hpp"
 #include <type_traits>
 #include <limits>
 #include <math.h> // for roundf
-//#define DEBUG_TIMING 1
+#define DEBUG_TIMING 1
 
 void I2sOutputNode::adjustSamplesForInternalDac(char* sBuff, int len)
 {
@@ -63,8 +63,7 @@ bool I2sOutputNode::rampIn(void* target)
 
     }
 //  printf("target: %d, %d\n", ((*(Sample*)target)[0]), ((*(Sample*)target)[1]));
-    size_t written = 0;
-    auto err = i2s_write(mPort, samples, kDepopBufSize, &written, portMAX_DELAY);
+    auto err = i2s_channel_write(mI2sChan, samples, kDepopBufSize, nullptr, 0xffffffff);
     return err == ESP_OK;
 }
 template <typename S>
@@ -87,7 +86,7 @@ bool I2sOutputNode::fadeIn(char* sampleData, int sampleBufSize)
     }
     size_t written = 0;
     // printf("sending fade: %d\n", sampleBufSize);
-    auto err = i2s_write(mPort, samples, kDepopBufSize, &written, portMAX_DELAY);
+    auto err = ESP_OK; //i2s_write(mPinConfig.port, samples, kDepopBufSize, &written, portMAX_DELAY);
     return err == ESP_OK;
 }
 
@@ -99,8 +98,7 @@ bool I2sOutputNode::sendSilence()
     buf[0] = 1;
     int count = 1 + (mDmaBufCount * (1024 * mFormat.bitsPerSample() * 2 / 8) + kChunkSize - 1) / kChunkSize;
     for (int i = 0; i < count; i++) {
-        size_t written;
-        if (i2s_write(mPort, buf, kChunkSize, &written, portMAX_DELAY) != ESP_OK) {
+        if (i2s_channel_write(mI2sChan, buf, kChunkSize, nullptr, 0xffffffff) != ESP_OK) {
             return false;
         }
     }
@@ -123,7 +121,10 @@ void I2sOutputNode::nodeThreadFunc()
 #endif
             auto evt = mPrev->pullData(dpr);
 #ifdef DEBUG_TIMING
-            ESP_LOGI(mTag, "pullData took %d ms", t.msElapsed());
+            auto elapsed = t.msElapsed();
+            if (elapsed >= 40) {
+                ESP_LOGI(mTag, "pullData took %d ms", elapsed);
+            }
 #endif
             if (evt) {
                 if (evt < 0) {
@@ -159,16 +160,12 @@ void I2sOutputNode::nodeThreadFunc()
                 MutexLocker locker(mutex);
                 mSampleCtr += pkt.dataLen >> mBytesPerSampleShiftDiv;
             }
-            if (mUseInternalDac) {
-                adjustSamplesForInternalDac(pkt.data, pkt.dataLen);
-            }
-
-            size_t written;
             if (mDacMuted) {
                 ESP_LOGI(mTag, "Sending a bit of silence...");
-                sendSilence();
+//                sendSilence();
                 vTaskDelay(1);
                 unMuteDac();
+#if 0
 #if 1
 //              ESP_LOGW(mTag, "sending ramp");
                 if (mFormat.bitsPerSample() <= 16) {
@@ -186,14 +183,13 @@ void I2sOutputNode::nodeThreadFunc()
                 //TODO: Revise DAC muting
                 continue;
 #endif
+#endif
             }
-            auto espErr = i2s_write(mPort, pkt.data, pkt.dataLen, &written, portMAX_DELAY);
-            if (espErr != ESP_OK) {
-                ESP_LOGE(mTag, "i2s_write error: %s", esp_err_to_name(espErr));
-                continue;
-            }
+            size_t written;
+            MY_ESP_ERRCHECK(i2s_channel_write(mI2sChan, pkt.data, pkt.dataLen, &written, 0xffffffff), mTag,
+                "calling i2s_channel_write()", continue);
             if (written != pkt.dataLen) {
-                ESP_LOGE(mTag, "is2_write() wrote less than requested with infinite timeout");
+                ESP_LOGW(mTag, "is2_channel_write() wrote less than requested with infinite timeout");
             }
         }
     }
@@ -201,78 +197,119 @@ void I2sOutputNode::nodeThreadFunc()
 
 bool I2sOutputNode::setFormat(StreamFormat fmt)
 {
-    auto bps = fmt.bitsPerSample();
-    auto samplerate = fmt.sampleRate();
+    if (fmt == mFormat) {
+        return true;
+    }
+    auto newBps = fmt.bitsPerSample();
+/*
     if (bps == 24) {
         samplerate -= roundf(samplerate * 27.0f / 440);
     }
-    i2s_zero_dma_buffer(mPort);
-    ESP_LOGW(mTag, "Setting output mode to %u-bit %s, %lu Hz", bps,
-        fmt.isStereo() ? "stereo" : "mono", samplerate);
-    auto err = i2s_set_clk(mPort, samplerate, bps, (i2s_channel_t)fmt.numChannels());
-    if (err == ESP_FAIL) {
-        ESP_LOGE(mTag, "i2s_set_clk failed: rate: %lu, bits: %u, ch: %u. Error: %s",
-            samplerate, bps, fmt.numChannels(), esp_err_to_name(err));
-        return false;
-    }
+*/
+    ESP_LOGW(mTag, "Setting output mode to %u-bit %s, %lu Hz", newBps, fmt.isStereo() ? "stereo" : "mono",
+             fmt.sampleRate());
+    deleteChannel();
     mFormat = fmt;
-    uint bytesPerSample = fmt.numChannels() * (bps / 8);
+    return createChannel();
+/*
+    auto oldFmt = mFormat;
+    mFormat = fmt;
+    if ((newBps <= 16) != (oldFmt.bitsPerSample() <= 16)) {
+        ESP_LOGW(mTag, "Sample width changed, re-creating i2s channel");
+        deleteChannel();
+        return createChannel();
+    }
+    else {
+        return reconfigChannel();
+    }
+*/
+}
+bool I2sOutputNode::reconfigChannel() {
+    assert(mI2sChan);
+    auto bps = mFormat.bitsPerSample();
+    MY_ESP_ERRCHECK(i2s_channel_disable(mI2sChan), mTag, "disabling i2s channel", return false);
+    i2s_std_clk_config_t clockCfg = I2S_STD_CLK_DEFAULT_CONFIG(mFormat.sampleRate()); /* {
+        .sample_rate_hz = samplerate,
+        .clk_src = I2S_CLK_SRC_APLL,
+        .mclk_multiple = I2S_MCLK_MULTIPLE_384 // must be multiple of 3
+    }; */
+    MY_ESP_ERRCHECK(i2s_channel_reconfig_std_clock(mI2sChan, &clockCfg), mTag, "setting I2S clock", return false);
+
+    i2s_std_slot_config_t slotCfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(
+        (i2s_data_bit_width_t)bps,
+        (mFormat.numChannels() > 1 ? I2S_SLOT_MODE_STEREO : I2S_SLOT_MODE_MONO)
+    );
+    MY_ESP_ERRCHECK(i2s_channel_reconfig_std_slot(mI2sChan, &slotCfg), mTag, "setting sample format", return false);
+
+    uint bytesPerSample = mFormat.numChannels() * (bps / 8);
     for (mBytesPerSampleShiftDiv = 0; bytesPerSample; bytesPerSample >>= 1, mBytesPerSampleShiftDiv++);
+    MY_ESP_ERRCHECK(i2s_channel_enable(mI2sChan), mTag, "enabling channel",);
     return true;
 }
-
-I2sOutputNode::I2sOutputNode(IAudioPipeline& parent, int port, i2s_pin_config_t* pinCfg, uint16_t stackSize,
+I2sOutputNode::I2sOutputNode(IAudioPipeline& parent, PinCfg& pins, uint16_t stackSize,
     uint8_t dmaBufCnt, int8_t cpuCore)
-:AudioNodeWithTask(parent, "node-i2s-out", stackSize, kTaskPriority, cpuCore),
-  mFormat(kDefaultSamplerate, 16, 2), mDmaBufCount(dmaBufCnt)
+:AudioNodeWithTask(parent, "node-i2s-out", false, stackSize, kTaskPriority, cpuCore),
+  mPinConfig(pins), mFormat(kDefaultSamplerate, 16, 2), mDmaBufCount(dmaBufCnt)
 {
-    if (port == 0xff) {
-        mUseInternalDac = true;
-        mPort = I2S_NUM_0;
-    } else {
-        mUseInternalDac = false;
-        mPort = (i2s_port_t)port;
-    }
     if (kDacMutePin != GPIO_NUM_NC) {
         esp_rom_gpio_pad_select_gpio(kDacMutePin);
         gpio_set_direction(kDacMutePin, GPIO_MODE_OUTPUT);
         muteDac();
     }
-    i2s_config_t cfg = {};
-    cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
-    cfg.sample_rate = kDefaultSamplerate;
-    cfg.bits_per_sample = (i2s_bits_per_sample_t) kDefaultBps;
-    cfg.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
-    cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
-    cfg.dma_buf_count = dmaBufCnt;
-    cfg.dma_buf_len = 1024;
-    cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL3|ESP_INTR_FLAG_IRAM;
-    cfg.tx_desc_auto_clear = true;
-    cfg.use_apll = true;
+    createChannel();
+}
+bool I2sOutputNode::createChannel()
+{
+    assert(!mI2sChan);
+    i2s_chan_config_t cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+    cfg.dma_desc_num = mDmaBufCount;
+    cfg.dma_frame_num = mFormat.bitsPerSample() <= 16 ? 1023 : 510;
+    cfg.intr_priority = 3;
+    MY_ESP_ERRCHECK(i2s_new_channel(&cfg, &mI2sChan, NULL), mTag, "creating i2s channel",
+        mI2sChan = nullptr;
+        return false;
+    );
 
-    if (mUseInternalDac) {
-        cfg.mode = (i2s_mode_t)(cfg.mode | I2S_MODE_DAC_BUILT_IN);
-    }
-
-    auto err = i2s_driver_install(mPort, &cfg, 0, NULL);
-    if (err != ESP_OK) {
-        ESP_LOGE(mTag, "Error installing i2s driver: %s", esp_err_to_name(err));
-        myassert(false);
-    }
-
-    if (mUseInternalDac) {
-        i2s_set_dac_mode(I2S_DAC_CHANNEL_BOTH_EN);
-    } else {
-        myassert(pinCfg);
-        i2s_set_pin(mPort, pinCfg);
-    }
-    i2s_zero_dma_buffer(mPort);
+    i2s_std_config_t cfgInit = {
+        .clk_cfg = {
+            .sample_rate_hz = mFormat.sampleRate(),
+            .clk_src = I2S_CLK_SRC_APLL,
+            .mclk_multiple = (mFormat.bitsPerSample() == 24) ? I2S_MCLK_MULTIPLE_192 : I2S_MCLK_MULTIPLE_256
+        },
+        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG((i2s_data_bit_width_t)mFormat.bitsPerSample(), I2S_SLOT_MODE_STEREO),
+        .gpio_cfg = {
+            .mclk = I2S_GPIO_UNUSED, // some codecs may require mclk signal
+            .bclk = (gpio_num_t)mPinConfig.bclk,
+            .ws   = (gpio_num_t)mPinConfig.ws,
+            .dout = (gpio_num_t)mPinConfig.dout,
+            .din  = I2S_GPIO_UNUSED,
+            .invert_flags = { .mclk_inv = false, .bclk_inv = false, .ws_inv = false }
+        }
+    };
+    MY_ESP_ERRCHECK(i2s_channel_init_std_mode(mI2sChan, &cfgInit), mTag, "configuring I2S channel",
+        i2s_del_channel(mI2sChan);
+        mI2sChan = nullptr;
+        return false;
+    );
+    i2s_channel_enable(mI2sChan);
+    return true;
 }
 
+bool I2sOutputNode::deleteChannel()
+{
+    if (!mI2sChan) {
+        return true;
+    }
+    bool ok = true;
+    MY_ESP_ERRCHECK(i2s_channel_disable(mI2sChan), mTag, "disabling i2s channel", ok = false);
+    MY_ESP_ERRCHECK(i2s_del_channel(mI2sChan), mTag, "deleting i2s channel", ok = false);
+    mI2sChan = nullptr;
+    return ok;
+}
 I2sOutputNode::~I2sOutputNode()
 {
     terminate(true);
-    i2s_driver_uninstall(mPort);
+    deleteChannel();
 }
 
 uint32_t I2sOutputNode::positionTenthSec() const

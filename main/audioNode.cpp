@@ -49,38 +49,24 @@ bool AudioNodeWithState::run()
     setState(kStateRunning);
     return true;
 }
-static constexpr const char* kTaskCreateErr = "Error creating audio node task: ";
 bool AudioNodeWithTask::createAndStartTask()
 {
     mEvents.clearBits(kEvtStopRequest);
     mTerminate = false;
-    auto ret = xTaskCreatePinnedToCore(sTaskFunc, mTag, mStackSize, this, mTaskPrio, &mTaskId,
-        mCpuCore < 0 ? tskNO_AFFINITY : mCpuCore);
-    switch(ret) {
-        case pdPASS:
-            assert(mTaskId);
-            return true;
-        case errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY:
-            ESP_LOGE(mTag, "%s: Out of memory", kTaskCreateErr);
-            break;
-        default:
-            ESP_LOGE(mTag, "%s: %d", kTaskCreateErr, ret);
-            break;
+    auto ret = mTask.createTask(mTag, mStackInPsram, mStackSize, mCpuCore < 0 ? tskNO_AFFINITY : mCpuCore, mTaskPrio,
+        this, AudioNodeWithTask::sTaskFunc);
+    if (!ret) {
+        ESP_LOGE(mTag, "Out of memory allocating task memory");
+        return false;
     }
-    assert(!mTaskId);
-    return false;
+    return true;
 }
 void AudioNodeWithTask::sTaskFunc(void* ctx)
 {
     auto self = static_cast<AudioNodeWithTask*>(ctx);
     self->setState(kStateStopped);
     self->nodeThreadFunc();
-    {
-        MutexLocker locker(self->mMutex);
-        self->mTaskId = nullptr;
-        self->setState(kStateTerminated);
-    }
-    vTaskDelete(nullptr);
+    self->setState(kStateTerminated);
 }
 
 bool AudioNodeWithTask::run()
@@ -93,7 +79,7 @@ bool AudioNodeWithTask::run()
             return true;
         }
         else if (currState == kStateTerminated) {
-            myassert(!mTaskId);
+            //myassert(!mTaskId);
             if (!createAndStartTask()) {
                 ESP_LOGE(mTag, "Error creating task for node");
                 return false;
