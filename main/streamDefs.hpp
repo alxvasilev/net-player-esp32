@@ -12,6 +12,7 @@ struct Codec {
         kCodecOpus,
         kCodecWav,
         kCodecPcm,
+        KCodecSbc,
         // ====
         kPlaylistM3u8,
         kPlaylistPls

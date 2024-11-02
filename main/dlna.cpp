@@ -584,13 +584,15 @@ void DlnaHandler::notifyMute(bool mute, int vol)
 }
 void DlnaHandler::notifyPlayStart()
 {
+    // called from AudioPlayer
     std::string xml;
     xml.reserve(200);
     std::string dur;
     auto trkInfo = mPlayer.trackInfo();
     dur = trkInfo ? msToHmsString(trkInfo->durationMs) : kZeroHmsTime;
+    const char* url = mPlayer.url();
     xml.append("&lt;TransportState val=&quot;PLAYING&quot;/&gt;&lt;CurrentTrackURI val=&quot;")
-       .append(mPlayer.url())
+       .append(url ? url : "")
        .append("&quot;/&gt;&lt;CurrentMediaDuration val=&quot;").append(dur)
        .append("&quot;/&gt;&lt;CurrentTrackDuration val=&quot;").append(dur)
        .append("&quot;/&gt;&lt;CurrentTransportActions val=&quot;Stop&quot;/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;");

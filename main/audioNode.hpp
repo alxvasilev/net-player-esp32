@@ -51,7 +51,7 @@ public:
     // events sent to the GUI via plSendEvent()
     enum { kEventAudioFormatChange,
            kEventNewStream, kEventStreamEnd, kEventTrackInfo,
-           kEventConnecting, kEventConnected,
+           kEventConnecting, kEventConnected, kEventDisconnected,
            kEventPlaying, kEventRecording, kEventBufUnderrun,
            kEventLast = kEventBufUnderrun };
     // we put here the state definitions only because the class name is shorter than AudioNodeWithTask

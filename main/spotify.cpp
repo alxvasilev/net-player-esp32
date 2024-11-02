@@ -14,6 +14,7 @@ AudioPlayer* SpotifyNode::sAudioPlayer = nullptr;
 const std::vector<uint8_t> SpotifyNode::sAudioAesIV = {
     0x72, 0xe0, 0x67, 0xfb, 0xdd, 0xcb, 0xcf, 0x77, 0xeb, 0xe8, 0xbc, 0x64, 0x3f, 0x63, 0x0d, 0x93
 };
+#define LOCK_PLAYER() MutexLocker locker(sAudioPlayer->mutex)
 
 void SpotifyNode::registerService(AudioPlayer& audioPlayer, MDns& mdns)
 {
@@ -73,11 +74,12 @@ void SpotifyNode::registerService(AudioPlayer& audioPlayer, MDns& mdns)
         // We have the blob, proceed to login
         if (sAudioPlayer->mode() != AudioPlayer::kModeSpotify) {
             ESP_LOGI(TAG, "Spotify auth successful, starting client");
+            LOCK_PLAYER();
             sAudioPlayer->switchMode(AudioPlayer::kModeSpotify, false);
             sAudioPlayer->play();
         }
         else {
-            ESP_LOGI(TAG, "==========Spotify node already running");
+            ESP_LOGI(TAG, "Spotify node already running");
         }
         return httpd_resp_sendstr(req,
             "{\"status\"=101,\"spotifyError\"=0,\"statusString\"=\"ERROR-OK\"}");
@@ -88,7 +90,7 @@ void SpotifyNode::registerService(AudioPlayer& audioPlayer, MDns& mdns)
         {{"VERSION", "1.0"}, {"CPath", "/spotify_info"}, {"Stack", "SP"}});
 }
 SpotifyNode::SpotifyNode(IAudioPipeline& parent)
-    : AudioNodeWithTask(parent, "spotify", 8192, 10, -1), mSpirc(*sLoginBlob, *this)
+    : AudioNodeWithTask(parent, "spotify", true, 8192, 10, -1), mSpirc(*sLoginBlob, *this)
 {
     mRingBuf.clearStopSignal();
 }
@@ -177,6 +179,7 @@ void SpotifyNode::play(uint32_t pos)
 void SpotifyNode::pause(bool paused)
 {
     ESP_LOGI(TAG, "Pause command");
+    LOCK_PLAYER();
     if (paused) {
         sAudioPlayer->pause();
     }
@@ -192,6 +195,7 @@ void SpotifyNode::nextTrack(bool nextPrev)
 void SpotifyNode::stopPlayback()
 {
     ESP_LOGI(TAG, "Stop command");
+    LOCK_PLAYER();
     sAudioPlayer->stop();
 }
 void SpotifyNode::seekMs(uint32_t pos)
@@ -201,12 +205,19 @@ void SpotifyNode::seekMs(uint32_t pos)
 void SpotifyNode::setVolume(uint8_t vol)
 {
     printf("=========== volume command: %d\n", vol);
+    LOCK_PLAYER();
     sAudioPlayer->volumeSet(vol);
 }
 void SpotifyNode::nodeThreadFunc()
 {
     ESP_LOGI(TAG, "Task started");
-    mSpirc.start();
+    try {
+        mSpirc.start();
+    }
+    catch(std::exception& ex) {
+        ESP_LOGE(TAG, "Error starting SPIRC: %s", ex.what());
+        return;
+    }
     for (;;) {
         try {
             while (mCmdQueue.numMessages() || !mCurrentTrack.get() || (mState == kStateStopped)) {

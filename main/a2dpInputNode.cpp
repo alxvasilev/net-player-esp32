@@ -14,7 +14,8 @@
 
 static const char *TAG = "a2dp_in";
 A2dpInputNode* A2dpInputNode::gSelf = nullptr;
-
+A2dpInputNode::ConnectCb A2dpInputNode::gConnectCb = nullptr;
+static const char* a2dpEventToStr(esp_a2d_cb_event_t event);
 static const char* audioStateToStr(esp_a2d_audio_state_t state)
 {
     switch(state) {
@@ -23,25 +24,64 @@ static const char* audioStateToStr(esp_a2d_audio_state_t state)
         default: return "(unknown)";
     }
 }
-
-void A2dpInputNode::eventCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param)
+void notifySourceConnected(esp_a2d_cb_event_t event)
 {
-    myassert(gSelf);
-    switch (event) {
-        case ESP_A2D_CONNECTION_STATE_EVT: {
-            uint8_t* bda = param->conn_stat.remote_bda;
-            ESP_LOGI(TAG, "Remote Bluetooth MAC: %02x:%02x:%02x:%02x:%02x:%02x",
-                     bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
-            auto state = param->conn_stat.state;
-            if (state == ESP_A2D_CONNECTION_STATE_DISCONNECTED) {
-                ESP_LOGI(TAG, "Disconnected");
-                gSelf->plSendEvent(kEventDisconnect);
-            } else if (state == ESP_A2D_CONNECTION_STATE_CONNECTED) {
-                ESP_LOGI(TAG, "Connected");
-                gSelf->plSendEvent(kEventConnect);
+}
+static int codeToSampleRate(uint8_t code)
+{
+    // defined in bt/host/bluedroid/stack/include/stack/a2d_sbc.h, but it's not public API
+    code &= 0xf0;
+    switch (code) {
+        case 0x20: return 44100;
+        case 0x10: return 48000;
+        case 0x40: return 32000;
+        case 0x80: return 16000;
+        default: return 44100;
+    }
+}
+static constexpr const char* kMsgIgnoring = ": ignoring - no instance to handle it";
+void A2dpInputNode::sEventCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param)
+{
+    if (event == ESP_A2D_CONNECTION_STATE_EVT) {
+        uint8_t* bda = param->conn_stat.remote_bda;
+        auto state = param->conn_stat.state;
+        if (state == ESP_A2D_CONNECTION_STATE_CONNECTING) {
+            //memcpy(gSelf->mPeerAddr, bda, sizeof(gSelf->mPeerAddr));
+            ESP_LOGI(TAG, "Peer %02x:%02x:%02x:%02x:%02x:%02x connected",
+                bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
+            gConnectCb();
+            if (!gSelf) {
+                ESP_LOGW(TAG, "...app didn't create A2DP sink, ignoring event");
             }
-            break;
+            return;
         }
+        if (!gSelf) {
+            ESP_LOGW(TAG, "Ignoring CONNECTION_STATE_EVT(%d): no instance to handle it", state);
+            return;
+        }
+        if (state == ESP_A2D_CONNECTION_STATE_DISCONNECTED) {
+            ESP_LOGI(TAG, "Peer %02x:%02x:%02x:%02x:%02x:%02x disconnected",
+                bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
+            //memset(gSelf->mPeerAddr, 0, sizeof(gSelf->mPeerAddr));
+            gSelf->plSendEvent(kEventDisconnected);
+        }
+        return;
+    }
+    else if (event == ESP_A2D_PROF_STATE_EVT) {
+        auto state = param->a2d_prof_stat.init_state;
+        if (state == ESP_A2D_INIT_SUCCESS) {
+            ESP_LOGW(TAG, "A2DP initialized");
+        }
+        else if (state == ESP_A2D_DEINIT_SUCCESS) {
+            ESP_LOGW(TAG, "A2DP de-initialized");
+        }
+        return;
+    }
+    if (!gSelf) {
+        ESP_LOGW(TAG, "Ignoring A2DP event %s: no instance to handle it", a2dpEventToStr(event));
+        return;
+    }
+    switch(event) {
         case ESP_A2D_AUDIO_STATE_EVT: {
             auto state = param->audio_stat.state;
             ESP_LOGD(TAG, "Audio state: %s", audioStateToStr(state));
@@ -57,83 +97,111 @@ void A2dpInputNode::eventCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *
         case ESP_A2D_AUDIO_CFG_EVT: {
             ESP_LOGI(TAG, "Audio stream configuration, codec type %d", param->audio_cfg.mcc.type);
             if (param->audio_cfg.mcc.type == ESP_A2D_MCT_SBC) {
-                char oct0 = param->audio_cfg.mcc.cie.sbc[0];
-                int samplerate;
-                if (oct0 & (0x01 << 6)) {
-                    samplerate = 32000;
-                } else if (oct0 & (0x01 << 5)) {
-                    samplerate = 44100;
-                } else if (oct0 & (0x01 << 4)) {
-                    samplerate = 48000;
-                } else {
-                    samplerate = 16000;
-                }
+                int samplerate = codeToSampleRate(param->audio_cfg.mcc.cie.sbc[0]);
                 ESP_LOGI(TAG, "Bluetooth configured, sample rate=%d", samplerate);
-                if (samplerate == gSelf->mFormat.sampleRate()) {
-                    return;
+                if (samplerate != gSelf->mFormat.sampleRate()) {
+                    StreamFormat fmt(Codec::KCodecSbc, samplerate, 16, 2);
+                    gSelf->postStreamStart(fmt);
                 }
-                // TODO: Flush ringbuffer
-                gSelf->mFormat.setNumChannels(2);
-                gSelf->mFormat.setBitsPerSample(16);
-                gSelf->mFormat.setSampleRate(samplerate);
             }
             break;
         }
         default:
-            ESP_LOGI(TAG, "Unhandled A2DP event: %d", event);
+            ESP_LOGI(TAG, "Unhandled A2DP event %s(%d)", a2dpEventToStr(event), event);
             break;
     }
 }
-
-void A2dpInputNode::dataCallback(const uint8_t* data, uint32_t len)
+void A2dpInputNode::postStreamStart(StreamFormat fmt)
 {
-//    ESP_LOGI(TAG, "Recv %d bytes, writing to ringbuf(%d)", len, gSelf->mRingBuf.totalDataAvail());
+    if (!mFormat) {
+        plSendEvent(kEventConnected);
+    }
+    mFormat = fmt;
+    mRingBuf.pushBack(new NewStreamEvent(mPipeline.getNewStreamId(), fmt, 16));
+}
+void A2dpInputNode::sDataCallback(const uint8_t* data, uint32_t len)
+{
+    if (!gSelf || gSelf->state() != AudioNode::kStateRunning) {
+        return;
+    }
     auto pkt = DataPacket::create(len);
     memcpy(pkt->data, data, len);
-    if (!gSelf->mRingBuf.pushBack(pkt)) {
-        gSelf->stop(false);
-    }
+    gSelf->mRingBuf.pushBack(pkt);
 }
-
-A2dpInputNode::A2dpInputNode(IAudioPipeline& parent, const char* btName)
-: AudioNodeWithState(parent, TAG)
+bool A2dpInputNode::install(ConnectCb connectCb, bool becomeDiscoverable)
+{
+    if (!BtStack.started()) {
+        ESP_LOGE(TAG, "Bluetooth stack not started");
+        return false;
+    }
+    gConnectCb = connectCb;
+    esp_a2d_register_callback(sEventCallback);
+    esp_a2d_sink_register_data_callback(sDataCallback);
+    esp_a2d_sink_init();
+    if (becomeDiscoverable) {
+        auto err = BtStack.becomeDiscoverableAndConnectable();
+        if (!err) {
+            ESP_LOGW(TAG, "Device is now discoverable");
+        }
+        else {
+            ESP_LOGW(TAG, "Error %s becoming discoverable", esp_err_to_name(err));
+            return false;
+        }
+    }
+    return true;
+}
+void A2dpInputNode::uninstall()
+{
+    esp_a2d_register_callback(nullptr);
+    esp_a2d_sink_register_data_callback(nullptr);
+    esp_a2d_sink_deinit();
+}
+A2dpInputNode::A2dpInputNode(IAudioPipeline& parent): AudioNodeWithState(parent, TAG)
 {
     if (gSelf) {
         ESP_LOGE(TAG, "Only a single instance is allowed, and one already exists");
         abort();
     }
     gSelf = this;
-    if (!BtStack.started()) {
-        BtStack.start(ESP_BT_MODE_CLASSIC_BT, btName);
+}
+void A2dpInputNode::onStopped()
+{
+    auto err = esp_a2d_sink_disconnect(mPeerAddr);
+    if (err) {
+        ESP_LOGW(mTag, "Error %s disconnecting bluetooth soure", esp_err_to_name(err));
     }
-}
-
-bool A2dpInputNode::doRun()
-{
-    esp_a2d_register_callback(eventCallback);
-    esp_a2d_sink_register_data_callback(dataCallback);
-    esp_a2d_sink_init();
-    /* set discoverable and connectable mode, wait to be connected */
-    BtStack.becomeDiscoverableAndConnectable();
-    setState(kStateRunning);
-    return true;
-}
-void A2dpInputNode::doStop()
-{
-    esp_a2d_sink_deinit();
-    setState(kStateStopped);
+    else {
+        printf("=============== Succcess calling sink_disconnect\n");
+    }
 }
 A2dpInputNode::~A2dpInputNode()
 {
+    gSelf = nullptr;
 }
 StreamEvent A2dpInputNode::pullData(PacketResult& dpr)
 {
     auto pkt = mRingBuf.popFront();
     if (pkt) {
-        dpr.packet.reset(pkt);
-        return kEvtData;
+        return dpr.set(pkt);
     }
     else {
         return kErrStreamStopped;
     }
 }
+#define EVTCASE(name) case ESP_A2D_##name: return #name
+const char* a2dpEventToStr(esp_a2d_cb_event_t event)
+{
+    switch(event) {
+        EVTCASE(CONNECTION_STATE_EVT);
+        EVTCASE(AUDIO_STATE_EVT);
+        EVTCASE(AUDIO_CFG_EVT);
+        EVTCASE(MEDIA_CTRL_ACK_EVT);
+        EVTCASE(PROF_STATE_EVT);
+        EVTCASE(SNK_PSC_CFG_EVT);
+        EVTCASE(SNK_SET_DELAY_VALUE_EVT);
+        EVTCASE(SNK_GET_DELAY_VALUE_EVT);
+        EVTCASE(REPORT_SNK_DELAY_VALUE_EVT);
+        default: return "(unknown)";
+    }
+}
+

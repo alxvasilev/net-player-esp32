@@ -50,15 +50,16 @@ const char* Codec::toString() const
         case kCodecVorbis: return "vorbis"; // transport is always ogg
         case kCodecWav: return "wav";
         case kCodecPcm: return "pcm";
+        case KCodecSbc: return "sbc";
         case kCodecUnknown:
         default:
             if (transport == kTransportOgg) {
-                return "unknown/ogg";
+                return "unk/ogg";
             }
             else if (transport == kTransportMpeg) {
-                return "unknown/mpeg";
+                return "unk/mpeg";
             }
-            return "(unknown)";
+            return "(unk)";
     }
 }
 const char* Codec::fileExt() const {

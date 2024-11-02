@@ -30,6 +30,7 @@
 #include <new>
 #include "../recovery/main/rtcSharedMem.hpp"
 #include "audioPlayer.hpp"
+#include "a2dpInputNode.hpp"
 //#include "bt_keyboard.hpp"
 
 #define DEV_MODE 1
@@ -175,7 +176,7 @@ extern "C" void* my_calloc(size_t num, size_t size)
 extern "C" void esp_restart_noos(void) __attribute__ ((noreturn));
 
 void startBtKeyaboard();
-
+void a2dpOnPeerConnect();
 extern "C" void app_main(void)
 {
 //  esp_log_level_set("*", ESP_LOG_DEBUG);
@@ -189,9 +190,9 @@ extern "C" void app_main(void)
     /* Initialize NVS — it is used to store PHY calibration data */
     nvsSimple.init("aplayer", true);
 
-//    auto before = xPortGetFreeHeapSize();
-//    BtStack.disableCompletely(); //BLE();
-//    ESP_LOGW(TAG, "Releasing BLE Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
+//  auto before = xPortGetFreeHeapSize();
+//  BtStack.disableCompletely(); //BLE();
+//  ESP_LOGW(TAG, "Releasing BLE Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
 
     lcd.puts("Starting Bluetooth...\n");
     int beforeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
@@ -200,7 +201,6 @@ extern "C" void app_main(void)
     ESP_LOGW(TAG, "Starting bluetooth consumed %d bytes of internal and %d bytes of external RAM",
              beforeInt - heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              beforeExt - heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-    BtStack.becomeDiscoverableAndConnectable();
     lcd.puts("Mounting SPIFFS...\n");
     mountSpiffs();
     connectToWifi(!gpio_get_level(kPinButton));
@@ -220,26 +220,33 @@ extern "C" void app_main(void)
 //====
     lcd.puts("Starting Player...\n");
     player.reset(new AudioPlayer(lcd, gHttpServer));
-    MutexLocker locker(player->mutex);
-    if (player->inputType() == AudioNode::kTypeHttpIn) {
-        ESP_LOGI(TAG, "Player input set to HTTP stream");
-        player->playStation(nullptr);
+    {
+        MutexLocker locker(player->mutex);
+        if (player->mode() == AudioPlayer::kModeRadio) {
+            ESP_LOGI(TAG, "Player input set to HTTP stream");
+            player->playStation(".");
+        }
     }
-    else if (player->inputType() == AudioNode::kTypeA2dpIn) {
-        ESP_LOGI(TAG, "Player input set to Bluetooth A2DP sink");
-        player->play();
-        /*
-                BluetoothStack::start(ESP_BT_MODE_BLE, "test");
-
-                BluetoothStack::discoverDevices([](BluetoothStack::DeviceList& devices) {
-                    for (auto& item: devices) {
-                        ESP_LOGI(TAG, "%s(%s): class: %x, rssi: %d", item.second.name.c_str(),
-                                 item.first.toString().c_str(), item.second.devClass, item.second.rssi);
-                    }
-                });
-        */
+    /*
+        BluetoothStack::start(ESP_BT_MODE_BLE, "test");
+        BluetoothStack::discoverDevices([](BluetoothStack::DeviceList& devices) {
+            for (auto& item: devices) {
+                ESP_LOGI(TAG, "%s(%s): class: %x, rssi: %d", item.second.name.c_str(),
+                    item.first.toString().c_str(), item.second.devClass, item.second.rssi);
+            }
+        });
     }
+    */
     ESP_LOGI(TAG, "player started");
+    vTaskDelay(200);
+    printf("registering a2dp...\n");
+    A2dpInputNode::install(a2dpOnPeerConnect, true);
+}
+void a2dpOnPeerConnect()
+{
+    MutexLocker locker(player->mutex);
+    player->switchMode(AudioPlayer::kModeBluetoothSink);
+    player->play();
 }
 
 static esp_err_t indexUrlHandler(httpd_req_t *req)

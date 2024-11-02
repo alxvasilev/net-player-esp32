@@ -23,16 +23,21 @@ using namespace cspot;
 static const char* TAG = "mercury";
 
 MercurySession::MercurySession(const LoginBlob& loginBlob, TimeProvider& aTimeProvider)
-    : bell::Task("cspot-client", 4 * 1024, 3, 1, false),
-      Session(loginBlob), mTimeProvider(aTimeProvider)
+    : Session(loginBlob), mTimeProvider(aTimeProvider)
 {
+}
+void MercurySession::startTask()
+{
+    createTask("cspot-client", false, 4096, 1, 3, this, [](void* arg) {
+        static_cast<MercurySession*>(arg)->taskFunc();
+    });
 }
 
 MercurySession::~MercurySession() {
   std::scoped_lock lock(this->isRunningMutex);
 }
 
-void MercurySession::runTask() {
+void MercurySession::taskFunc() {
   isRunning = true;
   std::scoped_lock lock(this->isRunningMutex);
 

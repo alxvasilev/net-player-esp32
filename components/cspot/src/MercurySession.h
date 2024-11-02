@@ -9,7 +9,7 @@
 #include <unordered_map>  // for unordered_map
 #include <vector>         // for vector
 
-#include "BellTask.h"             // for Task
+#include "task.hpp"
 #include "Packet.h"               // for Packet
 #include "Queue.h"                // for Queue
 #include "Session.h"              // for Session
@@ -18,10 +18,11 @@
 namespace cspot {
 class TimeProvider;
 
-class MercurySession : public bell::Task, public cspot::Session {
+class MercurySession : public Task, public cspot::Session {
  public:
   MercurySession(const LoginBlob& loginBlob, TimeProvider& timeProvider);
   ~MercurySession();
+  void startTask();
   typedef std::vector<std::vector<uint8_t>> DataParts;
 
   struct Response {
@@ -99,7 +100,7 @@ class MercurySession : public bell::Task, public cspot::Session {
   Header tempMercuryHeader = {};
   ConnectionEstabilishedCallback connectionReadyCallback = nullptr;
 
-  void runTask() override;
+  void taskFunc();
   void reconnect();
   void handlePacket(Packet& packet);
 

@@ -166,7 +166,7 @@ protected:
     static esp_err_t changeInputUrlHandler(httpd_req_t *req);
     static AudioNode::Type playerModeToInNodeType(PlayerMode mode);
     void registerHttpGetHandler(const char* path, esp_err_t(*handler)(httpd_req_t*));
-    bool doPlayUrl(const char* url, PlayerMode playerMode, const char* record=nullptr);
+    bool doPlayUrl(TrackInfo* track, PlayerMode playerMode, const char* record=nullptr);
 public:
     Mutex mutex;
     http::Server& httpServer() const { return mHttpServer; }
@@ -183,7 +183,7 @@ public:
     void switchMode(PlayerMode playerMode, bool persist=false);
     bool playUrl(const char* url, PlayerMode playerMode, const char* record=nullptr);
     bool playUrl(TrackInfo* trackInfo, PlayerMode playerMode, const char* record=nullptr);
-    std::string url() const;
+    const char* url() const; // needed by DLNA
     esp_err_t playStation(const char* id);
     bool isStopped() const;
     bool isPaused() const;

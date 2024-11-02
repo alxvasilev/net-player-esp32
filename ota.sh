@@ -2,7 +2,7 @@
 set -e
 
 source `dirname "$0"`/esp-host.sh
-RETRY="--retry 20 --retry-connrefused --connect-timeout 1 --retry-delay 0"
+RETRY="--retry 20 --retry-connrefused --connect-timeout 1 --retry-delay 1"
 
 ISRECOVERY=`curl -s -S $RETRY -o /dev/null -w "%{http_code}" http://${ESP_HOST}:80/isrecovery`
 if [ "$ISRECOVERY" != "200" ]; then

@@ -163,7 +163,7 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         break;
     }
     case AudioNode::kTypeA2dpIn:
-        mStreamIn.reset(new A2dpInputNode(*this, "NetPlayer"));
+        mStreamIn.reset(new A2dpInputNode(*this));
         mDecoder.reset();
         pcmSource = mStreamIn.get();
         break;
@@ -223,15 +223,18 @@ void AudioPlayer::lcdDrawGui()
 }
 void AudioPlayer::setPlayerMode(PlayerMode mode)
 {
-    if (mPlayerMode != mode) {
-        mPlayerMode = mode;
-        mLcd.setFont(font_Camingo22);
-        mLcd.setBgColor(0, 0, 128);
-        mLcd.clear(0, 0, mLcd.width(), mLcd.fontHeight() + 2);
-        mLcd.setFgColor(kLcdColorCaption);
-        mLcd.gotoXY(1, 1);
-        mLcd.puts(playerModeToStr(mPlayerMode));
+    if (mPlayerMode == mode) {
+        return;
     }
+    mPlayerMode = mode;
+    mTrackInfo.reset();
+    lcdUpdateTrackDisplay();
+    mLcd.setFont(font_Camingo22);
+    mLcd.setBgColor(0, 0, 128);
+    mLcd.clear(0, 0, mLcd.width(), mLcd.fontHeight() + 2);
+    mLcd.setFgColor(kLcdColorCaption);
+    mLcd.gotoXY(1, 1);
+    mLcd.puts(playerModeToStr(mPlayerMode));
 }
 void AudioPlayer::lcdUpdateTrackDisplay()
 {
@@ -337,7 +340,6 @@ std::string AudioPlayer::printPipeline()
 
 void AudioPlayer::switchMode(PlayerMode playerMode, bool persist)
 {
-    LOCK_PLAYER();
     if (mPlayerMode == playerMode) {
         return;
     }
@@ -346,7 +348,6 @@ void AudioPlayer::switchMode(PlayerMode playerMode, bool persist)
     }
     auto oldType = mStreamIn ? mStreamIn->type() : 0;
     auto newType = playerModeToInNodeType(playerMode);
-    setPlayerMode(playerMode);
     if (newType != oldType) {
         destroyPipeline();
         if (persist) {
@@ -356,6 +357,7 @@ void AudioPlayer::switchMode(PlayerMode playerMode, bool persist)
             createPipeline(newType, AudioNode::kTypeI2sOut);
         }
     }
+    setPlayerMode(playerMode); // must be after the pipeline update, because it gets info from input nodes
 }
 
 void AudioPlayer::loadSettings()
@@ -380,71 +382,51 @@ void AudioPlayer::destroyPipeline()
     mStreamOut.reset();
 }
 
-bool AudioPlayer::doPlayUrl(const char* url, PlayerMode playerMode, const char* record)
+bool AudioPlayer::doPlayUrl(TrackInfo* trackInfo, PlayerMode playerMode, const char* record)
 {
-    if (!(playerMode & AudioNode::kTypeHttpIn) || !mStreamIn) {
-        mTrackInfo.reset();
-        return false;
-    }
-    setPlayerMode(playerMode);
-    lcdResetNetSpeedIndication();
+    switchMode(playerMode, false);
+    mTrackInfo.reset(trackInfo);
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
-    auto urlInfo = HttpNode::UrlInfo::Create(url, getNewStreamId(), record);
     // setUrl will start the http node, if it's stopped. However, this may take a while.
     // If we meanwhile start the i2s out node, it will start to pull data from the not-yet-started http node,
     // whose state may not be set up correctly for the new stream (i.e. waitingPrefill not set)
     stop(nullptr);
-    /*
-    if (mVuLevelInterface) {
-        mVuLevelInterface->clearAudioLevels();
-    }
-    */
-    http.setUrlAndStart(urlInfo);
+    lcdUpdateTrackDisplay();
+    lcdResetNetSpeedIndication();
+    http.setUrlAndStart(HttpNode::UrlInfo::Create(trackInfo->url, getNewStreamId(), record));
     if (http.waitForState(AudioNode::kStateRunning, 10000) != AudioNode::kStateRunning) {
         return false;
     }
-    lcdUpdateTrackDisplay();
-    /*
-    mDecoder->run();
-    lcdUpdateTrackDisplay();
-    mStreamOut->run();
-    if (mDlna) {
-        mDlna->notifyPlayStart();
-    }
-    */
     play();
     return true;
 }
 bool AudioPlayer::playUrl(const char* url, PlayerMode playerMode, const char* record)
 {
-    mTrackInfo.reset();
-    return doPlayUrl(url, playerMode, record);
+    return doPlayUrl(TrackInfo::Create(url, nullptr, nullptr, 0), playerMode, record);
 }
 bool AudioPlayer::playUrl(TrackInfo* trackInfo, PlayerMode playerMode, const char* record)
 {
-    mTrackInfo.reset(trackInfo);
-    return doPlayUrl(trackInfo->url, playerMode, record);
+    return doPlayUrl(trackInfo, playerMode, record);
 }
-std::string AudioPlayer::url() const
+const char* AudioPlayer::url() const // needed by DLNA
 {
     if (!mStreamIn || mStreamIn->type() != AudioNode::kTypeHttpIn) {
-        return std::string();
+        return nullptr;
     }
     if (mTrackInfo) {
         return mTrackInfo->url;
-    } else {
-        auto& http = *static_cast<HttpNode*>(mStreamIn.get());
-        MutexLocker locker(http.mMutex);
-        auto url = http.url();
-        return url ? url : std::string();
     }
+    auto& http = *static_cast<HttpNode*>(mStreamIn.get());
+    return http.url();
 }
 esp_err_t AudioPlayer::playStation(const char* id)
 {
+    myassert(id);
+    switchMode(kModeRadio, false);
     if (!this->stationList) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (!id) {
+    if (strcmp(id, ".") == 0) { // "." = current station
         if (!this->stationList->currStation.isValid() && !this->stationList->next()) {
             return ESP_ERR_NOT_FOUND;
         }
@@ -673,8 +655,8 @@ esp_err_t AudioPlayer::playUrlHandler(httpd_req_t *req)
         self->playUrl(param.str, kModeUrl, nullptr);
         buf.printf("Playing url '%s'", param.str);
     }
-    else {
-        auto err = self->playStation(params.strVal("sta").str);
+    else if ((param = params.strVal("sta"))) {
+        auto err = self->playStation(param.str);
         if (err != ESP_OK) {
             switch(err) {
                 case ESP_ERR_INVALID_STATE:
@@ -1241,17 +1223,8 @@ void AudioPlayer::lcdUpdateCodec()
 {
     enum { kMaxLen = 8 };
     char buf[kMaxLen + 1];
-    char* wptr = buf;
-    const char* end = buf + kMaxLen;
-    const char* name = mStreamFormat.codec().toString();
-    do {
-        *(wptr++) = *(name++);
-    } while (*name && wptr < end);
-
-    while(wptr < end) {
-        *(wptr++) = ' ';
-    }
-    *wptr = 0;
+    strncpy(buf, mStreamFormat.codec().toString(), kMaxLen);
+    buf[kMaxLen] = 0;
     lcdWriteStreamInfo(0, buf);
 }
 void AudioPlayer::lcdUpdateAudioFormat()
