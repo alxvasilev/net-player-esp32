@@ -1,0 +1,16 @@
+esp_bt_mem_release(mode) releases the following RAM areas, adding the to the allocator:
+     - Controller memory (~54K) in SRAM2: 4 areas, freed by esp_bt_controller_rom_mem_release():
+            [0x3ffae6e0] - [0x3ffaff10] (6192 bytes)
+            [0x3ffb0000] - [0x3ffb7cd8] (31960 bytes)
+            [0x3ffb8000] - [0x3ffb9a20] (6688 bytes)
+            [0x3ffbdb28] - [0x3ffbdb5c] (52 bytes)
+     - The BSS and DATA sections of two libs, only if mode is ESP_BT_MODE_BTDM:
+         - the controller lib - libbtdm_app.a, which is a firmware BLOB, whose sections are described in /components/bt/linker_rw_bt_controller.lf
+         - libbt.a, described in /components/bt/linker_common.lf
+         - The sizes of these sections, dumped from esp_bt_mem_release() are:
+            bt_bss: 2636
+            cont_bss: 464
+            bt_data: 4560
+            cont_data: 32
+
+esp_bt_controller_disable() calls the function btdm_controller_disable() of the btdm_app.a BLOB

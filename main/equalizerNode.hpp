@@ -1,6 +1,6 @@
 #ifndef EQUALIZERNODE_HPP
 #define EQUALIZERNODE_HPP
-#define BQ_DEBUG
+//#define BQ_DEBUG
 #include "equalizer.hpp"
 #include "audioNode.hpp"
 #include "volume.hpp"
@@ -74,6 +74,7 @@ class EqualizerNode: public AudioNode, public DefaultVolumeImpl
 protected:
     enum { kMyEqMinBands = 3, kMyEqMaxBands = 10, kMyEqDefaultNumBands = 8 };
     typedef void(EqualizerNode::*PreConvertFunc)(PacketResult& pr);
+    typedef void(EqualizerNode::*PostConvertFunc)(DataPacket& pkt);
     NvsHandle& mNvsHandle;
     StreamFormat mInFormat;
     StreamFormat mOutFormat;
@@ -81,6 +82,7 @@ protected:
     std::unique_ptr<IEqualizerCore> mCore;
     IEqualizerCore::ProcessFunc mProcessFunc = nullptr;
     bool mUseEspEq;
+    bool mOut24bit;
     uint8_t mMyEqDefaultNumBands;
     bool mBypass = false;
     bool mCoreChanged = false;
@@ -91,6 +93,7 @@ protected:
     std::unique_ptr<int8_t[]> mGains;
     float mFloatVolumeMul = 1.0;
     PreConvertFunc mPreConvertFunc = nullptr;
+    PostConvertFunc mPostConvertFunc = nullptr;
     std::string eqNameKey() const;
     std::string eqConfigKey(uint8_t nBands) const;
     void loadEqConfig(uint8_t nBands);
@@ -101,7 +104,7 @@ protected:
     template <typename S>
     void samples16or8ToFloatAndApplyVolume(PacketResult& pr);
     void floatSamplesTo24bitAndGetLevelsStereo(DataPacket& pkt);
-    void floatSamplesTo24bitAndGetLevelsMono(DataPacket& pkt);
+    void floatSamplesTo16bitAndGetLevelsStereo(DataPacket& pkt);
     template<int Bps>
     void samplesTo16bitAndApplyVolume(PacketResult& pr);
 public:

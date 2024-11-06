@@ -64,7 +64,7 @@ void AudioPlayer::createOutputA2dp()
 }
 AudioNode::Type AudioPlayer::playerModeToInNodeType(PlayerMode mode)
 {
-    return mode & AudioNode::kTypeHttpIn ? AudioNode::kTypeHttpIn : (AudioNode::Type)mode;
+    return (uint8_t)mode & (uint8_t)AudioNode::kTypeHttpIn ? AudioNode::kTypeHttpIn : (AudioNode::Type)mode;
 }
 
 AudioPlayer::AudioPlayer(ST7735Display& lcd, http::Server& httpServer, PlayerMode mode, AudioNode::Type outType)
@@ -177,14 +177,14 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
 
     switch(outType) {
     case AudioNode::kTypeI2sOut: {
-        uint8_t dmaBufCnt = mNvsHandle.readDefault<uint8_t>("i2s.dmaBufCnt", kI2sDmaBufCnt);
-        if (dmaBufCnt < 2 || dmaBufCnt > 64) {
-            ESP_LOGE(TAG, "Bad i2s.dmaBufCnt config value %u, defaulting to %u", dmaBufCnt,
-                kI2sDmaBufCnt);
-            dmaBufCnt = kI2sDmaBufCnt;
+        uint8_t dmaBufTimeMs = mNvsHandle.readDefault<uint8_t>("i2s.dmaBufMs", kI2sDmaBufMs);
+        if (dmaBufTimeMs < 30 || dmaBufTimeMs > 200) {
+            ESP_LOGE(TAG, "Bad i2s.dmaBufMs config value %u, defaulting to %u", kI2sDmaBufMs,
+                kI2sDmaBufMs);
+            dmaBufTimeMs = kI2sDmaBufMs;
         };
         I2sOutputNode::PinCfg cfg = {.port = 0, .dout = 27, .ws = 25, .bclk = 26};
-        mStreamOut.reset(new I2sOutputNode(*this, cfg, kI2sStackSize, dmaBufCnt, kI2sCpuCore));
+        mStreamOut.reset(new I2sOutputNode(*this, cfg, kI2sStackSize, dmaBufTimeMs, kI2sCpuCore));
         break;
     }
     /*
@@ -543,7 +543,10 @@ uint8_t AudioPlayer::volumeSet(uint8_t vol)
             vol = mVolumeInterface->getVolume();
         }
     }
-    mNvsHandle.write("volume", vol);
+    // avoid writing directly to flash from this thread, as it is called by PSRAM-based threads
+    asyncCall([this, vol]() {
+        mNvsHandle.write("volume", vol);
+    });
     if (mDlna.get()) {
         mDlna->notifyVolumeChange(vol);
     }
@@ -1033,7 +1036,7 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
             LOCK_PLAYER();
             ElapsedTimer t;
             lcdUpdateTrackTitle(title.c_str());
-            printf("set title: %lld\n", t.usElapsed());
+            printf("set title: %d\n", t.msElapsed());
         });
     }
     else if (event == AudioNode::kEventNewStream) {
@@ -1062,7 +1065,7 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
                 case AudioNode::kEventBufUnderrun:
                     return lcdShowBufUnderrunImmediate(); break;
                 case AudioNode::kEventStreamEnd:
-                    if (mPlayerMode & AudioNode::kTypeFlagPlayerCtrl) {
+                    if ((uint8_t)mPlayerMode & (uint8_t)AudioNode::kTypeFlagPlayerCtrl) {
                         break;
                     }
                     else if (numArg == mCurrentStreamId) {
@@ -1213,7 +1216,8 @@ void AudioPlayer::onNewStream(StreamFormat fmt, int sourceBps)
     lcdUpdateAudioFormat();
     mTitleScrollEnabled = mLcdTrackTitle.dataSize() && !streamIsCpuHeavy();
     mBufLowThreshold = fmt.prefillAmount() / 4;
-    mBufLowDisplayGradient = (mBufLowThreshold + 46) / 47;
+    enum { kDiv = 63 - kBufLowMinGreen };
+    mBufLowDisplayGradient = (mBufLowThreshold + kBufLowMinGreen - 1) / kBufLowMinGreen;
 }
 bool AudioPlayer::streamIsCpuHeavy() const
 {
@@ -1261,20 +1265,22 @@ void AudioPlayer::lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize)
     int whole = speed / 1024;
     int dec = ((speed % 1024) * 10 + 512) / 1024;
     if (dec >= 10) {
-        dec -= 1;
+        dec = 0;
         whole++;
     }
     auto end = vtsnprintf(buf, sizeof(buf), fmtInt(whole, 0, 4), '.', dec, "K/s");
     LcdColor color;
-    // printf("buf: %u\n", bufDataSize);
+    //printf("===========buf: '%s', val: %lu\n", buf, speed);
     if (bufDataSize >= mBufLowThreshold) {
         color = kLcdColorNetSpeed_Normal;
-    } else if (bufDataSize == 0) {
+    }
+    else if (bufDataSize == 0) {
         color = kLcdColorNetSpeed_Underrun;
-    } else {
-        uint8_t green = 16 + bufDataSize / mBufLowDisplayGradient;
+    }
+    else {
+        uint8_t green = kBufLowMinGreen + bufDataSize / mBufLowDisplayGradient;
         assert(green < 64);
-        // printf("buf: %u, green=%d\n", bufDataSize, green);
+        //printf("buf: %u, green=%d\n", bufDataSize, green);
         color.rgb(255, green << 2, 128);
     }
     mLcd.setFont(kStreamInfoFont);
@@ -1285,7 +1291,7 @@ void AudioPlayer::lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize)
 void AudioPlayer::lcdShowBufUnderrunImmediate()
 {
     mDisplayedBufUnderrunTimer = 1;
-    lcdRenderNetSpeed(mLastShownNetSpeed, 0);
+    lcdRenderNetSpeed(mLastShownNetSpeed < 0 ? 0 : mLastShownNetSpeed, 0);
 }
 void AudioPlayer::lcdResetNetSpeedIndication()
 {

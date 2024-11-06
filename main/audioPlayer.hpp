@@ -60,15 +60,14 @@ protected:
     enum: uint8_t
     { kEventTerminating = 1, kEventScroll = 2, kEventVolLevel = 4, kEventTerminated = 8 };
     enum {
-        kI2sStackSize = 4096, kI2sCpuCore = 0,
-        kI2sDmaBufCnt = 4, // 1 buffer is 1024 samples
+        kI2sStackSize = 2700, kI2sCpuCore = 0, kI2sDmaBufMs = 80,
         kLcdTaskStackSize = 2200, kLcdTaskPrio = 20, kLcdTaskCore = 1,
         kMaxTrackTitleLen = 100
     };
     enum {
-        kLcdArtistNameLineY = 38, kLcdPlayStateLineY = 76, kLcdTrackTitleY = 106
+        kLcdArtistNameLineY = 38, kLcdPlayStateLineY = 76, kLcdTrackTitleY = 106,
+        kBufLowMinGreen = 32 // minimum green component of low (but not underrun) buf netspeed color
     };
-
     enum {
         kSymBlank = 32,
         kSymFavorite = 33,
@@ -109,7 +108,7 @@ protected:
     int16_t mTitleScrollPixOffset = 0;
     bool mTitleScrollEnabled = false;
     int8_t mTitleScrollStep = 1;
-    uint32_t mLastShownNetSpeed = 0xffffffff;
+    int32_t mLastShownNetSpeed = -1;
     uint8_t mLatchedBufUnderrunState = 0xff;
     uint8_t mDisplayedBufUnderrunTimer = 0;
     StreamFormat mStreamFormat;

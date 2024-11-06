@@ -22,6 +22,7 @@ EqualizerNode::EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs)
         mMyEqDefaultNumBands = kMyEqDefaultNumBands;
     }
     mUseEspEq = mNvsHandle.readDefault("eq.useStock", (uint8_t)1);
+    mOut24bit = mNvsHandle.readDefault("eq.out24bit", (uint8_t)0);
     size_t len = sizeof(mEqName);
     if (mNvsHandle.readString("eq.default", mEqName, len) == ESP_OK) {
         mEqName[len] = 0;
@@ -118,7 +119,7 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
         }
     }
     else { // need custom eq
-        mOutFormat.setBitsPerSample(24);
+        mOutFormat.setBitsPerSample(mOut24bit ? 24 : 16);
         bool isDefault = (strcmp(mEqName, "default") == 0);
         if (fmtChanged || !mCore || mCore->type() != IEqualizerCore::kTypeCustom ||
           (isDefault && (mCore->numBands() != mMyEqDefaultNumBands))) {
@@ -142,6 +143,9 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
                 ESP_LOGE(TAG, "Unsupported bits per sample: %d", bps);
                 assert(false);
             }
+            mPostConvertFunc = mOut24bit
+                ? &EqualizerNode::floatSamplesTo24bitAndGetLevelsStereo
+                : &EqualizerNode::floatSamplesTo16bitAndGetLevelsStereo;
             justCreated = true;
         }
     }
@@ -392,16 +396,26 @@ void EqualizerNode::floatSamplesTo24bitAndGetLevelsStereo(DataPacket& pkt) {
     mAudioLevels.left = leftPeak >> 16;
     mAudioLevels.right = rightPeak >> 16;
 }
-void EqualizerNode::floatSamplesTo24bitAndGetLevelsMono(DataPacket& pkt) {
-    float* end = (float*)(pkt.data + pkt.dataLen);
-    int32_t peak = 0;
-    for (float* sptr = (float*)pkt.data; sptr < end; sptr++) {
-        int32_t ival = *((int32_t*)sptr) = lroundf(*sptr) << 8;
-        if (ival > peak) {
-            peak = ival;
+void EqualizerNode::floatSamplesTo16bitAndGetLevelsStereo(DataPacket& pkt)
+{
+    float* rend = (float*)(pkt.data + pkt.dataLen);
+    int16_t leftPeak = 0;
+    int16_t rightPeak = 0;
+    float* rptr = (float*)pkt.data;
+    int16_t* wptr = (int16_t*)pkt.data;
+    while(rptr < rend) {
+        int16_t ival = *wptr++ = lroundf(*rptr++) >> 8;
+        if (ival > leftPeak) {
+            leftPeak = ival;
+        }
+        ival = *wptr++ = lroundf(*rptr++) >> 8;
+        if (ival > rightPeak) {
+            rightPeak = ival;
         }
     }
-    mAudioLevels.left = mAudioLevels.right = peak;
+    pkt.dataLen >>= 1;
+    mAudioLevels.left = leftPeak;
+    mAudioLevels.right = rightPeak;
 }
 
 template<int Bps>
@@ -464,7 +478,7 @@ StreamEvent EqualizerNode::pullData(PacketResult& dpr)
             if (!mBypass) {
                 mProcessFunc(dpr.dataPacket(), mCore.get());
             }
-            floatSamplesTo24bitAndGetLevelsStereo(dpr.dataPacket());
+            (this->*mPostConvertFunc)(dpr.dataPacket());
         }
         volumeNotifyLevelCallback();
         return kEvtData;

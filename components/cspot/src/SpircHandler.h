@@ -10,7 +10,6 @@
 #include "protobuf/spirc.pb.h"  // for MessageType
 #include "CSpotContext.h"
 #include "PlaybackState.h"
-#include "IPlayer.h"
 
 namespace cspot {
 class LoginBlob;

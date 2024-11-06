@@ -31,7 +31,7 @@
 #include "../recovery/main/rtcSharedMem.hpp"
 #include "audioPlayer.hpp"
 #include "a2dpInputNode.hpp"
-//#include "bt_keyboard.hpp"
+#include "btRemote.hpp"
 
 #define DEV_MODE 1
 
@@ -57,6 +57,7 @@ NvsSimple nvsSimple;
 SDCard sdcard;
 NetLogger netLogger(false);
 MDns mdns;
+BtRemote btRemote;
 
 void startWebserver(bool isAp=false);
 
@@ -175,7 +176,6 @@ extern "C" void* my_calloc(size_t num, size_t size)
 }
 extern "C" void esp_restart_noos(void) __attribute__ ((noreturn));
 
-void startBtKeyaboard();
 void a2dpOnPeerConnect();
 extern "C" void app_main(void)
 {
@@ -190,9 +190,9 @@ extern "C" void app_main(void)
     /* Initialize NVS — it is used to store PHY calibration data */
     nvsSimple.init("aplayer", true);
 
-//  auto before = xPortGetFreeHeapSize();
-//  BtStack.disableCompletely(); //BLE();
-//  ESP_LOGW(TAG, "Releasing BLE Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
+    auto before = xPortGetFreeHeapSize();
+    BtStack.disableBLE();
+    ESP_LOGW(TAG, "Releasing BLE Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
 
     lcd.puts("Starting Bluetooth...\n");
     int beforeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
@@ -211,8 +211,8 @@ extern "C" void app_main(void)
         lcd.puts("Waiting dev http request\n");
         msSleep(2000);
 #endif
-//  lcd.puts("Starting bluetooth keyboard...\n");
-//  startBtKeyaboard();
+    lcd.puts("Starting bluetooth remote...\n");
+    btRemote.init();
 //===
     lcd.puts("Mounting SDCard...\n");
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };
@@ -227,16 +227,22 @@ extern "C" void app_main(void)
             player->playStation(".");
         }
     }
-    /*
-        BluetoothStack::start(ESP_BT_MODE_BLE, "test");
-        BluetoothStack::discoverDevices([](BluetoothStack::DeviceList& devices) {
-            for (auto& item: devices) {
-                ESP_LOGI(TAG, "%s(%s): class: %x, rssi: %d", item.second.name.c_str(),
-                    item.first.toString().c_str(), item.second.devClass, item.second.rssi);
-            }
-        });
-    }
-    */
+
+    BtStack.discoverDevices(10, ESP_BT_MODE_BTDM, [](const BluetoothStack::DeviceInfo& device){
+        if (device.isKeyboard()) {
+            btRemote.openBtHidDevice(device.addr);
+            return false;
+        }
+        else {
+            return true;
+        }
+    },
+    [](const BluetoothStack::DeviceList& devices) {
+        for (auto& item: devices) {
+            ESP_LOGI(TAG, "%s[%s]: type: %s, rssi: %d", item.name.c_str(),
+                 item.addrString().c_str(), item.isBle ? "BLE" : "CLASSIC", item.rssi);
+        }
+    });
     ESP_LOGI(TAG, "player started");
     vTaskDelay(200);
     printf("registering a2dp...\n");
@@ -343,43 +349,3 @@ void startWebserver(bool isAp)
     gHttpServer.on("/", HTTP_GET, indexUrlHandler);
     httpFsRegisterHandlers(gHttpServer.handle());
 }
-/*
-BTKeyboard bt_keyboard;
-void startBtKeyaboard()
-{
-    if (!bt_keyboard.setup()) {  // Must be called once
-        ESP_LOGW(TAG, "bt keyboard setup failed");
-        return;
-    }
-    BtStack.discoverDevices(5,
-        [](BluetoothStack::DeviceList& devices) {
-            printf("scan complete\n");
-            for (const auto& device: devices) {
-                if (device.second.isKeyboard()) {
-                    printf("found keyboard device\n");
-                    bt_keyboard.openBtHidDevice(device.first.data());
-                    return;
-                }
-            }
-        });
-    while (true) {
-#if 1    // 0 = scan codes retrieval, 1 = augmented ASCII retrieval
-        uint8_t ch = bt_keyboard.wait_for_ascii_char();
-        // uint8_t ch = bt_keyboard.get_ascii_char(); // Without waiting
-
-        if ((ch >= ' ') && (ch < 127))
-        {
-            printf("keypress: %c\n", ch);
-        } else if (ch > 0) {
-            printf("keypress: [%u]\n", ch);
-        }
-#else
-        BTKeyboard::KeyInfo inf;
-        bt_keyboard.wait_for_low_event(inf);
-
-        printf("RECEIVED KEYBOARD EVENT: Mod: %x, Keys: %x, %x, %x\n",
-            (uint8_t) inf.modifier, inf.keys[0], inf.keys[1], inf.keys[2]);
-#endif
-    }
-}
-*/

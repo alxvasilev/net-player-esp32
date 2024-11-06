@@ -10,7 +10,6 @@
 #include <arpa/inet.h>  // for htons, ntohs, htonl, ntohl
 #endif
 #include "BellLogger.h"         // for AbstractLogger
-#include "BellTask.h"           // for Task
 #include "BellUtils.h"          // for BELL_SLEEP_MS
 #include "Logger.h"             // for CSPOT_LOG
 #include "NanoPBHelper.h"       // for pbPutString, pbDecode, pbEncode
@@ -28,7 +27,7 @@ MercurySession::MercurySession(const LoginBlob& loginBlob, TimeProvider& aTimePr
 }
 void MercurySession::startTask()
 {
-    createTask("cspot-client", false, 4096, 1, 3, this, [](void* arg) {
+    createTask("cspot-client", true, 4096, 1, 3, this, [](void* arg) {
         static_cast<MercurySession*>(arg)->taskFunc();
     });
 }

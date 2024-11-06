@@ -6,7 +6,6 @@
 #include <memory>
 #include <mutex>
 #include <set>
-#include "BellTask.h"
 #include "BellUtils.h" // for BELL_SLEEP_MS
 #include "SpircHandler.h"
 #include <httpClient.hpp>
@@ -354,8 +353,7 @@ void TrackItem::delayBeforeRetry() const
 }
 
 TrackQueue::TrackQueue(SpircHandler& spirc)
-    : bell::Task("CSpotTrackQueue", 1024 * 4, 2, 1, false),
-      mEvents(kEvtTerminateReq|kStateStopped|kStateTerminated),
+    : mEvents(kEvtTerminateReq|kStateStopped|kStateTerminated),
       mSpirc(spirc), mAccessKeyFetcher(spirc.mCtx)
 {
     // Assign encode callback to track list
@@ -396,7 +394,7 @@ bool TrackQueue::loadTrack(int idx)
     }
     return track.mDetails->load(true, idx);
 }
-void TrackQueue::runTask()
+void TrackQueue::taskFunc()
 {
     CSPOT_LOG(info, "Track queue task started");
     mEvents.clearBits(0xff);
@@ -469,6 +467,12 @@ void TrackQueue::freeMostDistantTrack()
     if (chosen > -1) {
         mTracks[chosen].mDetails.reset();
     }
+}
+void TrackQueue::startTask()
+{
+    createTask("cspot-tracks", true, 4096, 1, 2, this, [](void* arg) {
+        static_cast<TrackQueue*>(arg)->taskFunc();
+    });
 }
 void TrackQueue::stopTask()
 {

@@ -90,7 +90,7 @@ void SpotifyNode::registerService(AudioPlayer& audioPlayer, MDns& mdns)
         {{"VERSION", "1.0"}, {"CPath", "/spotify_info"}, {"Stack", "SP"}});
 }
 SpotifyNode::SpotifyNode(IAudioPipeline& parent)
-    : AudioNodeWithTask(parent, "spotify", true, 8192, 10, -1), mSpirc(*sLoginBlob, *this)
+    : AudioNodeWithTask(parent, "node-spotify", true, 4096, 10, -1), mSpirc(*sLoginBlob, *this)
 {
     mRingBuf.clearStopSignal();
 }

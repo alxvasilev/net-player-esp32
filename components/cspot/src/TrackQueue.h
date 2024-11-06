@@ -6,7 +6,7 @@
 #include <functional>
 #include <mutex>
 #include <eventGroup.hpp>
-#include "BellTask.h"
+#include "task.hpp"
 #include "AccessKeyFetcher.h"
 #include "TrackReference.h"
 
@@ -66,7 +66,7 @@ public:
     void signalLoadStep();
 };
 
-class TrackQueue : public bell::Task {
+class TrackQueue : public Task {
 protected:
   enum { kMaxTracksPreload = 4 };
   friend class TrackItem; // for ctx
@@ -117,7 +117,8 @@ public:
           throw TerminatingException();
       }
   }
-  void runTask() override;
+  void taskFunc();
+  void startTask();
   void stopTask();
   void terminateTask();
   bool hasTracks();

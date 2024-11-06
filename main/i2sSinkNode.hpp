@@ -18,35 +18,41 @@ public:
     Mutex mutex;
     StreamId mStreamId = 0;
 protected:
+    enum {
+        kTaskPriority = 20, kDefaultBps = 16, kDefaultSamplerate = 44100, kDepopBufSize = 2048,
+        kFadeInMs = 400, kFadeOutMs = 50, kTicksBeforeDacUnmute = 10, kDmaBufSizeMax = 40000
+    };
+    typedef bool(I2sOutputNode::*FadeFunc)(DataPacket& pkt);
     PinCfg mPinConfig;
     i2s_chan_handle_t mI2sChan = nullptr;
     StreamFormat mFormat;
     uint64_t mSampleCtr;
+    FadeFunc mFadeFunc = nullptr;
+    float mFadeStep = 0.0f;
+    float mCurrFadeLevel = 0.0f;
+    uint16_t mFadeInMs = kFadeInMs;
+    uint16_t mFadeOutMs = kFadeOutMs;
     uint8_t mBytesPerSampleShiftDiv;
-    uint8_t mDmaBufCount; // needed for flushing with silence
+    uint8_t mDmaBufMillisec;
+    bool mChanStarted = false;
     bool mDacMuted = false;
-    enum {
-        kTaskPriority = 20, kDefaultBps = 16, kDefaultSamplerate = 44100, kDepopBufSize = 2048
-    };
     const gpio_num_t kDacMutePin = GPIO_NUM_32;
     virtual void nodeThreadFunc();
-    void adjustSamplesForInternalDac(char* sBuff, int len);
     void dmaFillWithSilence();
     bool createChannel();
     bool reconfigChannel();
     bool deleteChannel();
     bool setFormat(StreamFormat fmt);
     void setDacMutePin(uint8_t level);
-    void muteDac() { setDacMutePin((gpio_num_t)0); ESP_LOGI(mTag, "DAC muted"); }
-    void unMuteDac() { setDacMutePin((gpio_num_t)1);  ESP_LOGI(mTag, "DAC unmuted");}
+    void setFade(bool fadeIn);
+    void muteDac();
+    void unMuteDac();
     bool sendSilence();
-    template <typename S>
-    bool rampIn(void* targetSample);
-    template <typename S>
-    bool fadeIn(char* sampleBuf, int sampleBufSize);
+    template <typename T, bool fadeIn>
+    bool fade(DataPacket& pkt);
 public:
     I2sOutputNode(IAudioPipeline& parent, PinCfg& pins, uint16_t stackSize,
-        uint8_t dmaBufCnt, int8_t cpuCore=-1);
+        uint8_t dmaMillis, int8_t cpuCore=-1);
     ~I2sOutputNode();
     virtual Type type() const { return kTypeI2sOut; }
     virtual StreamEvent pullData(PacketResult& dpr) { return kErrStreamStopped; }
