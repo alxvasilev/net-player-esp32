@@ -83,9 +83,12 @@ void HttpNode::onHttpHeader(const char* key, const char* val)
 {
     if (strcasecmp(key, "Content-Type") == 0) {
         mInFormat = StreamFormat::fromMimeType(val);
-        mNetRecvSize = mInFormat.netRecvSize();
-        ESP_LOGI(TAG, "Parsed content-type '%s' as %s, recv chunk size set to %d",
-            val, mInFormat.codec().toString(), mNetRecvSize);
+        mRxChunkSize = mInFormat.rxChunkSize();
+        if (mWaitingPrefill) {
+            mWaitingPrefill = mInFormat.prefillAmount();
+        }
+        ESP_LOGI(TAG, "Parsed content-type '%s' as %s, rxChunkSize set to %d, prefill set to %d",
+            val, mInFormat.codec().toString(), mRxChunkSize, mWaitingPrefill);
     }
     else if ((strcasecmp(key, "accept-ranges") == 0) && (strcasecmp(val, "bytes") == 0)) {
         mAcceptsRangeRequests = true;
@@ -117,11 +120,10 @@ bool HttpNode::connect(bool isReconnect)
             mAcceptsRangeRequests = false;
             clearRingBuffer(); // clear in case of hard reconnect
             mStreamByteCtr = 0;
-            mWaitingPrefill = 0;
+            prefillStart();
         }
         recordingMaybeEnable();
     }
-
     if (!mClient) {
         if (!createClient()) {
             ESP_LOGE(mTag, "connect: Error creating http client");
@@ -187,7 +189,11 @@ bool HttpNode::connect(bool isReconnect)
         plSendEvent(kEventConnected, isReconnect);
         if (!isReconnect) {
             ESP_LOGD(TAG, "Posting kStreamChange with codec %s and streamId %ld\n", mInFormat.codec().toString(), mUrlInfo->streamId);
-            mRingBuf.pushBack(new NewStreamEvent(mUrlInfo->streamId, mInFormat));
+            auto pkt = new NewStreamEvent(mUrlInfo->streamId, mInFormat);
+            if (mWaitingPrefill) {
+                pkt->flags |= StreamPacket::kFlagWaitPrefill;
+            }
+            mRingBuf.pushBack(pkt);
         }
         return true;
     }
@@ -243,10 +249,11 @@ bool HttpNode::isConnected() const
 int8_t HttpNode::recv()
 {
     for (int retries = 0; retries < 26; retries++) { // retry net errors
-        DataPacket::unique_ptr dataPacket(DataPacket::create(mNetRecvSize));
-        int rlen = esp_http_client_read(mClient, dataPacket->data, mNetRecvSize);
+        auto rxSize = mRxChunkSize; // we are unlocked, this may change at any time, so we need a locally cached value
+        DataPacket::unique_ptr dataPacket(DataPacket::create(rxSize));
+        int rlen = esp_http_client_read(mClient, dataPacket->data, rxSize);
         if (rlen <= 0) {
-            mWaitingPrefill = 0;
+            prefillComplete();
             if (rlen == 0) {
                 if (mContentLen && esp_http_client_is_complete_data_received(mClient)) {
                     // transfer complete, post end of stream
@@ -272,41 +279,43 @@ int8_t HttpNode::recv()
             connect(canResume());
             continue;
         }
-        LOCK();
-        mSpeedProbe.onTraffic(rlen);
-        if (mIcyParser.icyInterval()) {
-            bool isFirst = !mIcyParser.trackName();
-            bool gotTitle = mIcyParser.processRecvData(dataPacket->data, rlen);
-            if (gotTitle) {
-                ESP_LOGW(TAG, "Track title changed to: '%s'", mIcyParser.trackName());
-                TitleChangeEvent::unique_ptr pkt(TitleChangeEvent::create(mIcyParser.trackName()));
-                {
-                    MutexUnlocker unlocker(mMutex);
-                    mRingBuf.pushBack(pkt.release());
-                }
-                // offset of title within packet: (rlen - mIcyParser.bytesSinceLastMeta())
-                if (mRecorder && !isFirst) { // start recording only on second icy track event - first track may be incomplete
-                    bool ok = mRecorder->onNewTrack(mIcyParser.trackName(), mInFormat.codec());
-                    plSendEvent(kEventRecording, ok);
+        {
+            LOCK();
+            mSpeedProbe.onTraffic(rlen);
+            if (mIcyParser.icyInterval()) {
+                bool isFirst = !mIcyParser.trackName();
+                bool gotTitle = mIcyParser.processRecvData(dataPacket->data, rlen);
+                if (gotTitle) {
+                    ESP_LOGW(TAG, "Track title changed to: '%s'", mIcyParser.trackName());
+                    TitleChangeEvent::unique_ptr pkt(TitleChangeEvent::create(mIcyParser.trackName()));
+                    {
+                        MutexUnlocker unlocker(mMutex);
+                        mRingBuf.pushBack(pkt.release());
+                    }
+                    // offset of title within packet: (rlen - mIcyParser.bytesSinceLastMeta())
+                    if (mRecorder && !isFirst) { // start recording only on second icy track event - first track may be incomplete
+                        bool ok = mRecorder->onNewTrack(mIcyParser.trackName(), mInFormat.codec());
+                        plSendEvent(kEventRecording, ok);
+                    }
                 }
             }
+            dataPacket->dataLen = rlen;
+            mStreamByteCtr += rlen;
+            if (mRecorder) {
+                mRecorder->onData(dataPacket->data, dataPacket->dataLen);
+            }
         }
-        dataPacket->dataLen = rlen;
-        mStreamByteCtr += rlen;
-        if (mRecorder) {
-            mRecorder->onData(dataPacket->data, dataPacket->dataLen);
-        }
-        {
-            MutexUnlocker unlocker(mMutex);
-            mRingBuf.pushBack(dataPacket.release());
-        }
+        mRingBuf.pushBack(dataPacket.release());
         ESP_LOGD(TAG, "Received %d bytes, wrote to ringbuf (%d)", rlen, mRingBuf.dataSize());
+        if (mWaitingPrefill && mRingBuf.dataSize() >= mWaitingPrefill) {
+            prefillComplete();
+        }
         return 0;
     }
     plSendError(kErrStreamStopped, 0);
     return -1;
 }
-uint32_t HttpNode::pollSpeed() const
+uint32_t HttpNode::pollSpeed()
 {
     LOCK();
     return mSpeedProbe.poll();
@@ -399,52 +408,36 @@ void HttpNode::setUnderrunState(bool isUnderrun)
     }
     mIsBufUnderrun = isUnderrun;
     if (isUnderrun) {
-        ESP_LOGW(TAG, "Underrun");
+        if (mWaitingPrefill) {
+            ESP_LOGI(TAG, "Underrun (prefill)");
+        } else {
+            ESP_LOGW(TAG, "Underrun");
+        }
     }
     plSendEvent(kEventBufUnderrun, isUnderrun);
 }
-uint32_t HttpNode::currentStreamId() const
+void HttpNode::prefillStart()
 {
-    if (mUrlInfo.get()) {
-        return mUrlInfo->streamId;
-    } else {
-        ESP_LOGW(mTag, "Assert fail: Returning zero streamId for event, as we have no urlInfo");
-        return 0;
-    }
+    mWaitingPrefill = 1;
+}
+void HttpNode::prefillComplete()
+{
+    mWaitingPrefill = 0;
+    ESP_LOGW(TAG, "Prefill complete, notifying pipeline...");
+    plSendEvent(kEventPrefillComplete, mUrlInfo->streamId);
 }
 StreamEvent HttpNode::pullData(PacketResult& pr)
 {
-    LOCK();
-    if (mWaitingPrefill && mPrefillSentFirstData) {
-        ESP_LOGI(TAG, "Waiting buffer prefill...");
-        while (mStreamByteCtr < mWaitingPrefill) {
-            MutexUnlocker unlocker(mMutex);
-            auto ret = mRingBuf.waitForWriteOp(-1);
-            if (ret < 0) {
-                return kErrStreamStopped;
-            }
-        }
-        mWaitingPrefill = 0;
-    }
     setUnderrunState(!mRingBuf.dataSize());
-    StreamPacket::unique_ptr pkt;
-    {
-        MutexUnlocker unlocker(mMutex);
-        pkt.reset(mRingBuf.popFront());
-    }
+    StreamPacket::unique_ptr pkt(mRingBuf.popFront());
     if (!pkt) {
-        pr.streamId = currentStreamId();
+        pr.streamId = mOutStreamId;
         return kErrStreamStopped;
     }
     if (pkt->type == kEvtStreamChanged) {
         auto& pktChange = static_cast<NewStreamEvent&>(*pkt);
         mOutStreamId = pktChange.streamId;
-        mWaitingPrefill = pktChange.fmt.prefillAmount();
-        mPrefillSentFirstData = false;
-        ESP_LOGI(TAG, "Returning start of new stream, setting prefill to %d bytes", mWaitingPrefill);
-    }
-    else if (pkt->type == kEvtData) {
-        mPrefillSentFirstData = true;
+        ESP_LOGI(TAG, "pullData: Returning start of new stream");
     }
     return pr.set(pkt);
 }
@@ -452,15 +445,17 @@ DataPacket* HttpNode::peekData(bool& preceded)
 {
     return mRingBuf.peekFirstDataWait(kEvtTitleChanged, &preceded);
 }
-StreamPacket* HttpNode::peek() {
+StreamPacket* HttpNode::peek()
+{
     return mRingBuf.peekFirstWait();
 }
-void HttpNode::streamFormatDetails(StreamFormat fmt) {
-    auto rxSize = fmt.netRecvSize();
+void HttpNode::notifyFormatDetails(StreamFormat fmt)
+{
+    auto rxSize = fmt.rxChunkSize();
     LOCK();
-    if (mNetRecvSize != rxSize) {
-        mNetRecvSize = rxSize;
-        ESP_LOGI(TAG, "Updated network recv size for codec %s to %d", fmt.codec().toString(), mNetRecvSize);
+    if (mRxChunkSize != rxSize) {
+        mRxChunkSize = rxSize;
+        ESP_LOGI(TAG, "Updated network recv size for codec %s to %d", fmt.codec().toString(), mRxChunkSize);
     }
     if (mWaitingPrefill) {
         mWaitingPrefill = fmt.prefillAmount();

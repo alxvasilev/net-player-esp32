@@ -79,14 +79,42 @@ bool I2sOutputNode::fade(DataPacket& pkt)
     }
     return true;
 }
+bool I2sOutputNode::dispatchCommand(Command &cmd)
+{
+    if (AudioNodeWithTask::dispatchCommand(cmd)) {
+        return true;
+    }
+    if (cmd.opcode == kCommandPrefillComplete) {
+        mLastUncorkStreamId = (StreamId)cmd.arg;
+        if (!mI2sChan) {
+            return true;
+        }
+        if (mWaitingPrefill) {
+            mWaitingPrefill = false;
+            ESP_LOGI(mTag, "Got prefill complete command, starting playback");
+            plSendEvent(kEventPlaying);
+        }
+        setState(kStateRunning);
+        return true;
+    }
+    return false;
+}
+void I2sOutputNode::onStopped()
+{
+    printf("onStopped\n");
+    muteDac();
+}
 void I2sOutputNode::nodeThreadFunc()
 {
+    muteDac();
     for (;;) {
-        muteDac();
         setState(kStateStopped);
         processMessages();
         if (mTerminate) {
             return;
+        }
+        if (mWaitingPrefill) {
+            continue;
         }
         myassert(mState == kStateRunning);
         while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
@@ -121,7 +149,10 @@ void I2sOutputNode::nodeThreadFunc()
                         ESP_LOGI(mTag, "Got start of new stream with streamId %u", pkt.streamId);
                         MutexLocker locker(mutex);
                         if (pkt.fmt != mFormat) {
-                            setFormat(pkt.fmt);
+                            if (!setFormat(pkt.fmt)) {
+                                plSendError(kErrStreamFmt, 0);
+                                break;
+                            }
                         }
                         else {
                             setFade(true);
@@ -129,12 +160,24 @@ void I2sOutputNode::nodeThreadFunc()
                         mSampleCtr = 0;
                         mStreamId = pkt.streamId;
                         plSendEvent(kEventNewStream, 0, (uintptr_t)dpr.packet.get());
-                        plSendEvent(kEventPlaying);
                     }
                     else if (evt == kEvtStreamEnd) {
                         plSendEvent(kEventStreamEnd, 0, dpr.genericEvent().streamId);
                     }
+                    // handle prefill request
+                    if (!mWaitingPrefill) {
+                        int diff = (int)mStreamId - (int)mLastUncorkStreamId;
+                        // take streamId wrap into account
+                        if (dpr.packet->flags & StreamPacket::kFlagWaitPrefill && (diff > 0 || diff < - 128)) {
+                            mWaitingPrefill = true;
+                            ESP_LOGI(mTag, "Got packet with wait-prefill flag, halting till uncorked...");
+                            break;
+                        }
+                    }
                 }
+                continue;
+            }
+            if (!mStreamId) { // we haven't had a proper stream start with audio format info
                 continue;
             }
             // we have data
@@ -155,6 +198,7 @@ void I2sOutputNode::nodeThreadFunc()
                 }
                 i2s_channel_enable(mI2sChan);
                 mChanStarted = true;
+                plSendEvent(kEventPlaying);
                 vTaskDelay(kTicksBeforeDacUnmute);
                 unMuteDac();
                 MY_ESP_ERRCHECK(i2s_channel_write(mI2sChan, pkt.data + written, pkt.dataLen - written,

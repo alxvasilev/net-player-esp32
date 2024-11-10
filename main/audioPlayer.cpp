@@ -384,6 +384,7 @@ void AudioPlayer::destroyPipeline()
 
 bool AudioPlayer::doPlayUrl(TrackInfo* trackInfo, PlayerMode playerMode, const char* record)
 {
+    myassert(playerMode & (int)AudioNode::kTypeHttpIn);
     switchMode(playerMode, false);
     mTrackInfo.reset(trackInfo);
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
@@ -1044,13 +1045,19 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
         asyncCall([this, streamId = evt.streamId, fmt = evt.fmt, sourceBps = evt.sourceBps]() {
             LOCK_PLAYER();
             onNewStream(fmt, sourceBps);
-            auto ctrl = playController();
-            if (ctrl) {
-                ctrl->onTrackPlaying(streamId, 0);
+            if (mStreamIn) {
+                printf("input intf: %p\n", mStreamIn->inputNodeIntf());
+                mStreamIn->inputNodeIntf()->onTrackPlaying(streamId, 0);
             }
         });
     }
-    else{
+    else if (event == AudioNode::kEventPrefillComplete) {
+        LOCK_PLAYER();
+        if (mStreamOut) {
+            static_cast<I2sOutputNode*>(mStreamOut.get())->notifyPrefillComplete(numArg);
+        }
+    }
+    else {
         asyncCall([this, event, arg, numArg]() {
             LOCK_PLAYER();
             switch(event) {
@@ -1240,21 +1247,21 @@ void AudioPlayer::lcdUpdateAudioFormat()
 }
 void AudioPlayer::lcdUpdateNetSpeed()
 {
-    if (!mStreamIn || mStreamIn->type() != AudioNode::kTypeHttpIn) {
+    if (!mStreamIn) {
         return;
     }
-    auto& http = *static_cast<HttpNode*>(mStreamIn.get());
-    auto speed = http.pollSpeed();
+    auto input = mStreamIn->inputNodeIntf();
+    auto speed = input->pollSpeed();
     uint32_t bufDataSize;
 
     if (!mDisplayedBufUnderrunTimer) {
         if (speed == mLastShownNetSpeed) {
             return;
         }
-        bufDataSize = http.bufferedDataSize();
+        bufDataSize = input->bufferedDataSize();
     }
     else {
-        bufDataSize = (--mDisplayedBufUnderrunTimer) ? 0 : http.bufferedDataSize();
+        bufDataSize = (--mDisplayedBufUnderrunTimer) ? 0 : input->bufferedDataSize();
     }
     mLastShownNetSpeed = speed;
     lcdRenderNetSpeed(speed, bufDataSize);

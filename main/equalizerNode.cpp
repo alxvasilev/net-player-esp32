@@ -404,11 +404,11 @@ void EqualizerNode::floatSamplesTo16bitAndGetLevelsStereo(DataPacket& pkt)
     float* rptr = (float*)pkt.data;
     int16_t* wptr = (int16_t*)pkt.data;
     while(rptr < rend) {
-        int16_t ival = *wptr++ = lroundf(*rptr++) >> 8;
+        int16_t ival = *wptr++ = ((int32_t)(*rptr++ + 128.5555f)) >> 8;
         if (ival > leftPeak) {
             leftPeak = ival;
         }
-        ival = *wptr++ = lroundf(*rptr++) >> 8;
+        ival = *wptr++ = ((int32_t)(*rptr++ + 128.5555f)) >> 8;
         if (ival > rightPeak) {
             rightPeak = ival;
         }

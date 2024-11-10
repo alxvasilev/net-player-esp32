@@ -122,7 +122,7 @@ public:
     void setIsLeftAligned(bool val) { members.isLeftAligned = val; }
     void setNumChannels(uint8_t ch) { members.numChannels = ch - 1; }
     int prefillAmount() const;
-    int16_t netRecvSize() const;
+    int16_t rxChunkSize() const;
 };
 
 enum StreamEvent: int8_t {

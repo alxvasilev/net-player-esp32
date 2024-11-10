@@ -30,11 +30,10 @@ class DecoderNode: public AudioNodeWithTask
 {
 protected:
     Decoder* mDecoder = nullptr;
-    bool mWaitingPrefill = false;
-    StreamId mInStreamId = 0;
+    NewStreamEvent::unique_ptr mNewStreamPkt;
     StreamRingQueue<24> mRingBuf;
     // pr in case there is a stream event that needs to be propagated
-    StreamEvent detectCodecCreateDecoder(NewStreamEvent& startPkt);
+    StreamEvent detectCodecCreateDecoder(NewStreamEvent* startPkt);
     bool createDecoder(StreamFormat fmt);
     StreamEvent decode();
     static int32_t heapFreeTotal(); // used to  calculate memory usage for codecs

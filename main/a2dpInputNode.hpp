@@ -13,8 +13,9 @@
 #include "audioNode.hpp"
 #include "streamRingQueue.hpp"
 #include "bluetooth.hpp"
+#include "speedProbe.hpp"
 
-class A2dpInputNode: public AudioNodeWithState
+class A2dpInputNode: public AudioNodeWithState, public IInputAudioNode
 {
 public:
     enum { kBufferSize = 8 * 1024 };
@@ -23,12 +24,16 @@ protected:
     static ConnectCb gConnectCb;
     static A2dpInputNode* gSelf; // bluetooth callbacks don't have a user pointer
     StreamRingQueue<100> mRingBuf;
-    StreamFormat mFormat;
+    StreamFormat mSourceFormat;
+    LinkSpeedProbe mSpeedProbe;
+    uint32_t mWaitingPrefill = 0;
+    StreamId mStreamId = 0;
     uint8_t mPeerAddr[6] = {0};
     static void sEventCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param);
     static void sDataCallback(const uint8_t* data, uint32_t len);
     virtual void onStopped() override;
     void postStreamStart(StreamFormat fmt);
+    void onData(DataPacket* pkt);
 public:
     /* Registers connection listener, and optionally makes us discoverable.
      * Whean an A2DP source connects to us, notifies the application, which should create an
@@ -40,5 +45,8 @@ public:
     A2dpInputNode(IAudioPipeline& parent);
     ~A2dpInputNode();
     virtual StreamEvent pullData(PacketResult& dpr) override;
+    virtual IInputAudioNode* inputNodeIntf() override { return static_cast<IInputAudioNode*>(this); }
+    virtual uint32_t pollSpeed() override;
+    virtual uint32_t bufferedDataSize() const override { return mRingBuf.dataSize(); }
 };
 #endif

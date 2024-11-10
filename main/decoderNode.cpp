@@ -50,10 +50,12 @@ void DecoderNode::deleteDecoder()
     ESP_LOGI(mTag, "\e[34mDeleted %s decoder freed %ld bytes",
         Codec::numCodeToStr(codec), heapFreeTotal() - freeBefore);
 }
-StreamEvent DecoderNode::detectCodecCreateDecoder(NewStreamEvent& startPkt)
+StreamEvent DecoderNode::detectCodecCreateDecoder(NewStreamEvent* startPkt)
 {
-    mInStreamId = startPkt.streamId;
-    Codec& codec = startPkt.fmt.codec();
+    // Save the properties of the new-stream packet that we swallow,
+    // so we can set them on the one we generate
+    mNewStreamPkt.reset(startPkt);
+    Codec& codec = mNewStreamPkt->fmt.codec();
     if (codec.type == Codec::kCodecUnknown && codec.transport == Codec::kTransportOgg) {
         // allocates a buffer in odp and fetches some stream bytes in it
         bool preceded;
@@ -67,7 +69,7 @@ StreamEvent DecoderNode::detectCodecCreateDecoder(NewStreamEvent& startPkt)
             return evt;
         }
     }
-    bool ok = createDecoder(startPkt.fmt);
+    bool ok = createDecoder(mNewStreamPkt->fmt);
     if (!ok) {
         ESP_LOGE(mTag, "createDecoder(%s) failed", codec.toString());
         return kErrNoCodec;
@@ -115,11 +117,10 @@ StreamEvent DecoderNode::decode()
             return forwardEvent(evt, pr);
         }
         myassert(pr.packet);
-        evt = detectCodecCreateDecoder(pr.newStreamEvent());
+        evt = detectCodecCreateDecoder(static_cast<NewStreamEvent*>(pr.packet.release()));
         if (evt) { // evt can only be an error here
             return evt;
         }
-        pr.clear();
     }
     myassert(mDecoder);
     auto evt = mDecoder->decode(pr);
@@ -130,12 +131,11 @@ StreamEvent DecoderNode::decode()
         }
         else if (evt == kEvtStreamChanged) {
             deleteDecoder();
-            return detectCodecCreateDecoder(pr.newStreamEvent());
+            return detectCodecCreateDecoder(static_cast<NewStreamEvent*>(pr.packet.release()));
         }
         else if (evt == kEvtStreamEnd) {
             ESP_LOGI(mTag, "Stream end, deleting decoder");
             deleteDecoder();
-            mWaitingPrefill = false;
         }
         return forwardEvent(evt, pr);
     }
@@ -143,23 +143,9 @@ StreamEvent DecoderNode::decode()
 }
 StreamEvent DecoderNode::pullData(PacketResult &pr)
 {
-    //TODO: Handle the case where we are sending a previous stream - we don't wait prefill then
-    if (mWaitingPrefill) {
-        ESP_LOGI(mTag, "Waiting prefill...");
-        while (mWaitingPrefill && (mRingBuf.size() < mRingBuf.capacity())) {
-            auto ret = mRingBuf.waitForWriteOp(-1);
-            if (ret < 0) {
-                return kErrStreamStopped;
-            }
-        }
-        mWaitingPrefill = false;
-    }
     auto pkt = mRingBuf.popFront();
     if (!pkt) {
         return kErrStreamStopped;
-    }
-    if (pkt->type == kEvtStreamChanged) {
-        mWaitingPrefill = true;
     }
     return pr.set(pkt);
 }
@@ -167,8 +153,11 @@ bool DecoderNode::codecOnFormatDetected(StreamFormat fmt, uint8_t sourceBps)
 {
     StreamFormat sourceFmt(fmt);
     sourceFmt.setBitsPerSample(sourceBps);
-    mPrev->streamFormatDetails(sourceFmt);
-    return mRingBuf.pushBack(new NewStreamEvent(mInStreamId, fmt, sourceBps));
+    mPrev->notifyFormatDetails(sourceFmt);
+    myassert(mNewStreamPkt);
+    mNewStreamPkt->fmt = fmt;
+    mNewStreamPkt->sourceBps = sourceBps;
+    return mRingBuf.pushBack(mNewStreamPkt.release());
 }
 bool DecoderNode::codecPostOutput(StreamPacket *pkt)
 {

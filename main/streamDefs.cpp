@@ -7,25 +7,34 @@
 
 int StreamFormat::prefillAmount() const
 {
+    enum { kHalfSecs = 3 };
     switch (codec().type) {
         case Codec::kCodecMp3:
-            return 48 * 1024;
+            // kbits/sec * (1024 / 8) * (halfSec / 2)
+            return (256 * 1024 * kHalfSecs) >> 4;
+        case Codec::kCodecVorbis:
+            return (160 * 1024 * kHalfSecs) >> 4;
         case Codec::kCodecAac:
-            return 32 * 1024;
+            return (100 * 1024 * kHalfSecs) >> 4;
         case Codec::kCodecFlac: {
-            auto val = ((sampleRate() > 64000) ? 200 : 100) * 1024;
-            return bitsPerSample() > 16 ? val * 2 : val;
+            auto kbps = (sampleRate() > 48000) ? 1400 : 1000;
+            if(bitsPerSample() > 16) {
+                kbps = (kbps * 3) >> 1;
+            }
+            return (kHalfSecs * 1024 * kbps) >> 4;
         }
         case Codec::kCodecWav:
         case Codec::kCodecPcm: {
-            auto val = bitsPerSample() * sampleRate() * numChannels() / 8;
-            return val ? val : 160 * 1024;
+            auto val = (bitsPerSample() * sampleRate() * numChannels() * kHalfSecs) >> 4;
+            return val ? val : (16 * 2 * 2 * 44100 * kHalfSecs) >> 4;
         }
+        case Codec::KCodecSbc:
+            return (bitsPerSample() * sampleRate() * numChannels() * kHalfSecs) >> 4;
         default:
-            return 64 * 1024;
+            return (256 * 1024 * kHalfSecs) >> 4;
     }
 }
-int16_t StreamFormat::netRecvSize() const
+int16_t StreamFormat::rxChunkSize() const
 {
     switch (codec().type) {
         case Codec::kCodecWav:

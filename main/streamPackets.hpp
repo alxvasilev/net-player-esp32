@@ -26,10 +26,11 @@ public:
         T& as() const { return *(T*)get(); }
     };
     enum: uint8_t {
-        kFlagHasSpaceFor32Bit = 1 << 4,
-        kFlagLeftAlignedSamples = 1 << 5,
-        kFlagStreamHeader = 1 << 6,
-        kFlagCustomAlloc = 1 << 7  // LSB bits denote the memory block size, in kB
+        kFlagHasSpaceFor32Bit = 1 << 0,
+        kFlagLeftAlignedSamples = 1 << 1,
+        kFlagStreamHeader = 1 << 2,
+        kFlagCustomAlloc = 1 << 3,
+        kFlagWaitPrefill = 1 << 4
     };
     typedef uint32_t AlignAs;  // 4-byte aligned
     StreamEvent type;
@@ -54,9 +55,10 @@ public:
 struct TitleChangeEvent: public StreamPacket {
     typedef std::unique_ptr<TitleChangeEvent, Deleter> unique_ptr;
     char title[];
-    static TitleChangeEvent* create(const char* aTitle) {
+    static TitleChangeEvent* create(const char* aTitle, uint8_t flags=0) {
         auto len = strlen(aTitle) + 1;
         auto inst = allocWithDataSize<TitleChangeEvent>(kEvtTitleChanged, len);
+        inst->flags = flags;
         memcpy(inst->title, aTitle, len);
         return inst;
     }

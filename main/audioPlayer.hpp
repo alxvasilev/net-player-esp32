@@ -124,7 +124,6 @@ protected:
     void destroyPipeline();
     void detectVolumeNode();
     std::string printPipeline();
-    IPlayerCtrl* playController() { return mStreamIn ? mStreamIn->playerCtrl() : nullptr; }
     void loadSettings();
     void init(PlayerMode mode, AudioNode::Type outType);
     PlayerMode initFromNvs();
@@ -207,6 +206,7 @@ public:
     // AudioNode::EventHandler interface
     virtual bool onNodeEvent(AudioNode& node, uint32_t type, size_t numArg, uintptr_t arg) override;
     virtual void onNodeError(AudioNode& node, int error, uintptr_t arg) override;
+    virtual void onNeedLargeMemory(int32_t amountHint) override {}
 };
 
 struct TrackInfo {

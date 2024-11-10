@@ -99,7 +99,7 @@ void A2dpInputNode::sEventCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t 
             if (param->audio_cfg.mcc.type == ESP_A2D_MCT_SBC) {
                 int samplerate = codeToSampleRate(param->audio_cfg.mcc.cie.sbc[0]);
                 ESP_LOGI(TAG, "Bluetooth configured, sample rate=%d", samplerate);
-                if (samplerate != gSelf->mFormat.sampleRate()) {
+                if (samplerate != gSelf->mSourceFormat.sampleRate()) {
                     StreamFormat fmt(Codec::KCodecSbc, samplerate, 16, 2);
                     gSelf->postStreamStart(fmt);
                 }
@@ -113,11 +113,19 @@ void A2dpInputNode::sEventCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t 
 }
 void A2dpInputNode::postStreamStart(StreamFormat fmt)
 {
-    if (!mFormat) {
+    if (!mSourceFormat) {
         plSendEvent(kEventConnected);
     }
-    mFormat = fmt;
-    mRingBuf.pushBack(new NewStreamEvent(mPipeline.getNewStreamId(), fmt, 16));
+    mSourceFormat = fmt;
+    mStreamId = mPipeline.getNewStreamId();
+    auto pkt = new NewStreamEvent(mStreamId, fmt, 16);
+    if (!mRingBuf.dataSize()) {
+        StreamFormat actualFmt = mSourceFormat;
+        actualFmt.setCodec(Codec::kCodecWav);
+        mWaitingPrefill = actualFmt.prefillAmount();
+        pkt->flags |= StreamPacket::kFlagWaitPrefill;
+    }
+    mRingBuf.pushBack(pkt);
 }
 void A2dpInputNode::sDataCallback(const uint8_t* data, uint32_t len)
 {
@@ -126,7 +134,23 @@ void A2dpInputNode::sDataCallback(const uint8_t* data, uint32_t len)
     }
     auto pkt = DataPacket::create(len);
     memcpy(pkt->data, data, len);
-    gSelf->mRingBuf.pushBack(pkt);
+    gSelf->onData(pkt);
+}
+void A2dpInputNode::onData(DataPacket* pkt)
+{
+    mRingBuf.pushBack(pkt);
+    MutexLocker locker(mMutex);
+    mSpeedProbe.onTraffic(pkt->dataLen);
+    if (mWaitingPrefill && mRingBuf.dataSize() > mWaitingPrefill) {
+        printf("prefill %lu complete\n", mWaitingPrefill);
+        mWaitingPrefill = 0;
+        plSendEvent(kEventPrefillComplete, mStreamId);
+    }
+}
+uint32_t A2dpInputNode::pollSpeed()
+{
+    MutexLocker locker(mMutex);
+    return mSpeedProbe.poll();
 }
 bool A2dpInputNode::install(ConnectCb connectCb, bool becomeDiscoverable)
 {

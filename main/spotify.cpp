@@ -107,12 +107,10 @@ bool SpotifyNode::dispatchCommand(Command &cmd)
     }
     switch(cmd.opcode) {
         case kCmdPlay:
-            clearRingQueue();
-            startCurrentTrack(cmd.arg);
+            startCurrentTrack(true, cmd.arg);
             break;
         case kCmdNextTrack:
-            clearRingQueue();
-            startNextTrack((bool)cmd.arg);
+            startNextTrack(true, (bool)cmd.arg);
             break;
         case kCmdPause:
             stop(false);
@@ -129,7 +127,7 @@ bool SpotifyNode::dispatchCommand(Command &cmd)
     }
     return true;
 }
-bool SpotifyNode::startCurrentTrack(uint32_t tsSeek)
+bool SpotifyNode::startCurrentTrack(bool flush, uint32_t tsSeek)
 {
     mHttp.close();
     mCurrentTrack.reset();
@@ -139,6 +137,10 @@ bool SpotifyNode::startCurrentTrack(uint32_t tsSeek)
     mCurrentTrack = mSpirc.mTrackQueue.currentTrack();
     if (!mCurrentTrack.get()) {
         return false;
+    }
+    if (flush) {
+        clearRingQueue();
+        prefillStart();
     }
     mInStreamId = mPipeline.getNewStreamId();
     return true;
@@ -150,6 +152,16 @@ void SpotifyNode::clearRingQueue()
         mRingBuf.pushBack(new StreamEndEvent(mOutStreamId));
     }
 }
+void SpotifyNode::prefillStart()
+{
+    auto fmt = StreamFormat(Codec::kCodecVorbis, 44100, 16, 2);
+    mWaitingPrefill = fmt.prefillAmount();
+}
+void SpotifyNode::prefillComplete()
+{
+    mWaitingPrefill = 0;
+    plSendEvent(kEventPrefillComplete);
+}
 bool SpotifyNode::startNextTrack(bool flush, bool nextPrev)
 {
     ESP_LOGI(TAG, "Starting next track...");
@@ -157,10 +169,7 @@ bool SpotifyNode::startNextTrack(bool flush, bool nextPrev)
         ESP_LOGI(TAG, "nextTrack: No more tracks");
         return false;
     }
-    if (flush) {
-        clearRingQueue();
-    }
-    return startCurrentTrack();
+    return startCurrentTrack(flush);
 }
 void SpotifyNode::onTrackPlaying(StreamId id, uint32_t pos)
 {
@@ -235,7 +244,7 @@ void SpotifyNode::nodeThreadFunc()
             }
             while (!mTerminate && (mCmdQueue.numMessages() == 0)) {
                 if (!recv()) {
-                    startNextTrack(false);
+                    startNextTrack(false, true);
                     break;
                 }
             }
@@ -293,6 +302,10 @@ bool SpotifyNode::recv()
         return true;
     }
     pkt->dataLen = nRecv;
+    {
+        MutexLocker locker(mMutex);
+        mSpeedProbe.onTraffic(nRecv);
+    }
     auto calculatedIV = bigNumAdd(sAudioAesIV, mRecvPos >> 4);
     mRecvPos += nRecv;
     mCrypto.aesCTRXcrypt(mCurrentTrack->audioKey, calculatedIV, (uint8_t*)pkt->data, pkt->dataLen);
@@ -302,7 +315,8 @@ bool SpotifyNode::recv()
         mRingBuf.pushBack(
             new NewStreamEvent(mInStreamId, Codec(Codec::kCodecVorbis, Codec::kTransportOgg), mTsSeek)
         );
-        mRingBuf.pushBack(TitleChangeEvent::create((mCurrentTrack->name + " - " + mCurrentTrack->artist).c_str()));
+        mRingBuf.pushBack(TitleChangeEvent::create((mCurrentTrack->name + " - " + mCurrentTrack->artist).c_str(),
+            mWaitingPrefill ? StreamPacket::kFlagWaitPrefill : 0));
         pkt->flags |= StreamPacket::kFlagStreamHeader;
     }
     mRingBuf.pushBack(pkt.release());
@@ -325,4 +339,9 @@ StreamEvent SpotifyNode::pullData(PacketResult &pr)
         mOutStreamId = 0;
     }
     return pr.set(pkt);
+}
+uint32_t SpotifyNode::pollSpeed()
+{
+    MutexLocker locker(mMutex);
+    return mSpeedProbe.poll();
 }

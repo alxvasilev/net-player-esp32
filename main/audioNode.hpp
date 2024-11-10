@@ -20,6 +20,7 @@
 #include <atomic>
 
 class AudioNode;
+class IInputAudioNode;
 
 class IAudioPipeline {
 protected:
@@ -33,6 +34,7 @@ public:
         }
         return mCurrentStreamId;
     }
+    virtual void onNeedLargeMemory(int32_t amountHint) = 0; // called by audio nodes when they need the app to free some internal memory
 };
 
 class IAudioVolume;
@@ -41,9 +43,6 @@ class IAudioVolume;
  * the player, as a local interface, to facilitate the exchange of playback state and commands between
  * the node and the player.
  */
-struct IPlayerCtrl {
-    virtual void onTrackPlaying(StreamId id, uint32_t pos) = 0;
-};
 
 class AudioNode
 {
@@ -52,7 +51,7 @@ public:
     enum { kEventAudioFormatChange,
            kEventNewStream, kEventStreamEnd, kEventTrackInfo,
            kEventConnecting, kEventConnected, kEventDisconnected,
-           kEventPlaying, kEventRecording, kEventBufUnderrun,
+           kEventPlaying, kEventRecording, kEventPrefillComplete, kEventBufUnderrun,
            kEventLast = kEventBufUnderrun };
     // we put here the state definitions only because the class name is shorter than AudioNodeWithTask
     enum State: uint8_t {
@@ -88,10 +87,10 @@ protected:
 public:
     virtual Type type() const = 0;
     virtual IAudioVolume* volumeInterface() { return nullptr; }
-    virtual IPlayerCtrl* playerCtrl() { return nullptr; }
+    virtual IInputAudioNode* inputNodeIntf() { return nullptr; }
     virtual ~AudioNode() {}
     virtual void reset() {}
-    virtual void streamFormatDetails(StreamFormat fmt) {}
+    virtual void notifyFormatDetails(StreamFormat fmt) {}
     virtual DataPacket* peekData(bool& preceded) { return nullptr; }
     virtual StreamPacket* peek() { return nullptr; }
     void linkToPrev(AudioNode* prev) { mPrev = prev; }
@@ -127,12 +126,8 @@ public:
         }
     };
 
-    // Upon return, buf is set to the internal buffer containing the data, and size is updated to the available data
-    // for reading from it. Once the caller reads the amount it needs, it must call
-    // confirmRead() with the actual amount read.
+    /** @returns a packet or a stream event */
     virtual StreamEvent pullData(PacketResult& pr) = 0;
-    /** Reads exactly the specified amount of bytes to buf, or discards them
-     *  if \c buf is null */
 };
 
 class AudioNodeWithState: public AudioNode
@@ -202,12 +197,16 @@ public:
     virtual void stop(bool wait=true) override;
     virtual void terminate(bool wait=true) override;
 };
-
+class IInputAudioNode {
+public:
+    virtual uint32_t pollSpeed() { return 0; }
+    virtual uint32_t bufferedDataSize() const { return 0; }
+    virtual void onTrackPlaying(StreamId id, uint32_t pos) {}
+};
 inline bool AudioNode::plSendEvent(uint32_t type, size_t numArg, uintptr_t arg)
 {
     return mPipeline.onNodeEvent(*this, type, numArg, arg);
 }
-
 inline void AudioNode::plSendError(int error, uintptr_t arg)
 {
     mPipeline.onNodeError(*this, error, arg);

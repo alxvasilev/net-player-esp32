@@ -6,6 +6,7 @@
 #include "audioNode.hpp"
 #include <httpClient.hpp>
 #include "streamRingQueue.hpp"
+#include "speedProbe.hpp"
 #include <SpircHandler.h>
 #include <Crypto.h>
 
@@ -16,7 +17,7 @@ namespace http { class Server; }
 class MDns;
 class AudioPlayer;
 
-class SpotifyNode: public AudioNodeWithTask, public cspot::ITrackPlayer, public IPlayerCtrl {
+class SpotifyNode: public AudioNodeWithTask, public cspot::ITrackPlayer, public IInputAudioNode {
 protected:
     enum { kRecvSize = 4096 };
     enum: uint8_t {
@@ -40,16 +41,19 @@ protected:
     int32_t mFileSize = 0;
     int32_t mRecvPos = 0;
     int32_t mTsSeek = 0;
+    int32_t mWaitingPrefill = 0;
+    mutable LinkSpeedProbe mSpeedProbe;
     StreamId mInStreamId = 0;
     StreamId mOutStreamId = 0;
-
     void onStopRequest() override;
     void nodeThreadFunc();
     virtual bool dispatchCommand(Command &cmd) override;
     void connect();
     bool recv();
+    void prefillStart();
+    void prefillComplete();
     void clearRingQueue();
-    bool startCurrentTrack(uint32_t tsSeek = 0);
+    bool startCurrentTrack(bool flush, uint32_t tsSeek = 0);
     bool startNextTrack(bool flush, bool nextPrev = true);
     // cspot::TrackPlayer interface
     virtual void play(uint32_t pos) override;
@@ -60,7 +64,9 @@ protected:
     virtual void setVolume(uint8_t vol) override;
     // IPlayerCtrl interface
     virtual void onTrackPlaying(StreamId id, uint32_t pos) override;
-    virtual IPlayerCtrl* playerCtrl() { return this; }
+    virtual IInputAudioNode* inputNodeIntf() override { return static_cast<IInputAudioNode*>(this); }
+    virtual uint32_t pollSpeed() override;
+    virtual uint32_t bufferedDataSize() const override { return mRingBuf.dataSize(); }
 public:
     static void registerService(AudioPlayer& audioPlayer, MDns& mdns);
     SpotifyNode(IAudioPipeline& parent);
