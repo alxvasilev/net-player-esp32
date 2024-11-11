@@ -83,8 +83,20 @@ StreamEvent DecoderAac::decode(AudioNode::PacketResult& dpr)
             if (!mOutputLen) { // we haven't yet initialized output format info
                 getStreamFormat();
             }
-            output->dataLen = mOutputLen;
-            return mParent.codecPostOutput(output.release()) ? kNoError : kErrStreamStopped;
+            if (mOutputLen <= 2048) {
+                output->dataLen = mOutputLen;
+                return mParent.codecPostOutput(output.release()) ? kNoError : kErrStreamStopped;
+            }
+            else {
+                output->dataLen = 2048;
+                auto out2len = mOutputLen - 2048;
+                DataPacket::unique_ptr output2(DataPacket::create(out2len * 2));
+                memcpy(output2->data, output->data + 2048, out2len);
+                output2->dataLen = out2len;
+                output2->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
+                bool ok = mParent.codecPostOutput(output.release()) && mParent.codecPostOutput(output2.release());
+                return ok ? kNoError : kErrStreamStopped;
+            }
         }
         else { //err < 0 - error, try to re-sync
             // mNextFramePtr and mInputLen are guaranteed to not be updated if AACDecode() failed

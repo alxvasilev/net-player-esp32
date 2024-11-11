@@ -104,67 +104,49 @@ StreamEvent DecoderFlac::decode(AudioNode::PacketResult& dpr)
     return kNoError;
 }
 
-template <typename T, int Shift>
-bool DecoderFlac::outputStereoSamples(int nSamples, const FLAC__int32* const channels[])
+template <typename T, bool isMono>
+bool DecoderFlac::outputSamples(int nSamples, const FLAC__int32* const channels[])
 {
     auto ch0 = channels[0];
-    auto ch1 = channels[1];
-    if (nSamples & 1) {
-        ESP_LOGW(TAG, "Uneven number of output samples: %d\n", nSamples);
+    auto ch1 = channels[isMono ? 0 : 1]; // in mono mode, output the same channel on both left and right
+    int nPackets, defltPktSamples;
+    if ((nSamples & 0x3ff) == 0) {
+        nPackets = nSamples >> 10;
+        defltPktSamples = 1024;
     }
-    int pktNsamples = nSamples > kOutputSplitMaxSamples ? nSamples >> 1 : nSamples;
-    int outputAlloc = pktNsamples * 8;
-    int outputLen = pktNsamples * 2 * sizeof(T);
-    DataPacket::unique_ptr output(DataPacket::create(outputAlloc));
-    output->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
-    T* wptr = (T*)output->data;
-    for (int i = 0; i < pktNsamples; i++) {
-        *(wptr++) = ch0[i];
-        *(wptr++) = ch1[i];
+    else {
+        nPackets = (nSamples + 512) / 1024;
+        defltPktSamples = nSamples / nPackets;
     }
-    output->dataLen = outputLen;
-    mParent.codecPostOutput(output.release());
-    if (pktNsamples < nSamples) {
-        output.reset(DataPacket::create(outputAlloc));
-        output->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
-        wptr = (T*)output->data;
-        for (int i = pktNsamples; i < nSamples; i++) {
-            *(wptr++) = ch0[i];
-            *(wptr++) = ch1[i];
+    int defltPktAlloc = defltPktSamples * 8;
+    int defltPktLen = defltPktSamples * 2 * sizeof(T);
+    int remainSamples = nSamples;
+    int sidx = 0;
+    while(remainSamples > 0) {
+        int pktSamples, pktAlloc, pktLen;
+        if (remainSamples >= defltPktSamples) {
+            pktSamples = defltPktSamples;
+            pktAlloc = defltPktAlloc;
+            pktLen = defltPktLen;
         }
-        output->dataLen = outputLen;
-        mParent.codecPostOutput(output.release());
-    }
-    return true;
-}
-template <typename T, int Shift>
-bool DecoderFlac::outputMonoSamples(int nSamples, const FLAC__int32* const samples[])
-{
-    if (nSamples & 1) {
-        ESP_LOGW(TAG, "Uneven number of output samples: %d\n", nSamples);
-    }
-    int pktNsamples = nSamples > kOutputSplitMaxSamples ? nSamples >> 1 : nSamples;
-    int outputLen = pktNsamples * sizeof(T);
-    int outputAlloc = pktNsamples * 4;
-    DataPacket::unique_ptr output(DataPacket::create(outputAlloc));
-    output->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
-    T* wptr = (T*)output->data;
-    auto end = samples[0] + pktNsamples;
-    for (auto sample = samples[0]; sample < end;) {
-        *(wptr++) = *(sample++);
-    }
-    output->dataLen = outputLen;
-    mParent.codecPostOutput(output.release());
-    if (pktNsamples < nSamples) {
-        output.reset(DataPacket::create(outputAlloc));
-        output->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
-        wptr = (T*)output->data;
-        auto end2 = samples[0] + nSamples;
-        for (auto sample = end; sample < end2;) {
-            *(wptr++) = *(sample++);
+        else {
+            pktSamples = remainSamples;
+            pktAlloc = pktSamples * 8;
+            pktLen = pktSamples * 2 * sizeof(T);
         }
-        output->dataLen = outputLen;
-        mParent.codecPostOutput(output.release());
+        DataPacket::unique_ptr output(DataPacket::create(pktAlloc));
+        output->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
+        T* wptr = (T*)output->data;
+        int eidx = sidx + pktSamples;
+        for (; sidx < eidx; sidx++) {
+            *(wptr++) = ch0[sidx];
+            *(wptr++) = ch1[sidx];
+        }
+        output->dataLen = pktLen;
+        remainSamples -= pktSamples;
+        if (!mParent.codecPostOutput(output.release())) {
+            return false;
+        }
     }
     return true;
 }
@@ -203,13 +185,9 @@ bool DecoderFlac::selectOutputFunc(int nChans, int bps)
 {
     if (nChans == 2) {
         if (bps == 16) {
-            mOutputFunc = &DecoderFlac::outputStereoSamples<int16_t>;
-        } else if (bps == 24) {
-            mOutputFunc = &DecoderFlac::outputStereoSamples<int32_t, 8>;
-        } else if (bps == 32) {
-            mOutputFunc = &DecoderFlac::outputStereoSamples<int32_t>;
-        }else if (bps == 8) {
-            mOutputFunc = &DecoderFlac::outputStereoSamples<int16_t, 8>;
+            mOutputFunc = &DecoderFlac::outputSamples<int16_t, false>;
+        } else if (bps == 24 || bps == 32) {
+            mOutputFunc = &DecoderFlac::outputSamples<int32_t, false>;
         } else {
             ESP_LOGE(TAG, "Unsupported bits per sample: %d", bps);
             return false;
@@ -217,13 +195,9 @@ bool DecoderFlac::selectOutputFunc(int nChans, int bps)
     }
     else if (nChans == 1) {
         if (bps == 16) {
-            mOutputFunc = &DecoderFlac::outputMonoSamples<int16_t>;
-        } else if (bps == 24) {
-            mOutputFunc = &DecoderFlac::outputMonoSamples<int32_t, 8>;
-        } else if (bps == 32) {
-            mOutputFunc = &DecoderFlac::outputMonoSamples<int32_t>;
-        } else if (bps == 8) {
-            mOutputFunc = &DecoderFlac::outputMonoSamples<int8_t, 8>;
+            mOutputFunc = &DecoderFlac::outputSamples<int16_t, true>;
+        } else if (bps == 24 || bps == 32) {
+            mOutputFunc = &DecoderFlac::outputSamples<int32_t, true>;
         } else {
             ESP_LOGE(TAG, "Unsupported bits per sample: %d", bps);
             return false;

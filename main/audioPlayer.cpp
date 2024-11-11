@@ -179,12 +179,14 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
     case AudioNode::kTypeI2sOut: {
         uint8_t dmaBufTimeMs = mNvsHandle.readDefault<uint8_t>("i2s.dmaBufMs", kI2sDmaBufMs);
         if (dmaBufTimeMs < 30 || dmaBufTimeMs > 200) {
-            ESP_LOGE(TAG, "Bad i2s.dmaBufMs config value %u, defaulting to %u", kI2sDmaBufMs,
-                kI2sDmaBufMs);
+            ESP_LOGE(TAG, "Bad i2s.dmaBufMs config value %u, defaulting to %u", dmaBufTimeMs, kI2sDmaBufMs);
             dmaBufTimeMs = kI2sDmaBufMs;
         };
-        I2sOutputNode::PinCfg cfg = {.port = 0, .dout = 27, .ws = 25, .bclk = 26};
-        mStreamOut.reset(new I2sOutputNode(*this, cfg, kI2sStackSize, dmaBufTimeMs, kI2sCpuCore));
+        I2sOutputNode::Config cfg = {
+            .port = 0, .pin_dout = 27, .pin_ws = 25, .pin_bclk = 26,
+            .dmaBufSizeMs = dmaBufTimeMs, .dmaBufSizeMax = kDmaBufSizeMax
+        };
+        mStreamOut.reset(new I2sOutputNode(*this, cfg, kI2sStackSize, kI2sCpuCore));
         break;
     }
     /*

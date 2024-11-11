@@ -27,10 +27,8 @@ protected:
     static void errorCb(const FLAC__StreamDecoder *decoder, FLAC__StreamDecoderErrorStatus status, void *client_data);
     static FLAC__StreamDecoderWriteStatus writeCb(const FLAC__StreamDecoder *decoder, const FLAC__Frame *frame, const FLAC__int32 * const buffer[], void *userp);
     static void metadataCb(const FLAC__StreamDecoder *decoder, const FLAC__StreamMetadata *metadata, void *client_data);
-    template <typename T, int Shift=0>
-    bool outputStereoSamples(int nSamples, const FLAC__int32* const samples[]);
-    template <typename T, int Shift=0>
-    bool outputMonoSamples(int nSamples, const FLAC__int32* const samples[]);
+    template <typename T, bool isMono=false>
+    bool outputSamples(int nSamples, const FLAC__int32* const samples[]);
     bool selectOutputFunc(int nChans, int bps);
 public:
     virtual Codec::Type type() const { return Codec::kCodecFlac; }

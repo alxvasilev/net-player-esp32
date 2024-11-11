@@ -9,23 +9,25 @@
 class I2sOutputNode: public AudioNodeWithTask
 {
 public:
-    struct PinCfg {
+    struct Config {
         int8_t port;
-        int8_t dout;
-        int8_t ws;
-        int8_t bclk;
+        int8_t pin_dout;
+        int8_t pin_ws;
+        int8_t pin_bclk;
+        int dmaBufSizeMs;
+        int dmaBufSizeMax;
     };
     Mutex mutex;
     StreamId mStreamId = 0;
     StreamId mLastUncorkStreamId = 0;
 protected:
     enum {
-        kTaskPriority = 20, kDefaultBps = 16, kDefaultSamplerate = 44100, kDepopBufSize = 2048,
-        kFadeInMs = 400, kFadeOutMs = 50, kTicksBeforeDacUnmute = 10, kDmaBufSizeMax = 40000
+        kTaskPriority = 20, kDefaultBps = 16, kDefaultSamplerate = 44100,
+        kFadeInMs = 400, kFadeOutMs = 50, kTicksBeforeDacUnmute = 10
     };
     enum: uint8_t { kCommandPrefillComplete = AudioNodeWithTask::kCommandLast + 1 };
     typedef bool(I2sOutputNode::*FadeFunc)(DataPacket& pkt);
-    PinCfg mPinConfig;
+    Config mConfig;
     i2s_chan_handle_t mI2sChan = nullptr;
     StreamFormat mFormat;
     uint64_t mSampleCtr;
@@ -56,8 +58,7 @@ protected:
     template <typename T, bool fadeIn>
     bool fade(DataPacket& pkt);
 public:
-    I2sOutputNode(IAudioPipeline& parent, PinCfg& pins, uint16_t stackSize, uint8_t dmaMillis,
-        int8_t cpuCore=-1);
+    I2sOutputNode(IAudioPipeline& parent, Config& cfg, uint16_t stackSize, int8_t cpuCore=-1);
     ~I2sOutputNode();
     virtual Type type() const { return kTypeI2sOut; }
     virtual StreamEvent pullData(PacketResult& dpr) { return kErrStreamStopped; }

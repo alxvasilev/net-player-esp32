@@ -2,18 +2,13 @@
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
-#include "freertos/ringbuf.h"
-#include "freertos/semphr.h"
-#include "freertos/task.h"
 #include "utils.hpp"
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "i2sSinkNode.hpp"
-#include <type_traits>
 #include <limits>
-#include <math.h> // for roundf
 #define DEBUG_TIMING 1
 
 void I2sOutputNode::setDacMutePin(uint8_t level)
@@ -126,7 +121,7 @@ void I2sOutputNode::nodeThreadFunc()
 #ifdef DEBUG_TIMING
             auto elapsed = t.msElapsed();
 #if DEBUG_TIMING < 2
-            if (elapsed >= 40) {
+            if (elapsed >= 15) {
 #endif
                 ESP_LOGI(mTag, "pullData took %d ms", elapsed);
 #if DEBUG_TIMING < 2
@@ -252,10 +247,9 @@ bool I2sOutputNode::reconfigChannel()
     MY_ESP_ERRCHECK(i2s_channel_enable(mI2sChan), mTag, "enabling channel",);
     return true;
 }
-I2sOutputNode::I2sOutputNode(IAudioPipeline& parent, PinCfg& pins, uint16_t stackSize,
-    uint8_t dmaMillis, int8_t cpuCore)
+I2sOutputNode::I2sOutputNode(IAudioPipeline& parent, Config& cfg, uint16_t stackSize, int8_t cpuCore)
 :AudioNodeWithTask(parent, "node-i2s-out", false, stackSize, kTaskPriority, cpuCore),
-  mPinConfig(pins), mFormat(kDefaultSamplerate, 16, 2), mDmaBufMillisec(dmaMillis)
+  mConfig(cfg), mFormat(kDefaultSamplerate, 16, 2)
 {
     if (kDacMutePin != GPIO_NUM_NC) {
         esp_rom_gpio_pad_select_gpio(kDacMutePin);
@@ -270,22 +264,23 @@ bool I2sOutputNode::createChannel()
     auto bps = mFormat.bitsPerSample();
     auto sr = mFormat.sampleRate();
     auto nChans = mFormat.numChannels();
-    int millis = mDmaBufMillisec;
+    int millis = mConfig.dmaBufSizeMs;
     int sampleSize = (bps <= 16 ? 2 : 4) * nChans;
     int dmaSize = (sampleSize * sr * millis + 999) / 1000;
-    if (dmaSize > kDmaBufSizeMax) {
-        dmaSize = kDmaBufSizeMax;
+    if (dmaSize > mConfig.dmaBufSizeMax) {
+        dmaSize = mConfig.dmaBufSizeMax;
         int byteRate = sr * sampleSize;
         millis = (1000 * dmaSize + byteRate / 2) / byteRate;
     }
     int dmaNbufs = (dmaSize + 4091) / 4092;
     int dmaBufSamples = (dmaSize / dmaNbufs) / sampleSize;
-    ESP_LOGW(mTag, "Allocating %d ms of DMA buffer: %d bytes (%d units: %d bytes(%d samples) each)",
+    ESP_LOGW(mTag, "Allocating %d ms of DMA buffer: %d bytes (%d units x %d bytes(%d samples))",
         millis, dmaSize, dmaNbufs, dmaBufSamples * sampleSize, dmaBufSamples);
     i2s_chan_config_t cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
     cfg.dma_desc_num = dmaNbufs;
     cfg.dma_frame_num = dmaBufSamples;
     cfg.intr_priority = 3;
+    cfg.auto_clear = true;
     MY_ESP_ERRCHECK(i2s_new_channel(&cfg, &mI2sChan, NULL), mTag, "creating i2s channel",
         mI2sChan = nullptr;
         return false;
@@ -302,9 +297,9 @@ bool I2sOutputNode::createChannel()
             ((nChans == 1) ? I2S_SLOT_MODE_MONO : I2S_SLOT_MODE_STEREO)),
         .gpio_cfg = {
             .mclk = I2S_GPIO_UNUSED, // some codecs may require mclk signal
-            .bclk = (gpio_num_t)mPinConfig.bclk,
-            .ws   = (gpio_num_t)mPinConfig.ws,
-            .dout = (gpio_num_t)mPinConfig.dout,
+            .bclk = (gpio_num_t)mConfig.pin_bclk,
+            .ws   = (gpio_num_t)mConfig.pin_ws,
+            .dout = (gpio_num_t)mConfig.pin_dout,
             .din  = I2S_GPIO_UNUSED,
             .invert_flags = { .mclk_inv = false, .bclk_inv = false, .ws_inv = false }
         }
