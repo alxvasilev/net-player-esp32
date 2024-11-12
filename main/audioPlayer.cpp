@@ -16,6 +16,7 @@
 #include <st7735.hpp>
 #include <esp_heap_caps.h>
 #include "wifi.hpp" // need reference to the global Wifi instance, for createDlnaHandler
+#include "asyncCall.hpp"
 
 #define kStreamInfoFont font_Camingo22
 #define kTrackTitleFont font_CamingoBold43

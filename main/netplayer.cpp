@@ -32,6 +32,7 @@
 #include "audioPlayer.hpp"
 #include "a2dpInputNode.hpp"
 #include "btRemote.hpp"
+#include "asyncCall.hpp"
 
 #define DEV_MODE 1
 
@@ -244,8 +245,8 @@ extern "C" void app_main(void)
         }
     });
     ESP_LOGI(TAG, "player started");
-    vTaskDelay(200);
-    printf("registering a2dp...\n");
+    vTaskDelay(10);
+    ESP_LOGI(TAG, "Registering a2dp handler...");
     A2dpInputNode::install(a2dpOnPeerConnect, true);
 }
 void a2dpOnPeerConnect()
