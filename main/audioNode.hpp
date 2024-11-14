@@ -154,7 +154,7 @@ public:
     static const char* stateToStr(State state);
 };
 
-class AudioNodeWithTask: public AudioNodeWithState
+class AudioNodeWithTask: public AudioNodeWithState, public Task
 {
 public:
 protected:
@@ -175,7 +175,6 @@ protected:
         uint8_t mTaskPrio: 5;
         int8_t mCpuCore: 2;
     };
-    Task mTask;
     static void sTaskFunc(void* ctx);
     bool createAndStartTask();
     void processMessages();

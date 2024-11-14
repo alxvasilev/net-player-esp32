@@ -100,6 +100,7 @@ protected:
     void equalizerReinit(StreamFormat fmt=0, bool forceLoadGains=false);
     void updateBandGain(uint8_t band);
     void createCustomCore(uint8_t nBands, StreamFormat fmt);
+    template<int Bps>
     void samples24or32ToFloatAndApplyVolume(PacketResult& pr);
     template <typename S>
     void samples16or8ToFloatAndApplyVolume(PacketResult& pr);

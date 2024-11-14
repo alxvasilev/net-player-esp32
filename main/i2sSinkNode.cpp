@@ -202,13 +202,13 @@ void I2sOutputNode::nodeThreadFunc()
             else {
                 MY_ESP_ERRCHECK(i2s_channel_write(mI2sChan, pkt.data, pkt.dataLen, &written, 0xffffffff), mTag,
                     "calling i2s_channel_write()", continue);
+                if (written != pkt.dataLen) {
+                    ESP_LOGW(mTag, "is2_channel_write() wrote less than requested, with infinite timeout");
+                }
                 if (mDacMuted) {
                     vTaskDelay(kTicksBeforeDacUnmute);
                     unMuteDac();
                 }
-            }
-            if (written != pkt.dataLen) {
-                ESP_LOGW(mTag, "is2_channel_write() wrote less than requested, with infinite timeout");
             }
         }
     }
@@ -248,7 +248,7 @@ bool I2sOutputNode::reconfigChannel()
     return true;
 }
 I2sOutputNode::I2sOutputNode(IAudioPipeline& parent, Config& cfg, uint16_t stackSize, int8_t cpuCore)
-:AudioNodeWithTask(parent, "node-i2s-out", false, stackSize, kTaskPriority, cpuCore),
+:AudioNodeWithTask(parent, "node-i2s-out", true, stackSize, kTaskPriority, cpuCore),
   mConfig(cfg), mFormat(kDefaultSamplerate, 16, 2)
 {
     if (kDacMutePin != GPIO_NUM_NC) {

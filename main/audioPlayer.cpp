@@ -375,7 +375,7 @@ void AudioPlayer::loadSettings()
 
 void AudioPlayer::destroyPipeline()
 {
-    if (!mStreamIn) {
+    if (!mStreamOut) {
         return;
     }
     stop();

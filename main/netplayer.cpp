@@ -228,7 +228,7 @@ extern "C" void app_main(void)
             player->playStation(".");
         }
     }
-
+    /*
     BtStack.discoverDevices(10, ESP_BT_MODE_BTDM, [](const BluetoothStack::DeviceInfo& device){
         if (device.isKeyboard()) {
             btRemote.openBtHidDevice(device.addr);
@@ -244,6 +244,7 @@ extern "C" void app_main(void)
                  item.addrString().c_str(), item.isBle ? "BLE" : "CLASSIC", item.rssi);
         }
     });
+    */
     ESP_LOGI(TAG, "player started");
     vTaskDelay(10);
     ESP_LOGI(TAG, "Registering a2dp handler...");
@@ -332,7 +333,7 @@ esp_err_t httpReboot(httpd_req_t* req)
     player.release();
     asyncCall([]() {
         esp_restart_noos();
-    }, 400000);
+    }, 50);
     return ESP_OK;
 }
 void startWebserver(bool isAp)

@@ -2,6 +2,8 @@
 #include <nvsHandle.hpp>
 #include <esp_equalizer.h>
 #include <cmath>
+#include "asyncCall.hpp"
+
 //#define EQ_PERF 1
 //#define CONVERT_PERF 1
 
@@ -134,10 +136,13 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
                 mPreConvertFunc = &EqualizerNode::samples16or8ToFloatAndApplyVolume<int16_t>;
             }
             else if (bps == 24) {
-                mPreConvertFunc = &EqualizerNode::samples24or32ToFloatAndApplyVolume;
+                mPreConvertFunc = &EqualizerNode::samples24or32ToFloatAndApplyVolume<24>;
             }
             else if (bps == 8) {
                 mPreConvertFunc = &EqualizerNode::samples16or8ToFloatAndApplyVolume<int8_t>;
+            }
+            else if (bps == 32) {
+                mPreConvertFunc = &EqualizerNode::samples24or32ToFloatAndApplyVolume<32>;
             }
             else {
                 ESP_LOGE(TAG, "Unsupported bits per sample: %d", bps);
@@ -337,13 +342,21 @@ EspEqualizerCore::~EspEqualizerCore()
         esp_equalizer_uninit(mEqualizer);
     }
 }
+template <int Bps>
+float toFloat24(int32_t in) { return in; }
+
+template<>
+float toFloat24<32>(int32_t in) { return (in >= 0 ? (in + 128) : (in - 128)) >> 8; }
+
+template <int Bps>
 void EqualizerNode::samples24or32ToFloatAndApplyVolume(PacketResult& pr)
 {
+    static_assert(Bps == 24 || Bps == 32, "Invalid bps parameter");
     auto& pkt = pr.dataPacket();
     myassert(mInFormat.bitsPerSample() >= 24);
     int32_t* end = (int32_t*)(pkt.data + pkt.dataLen);
     for (int32_t* sptr = (int32_t*)pkt.data; sptr < end; sptr++) {
-        *((float*)sptr) = (float)(*sptr) * mFloatVolumeMul;
+        *((float*)sptr) = toFloat24<Bps>(*sptr) * mFloatVolumeMul;
     }
 }
 template<typename S>
@@ -489,7 +502,7 @@ StreamEvent EqualizerNode::pullData(PacketResult& dpr)
         auto& fmt = pkt.fmt;
         mStreamId = pkt.streamId;
         mSourceBps = pkt.sourceBps;
-        equalizerReinit(fmt);
+        asyncCallWait([&]() { equalizerReinit(fmt); });
         fmt = mOutFormat;
         return event;
     }

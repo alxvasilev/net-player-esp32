@@ -53,7 +53,7 @@ bool AudioNodeWithTask::createAndStartTask()
 {
     mEvents.clearBits(kEvtStopRequest);
     mTerminate = false;
-    auto ret = mTask.createTask(mTag, mStackInPsram, mStackSize, mCpuCore < 0 ? tskNO_AFFINITY : mCpuCore, mTaskPrio,
+    auto ret = createTask(mTag, mStackInPsram, mStackSize, mCpuCore < 0 ? tskNO_AFFINITY : mCpuCore, mTaskPrio,
         this, AudioNodeWithTask::sTaskFunc);
     if (!ret) {
         ESP_LOGE(mTag, "Out of memory allocating task memory");
@@ -110,20 +110,24 @@ void AudioNodeWithTask::stop(bool wait)
 
 void AudioNodeWithTask::terminate(bool wait)
 {
-    {
-        MutexLocker locker(mMutex);
-        if (state() == kStateTerminated) {
-            ESP_LOGD(mTag, "terminate: Already terminated");
-            return;
-        }
-        mTerminate = true;
-        onStopRequest();
-        mEvents.setBits(kEvtStopRequest);
+    if (!Task::handle()) {
+        ESP_LOGD(mTag, "terminate: Already terminated");
+        return;
     }
-    mCmdQueue.post(kCommandTerminate);
+    if (!mTerminate) {
+        {
+            MutexLocker locker(mMutex);
+            mTerminate = true;
+            onStopRequest();
+            mEvents.setBits(kEvtStopRequest);
+        }
+        mCmdQueue.post(kCommandTerminate);
+    }
     if (wait) {
         waitForState(kStateTerminated);
+        waitToEnd();
     }
+    assert(!Task::handle());
 }
 
 bool AudioNodeWithTask::dispatchCommand(Command& cmd)

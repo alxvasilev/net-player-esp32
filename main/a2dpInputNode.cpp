@@ -142,7 +142,7 @@ void A2dpInputNode::onData(DataPacket* pkt)
     MutexLocker locker(mMutex);
     mSpeedProbe.onTraffic(pkt->dataLen);
     if (mWaitingPrefill && mRingBuf.dataSize() > mWaitingPrefill) {
-        printf("prefill %lu complete\n", mWaitingPrefill);
+        ESP_LOGI(mTag, "Prefill %lu complete", mWaitingPrefill);
         mWaitingPrefill = 0;
         plSendEvent(kEventPrefillComplete, mStreamId);
     }
