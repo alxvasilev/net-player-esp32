@@ -456,7 +456,7 @@ StreamEvent HttpNode::pullData(PacketResult& pr)
 }
 DataPacket* HttpNode::peekData(bool& preceded)
 {
-    return mRingBuf.peekFirstDataWait(kEvtTitleChanged, &preceded);
+    return mRingBuf.peekFirstDataWait((StreamEvent)(kEvtStreamChanged | kEvtStreamEnd), &preceded);
 }
 StreamPacket* HttpNode::peek()
 {

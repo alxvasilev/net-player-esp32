@@ -31,16 +31,16 @@ public:
     /* The packets returned by the peekXXX methods cannot be destroyed even if the queue is not locked,
      * unless someone else reads the queue meanwhile.
      */
-    StreamPacket* peekFirstOfType(StreamEvent type, StreamEvent canBePrecededBy=kInvalidStreamEvent) {
+    StreamPacket* peekFirstOfType(StreamEvent type, StreamEvent cantBePrecededBy=kInvalidStreamEvent) {
         StreamPacket* result = nullptr;
-        if (canBePrecededBy != kInvalidStreamEvent) {
-            iterate([type, canBePrecededBy, &result](StreamPacket*& pkt) {
+        if (cantBePrecededBy != kInvalidStreamEvent) {
+            iterate([type, cantBePrecededBy, &result](StreamPacket*& pkt) {
                 auto pktType = pkt->type;
                 if (pktType == type) {
                     result = pkt;
                     return false;
                 }
-                else if (pktType != canBePrecededBy) {
+                else if (pktType & cantBePrecededBy) {
                     return false;
                 }
                 else {
@@ -65,7 +65,7 @@ public:
      *  If canBePrecededBy is kInvalidStreamEvent, no check is done what precedes the data packet.
      *  NOTE: Queue must not be locked before calling this method
      */
-    DataPacket* peekFirstDataWait(StreamEvent canBePrecededBy=kInvalidStreamEvent, bool* precByOther = nullptr) {
+    DataPacket* peekFirstDataWait(StreamEvent cantBePrecededBy=kInvalidStreamEvent, bool* precByOther = nullptr) {
         MutexLocker locker(mMutex);
         while(mDataSize <= 0) {
             MutexUnlocker unlocker(mMutex);
@@ -77,7 +77,7 @@ public:
                 return nullptr;
             }
         }
-        auto pkt = (DataPacket*)peekFirstOfType(kEvtData, canBePrecededBy);
+        auto pkt = (DataPacket*)peekFirstOfType(kEvtData, cantBePrecededBy);
         if (precByOther) {
             *precByOther = !pkt;
         }

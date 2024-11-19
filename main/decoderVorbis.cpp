@@ -17,11 +17,16 @@ bool assignComment(const char* prefix, int pfxLen, unique_ptr_mfree<const char>&
         return false;
     }
     src += pfxLen;
-    while(isspace(*src)) { src++; }
-    if (*src) {
-        dest.reset(strdup(src));
+    for(;;) {
+        if (!*src) {
+            return true;
+        }
+        if (!isspace(*src)) {
+            dest.reset(strdup(src));
+            return true;
+        }
+        src++;
     }
-    return true;
 }
 StreamEvent DecoderVorbis::decode(AudioNode::PacketResult& dpr)
 {
@@ -60,13 +65,11 @@ StreamEvent DecoderVorbis::decode(AudioNode::PacketResult& dpr)
                     if (artist) {
                         break;
                     }
-                    continue;
                 }
-                if (assignComment("ARTIST=", 7, artist, *ptr)) {
+                else if (assignComment("ARTIST=", 7, artist, *ptr)) {
                     if (title) {
                         break;
                     }
-                    continue;
                 }
                 ptr++;
             } while (*ptr);

@@ -125,14 +125,16 @@ public:
     int16_t rxChunkSize() const;
 };
 
+// Event types are OR-able to allow APIs that specify multiple event types.
+// One such API is StreamRingQueue::peekFirstOfType()
 enum StreamEvent: int8_t {
     kNoError = 0, // used only when StreamEvent is used for custom signalling
     kEvtData = 0,
     kEvtStreamEnd = 1,
     kEvtStreamChanged = 2,
-    kEvtSeek = 3,
-    kEvtTitleChanged = 4,
-    kEvtPrefill = 5,
+    kEvtSeek = 4,
+    kEvtTitleChanged = 8,
+    kEvtPrefill = 16,
     kEvtLast = kEvtPrefill,
     kErrStreamStopped = -1,
     kErrTimeout = -2,
