@@ -81,9 +81,6 @@ bool I2sOutputNode::dispatchCommand(Command &cmd)
     }
     if (cmd.opcode == kCommandPrefillComplete) {
         mLastUncorkStreamId = (StreamId)cmd.arg;
-        if (!mI2sChan) {
-            return true;
-        }
         if (mWaitingPrefill) {
             mWaitingPrefill = false;
             ESP_LOGI(mTag, "Got prefill complete command, starting playback");
@@ -136,7 +133,11 @@ void I2sOutputNode::nodeThreadFunc()
                     break;
                 }
                 else if (evt == kEvtTitleChanged) {
-                    plSendEvent(kEventTrackInfo, 0, (uintptr_t)(*(TitleChangeEvent*)dpr.packet.get()).title);
+                    auto& titleEvent = dpr.titleEvent();
+                    printf("title event: '%s' '%s'\n", titleEvent.title.get() ? titleEvent.title.get() : "null", titleEvent.artist.get() ? titleEvent.artist.get() : "null");
+                    plSendEvent(kEventTitleChanged,
+                        (uintptr_t)titleEvent.title.release(),
+                        (uintptr_t)titleEvent.artist.release());
                 }
                 else { // any other generic event
                     if (evt == kEvtStreamChanged) {
@@ -159,13 +160,14 @@ void I2sOutputNode::nodeThreadFunc()
                     else if (evt == kEvtStreamEnd) {
                         plSendEvent(kEventStreamEnd, 0, dpr.genericEvent().streamId);
                     }
-                    // handle prefill request
-                    if (!mWaitingPrefill) {
-                        int diff = (int)mStreamId - (int)mLastUncorkStreamId;
+                    else if (evt == kEvtPrefill) {
+                        auto& prefillEvent = dpr.prefillEvent();
+                        int diff = (int)prefillEvent.streamId - (int)mLastUncorkStreamId;
                         // take streamId wrap into account
-                        if (dpr.packet->flags & StreamPacket::kFlagWaitPrefill && (diff > 0 || diff < - 128)) {
+                        if ((diff > 0 || diff < - 128)) {
                             mWaitingPrefill = true;
-                            ESP_LOGI(mTag, "Got packet with wait-prefill flag, halting till uncorked...");
+                            ESP_LOGI(mTag, "Got wait-prefill event for stream %u, halting till uncorked...",
+                                prefillEvent.streamId);
                             break;
                         }
                     }

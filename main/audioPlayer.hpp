@@ -135,11 +135,12 @@ protected:
     void lcdInit();
     void lcdDrawGui();
     void initTimedDrawTask();
-    void lcdUpdatePlayState(const char* text, bool isRecording=false);
+    void lcdUpdatePlayState(const char* text, bool isRecording = false);
     void lcdBlitTrackTitle();
-    void lcdUpdateTrackTitle(const char* buf);
+    void lcdUpdateTrackTitle(const char* buf, int len = -1);
     void lcdScrollTrackTitle();
     void lcdUpdateArtistName(const char* name);
+    void lcdUpdateTitleAndArtist(const char* title, const char* artist);
     void lcdUpdateStationInfo();
     void lcdUpdateTrackDisplay();
     // stream info line
@@ -204,7 +205,7 @@ public:
     bool equalizerSetGainsFromString(char* str, size_t len);
     void registerUrlHanlers();
     // AudioNode::EventHandler interface
-    virtual bool onNodeEvent(AudioNode& node, uint32_t type, size_t numArg, uintptr_t arg) override;
+    virtual bool onNodeEvent(AudioNode& node, uint32_t type, uintptr_t arg1, uintptr_t arg2) override;
     virtual void onNodeError(AudioNode& node, int error, uintptr_t arg) override;
     virtual void onNeedLargeMemory(int32_t amountHint) override {}
 };

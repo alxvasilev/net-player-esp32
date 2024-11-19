@@ -305,9 +305,9 @@ bool Station::save()
         mName[0xff] = 0;
     }
     DynBuffer data(urlLen + nameLen + 16);
-    data.append<uint16_t>(urlLen);
+    data.appendVal<uint16_t>(urlLen);
     data.append(mUrl, urlLen);
-    data.append<uint8_t>(nameLen);
+    data.appendVal<uint8_t>(nameLen);
     data.append(mName, nameLen);
     if (mNotes) {
         int notesLen = strlen(mNotes);
@@ -315,10 +315,10 @@ bool Station::save()
             notesLen = 0xff;
             mNotes[0xff] = 0;
         }
-        data.append<uint8_t>(notesLen);
+        data.appendVal<uint8_t>(notesLen);
         data.appendStr(mNotes);
     } else {
-        data.append<uint8_t>(0);
+        data.appendVal<uint8_t>(0);
     }
     auto err = mParent.nvsHandle().writeBlob(mId, data.buf(), data.dataSize());
     if (err != ESP_OK) {

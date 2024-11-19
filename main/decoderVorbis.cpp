@@ -11,7 +11,18 @@ void DecoderVorbis::reset()
     mVorbis.reset();
     outputFormat.clear();
 }
-
+bool assignComment(const char* prefix, int pfxLen, unique_ptr_mfree<const char>& dest, const char* src)
+{
+    if (strncasecmp(src, prefix, pfxLen)) {
+        return false;
+    }
+    src += pfxLen;
+    while(isspace(*src)) { src++; }
+    if (*src) {
+        dest.reset(strdup(src));
+    }
+    return true;
+}
 StreamEvent DecoderVorbis::decode(AudioNode::PacketResult& dpr)
 {
     if (!outputFormat) {
@@ -40,14 +51,27 @@ StreamEvent DecoderVorbis::decode(AudioNode::PacketResult& dpr)
         }
         updateOutputFormat();
 
-        for(char** ptr = mVorbis.streamComments().user_comments; *ptr; ptr++) {
-            if (strncasecmp(*ptr, "title=", 6) == 0) {
-                auto str = *ptr + 6;
-                while(isspace(*str)) { str++; }
-                if (*str) {
-                    mParent.codecPostOutput(TitleChangeEvent::create(str));
+        char** ptr = mVorbis.streamComments().user_comments;
+        if (*ptr) {
+            unique_ptr_mfree<const char> title;
+            unique_ptr_mfree<const char> artist;
+            do {
+                if (assignComment("TITLE=", 6, title, *ptr)) {
+                    if (artist) {
+                        break;
+                    }
+                    continue;
                 }
-                break;
+                if (assignComment("ARTIST=", 7, artist, *ptr)) {
+                    if (title) {
+                        break;
+                    }
+                    continue;
+                }
+                ptr++;
+            } while (*ptr);
+            if (title || artist) {
+                mParent.codecPostOutput(new TitleChangeEvent(title.release(), artist.release()));
             }
         }
         return kNoError;

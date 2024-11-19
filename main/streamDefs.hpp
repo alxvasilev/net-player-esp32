@@ -132,6 +132,8 @@ enum StreamEvent: int8_t {
     kEvtStreamChanged = 2,
     kEvtSeek = 3,
     kEvtTitleChanged = 4,
+    kEvtPrefill = 5,
+    kEvtLast = kEvtPrefill,
     kErrStreamStopped = -1,
     kErrTimeout = -2,
     kErrNoCodec = -3,

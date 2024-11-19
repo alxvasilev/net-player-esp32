@@ -28,7 +28,7 @@ public:
     mutable Mutex mMutex;
 protected:
     enum {
-        kHttpRecvTimeoutMs = 10000, kHttpClientBufSize = 512, kRingQueueLen = 256, kStackSize = 5120
+        kHttpRecvTimeoutMs = 10000, kHttpClientBufSize = 1024, kRingQueueLen = 256, kStackSize = 5120
     };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1 };
     // Read mode dictates how the pullData() caller behaves. Since it may
@@ -42,6 +42,8 @@ protected:
     StreamRingQueue<kRingQueueLen> mRingBuf;
     int64_t mStreamByteCtr = 0;
     int mContentLen = 0;
+    unique_ptr_mfree<const char> mStationNameHdr;
+    std::string mLastTitle;
     IcyParser mIcyParser;
     std::unique_ptr<TrackRecorder> mRecorder;
     int16_t mRxChunkSize = 0;

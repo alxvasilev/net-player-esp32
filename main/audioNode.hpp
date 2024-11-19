@@ -49,7 +49,7 @@ class AudioNode
 public:
     // events sent to the GUI via plSendEvent()
     enum { kEventAudioFormatChange,
-           kEventNewStream, kEventStreamEnd, kEventTrackInfo,
+           kEventNewStream, kEventStreamEnd, kEventTitleChanged,
            kEventConnecting, kEventConnected, kEventDisconnected,
            kEventPlaying, kEventRecording, kEventPrefillComplete, kEventBufUnderrun,
            kEventLast = kEventBufUnderrun };
@@ -81,7 +81,7 @@ protected:
     const char* mTag;
     Mutex mMutex;
     AudioNode* mPrev = nullptr;
-    inline bool plSendEvent(uint32_t type, size_t numArg = 0, uintptr_t arg=0);
+    inline bool plSendEvent(uint32_t type, uintptr_t arg1 = 0, uintptr_t arg2 = 0);
     inline void plSendError(int error, uintptr_t arg);
     AudioNode(IAudioPipeline& parent, const char* tag): mPipeline(parent), mTag(tag) {}
 public:
@@ -110,6 +110,14 @@ public:
         NewStreamEvent& newStreamEvent() {
             myassert(packet->type == kEvtStreamChanged);
             return *(NewStreamEvent*)packet.get();
+        }
+        TitleChangeEvent& titleEvent() {
+            myassert(packet->type == kEvtTitleChanged);
+            return *(TitleChangeEvent*)packet.get();
+        }
+        PrefillEvent& prefillEvent() {
+            myassert(packet->type == kEvtPrefill);
+            return *(PrefillEvent*)packet.get();
         }
         void clear()
         {
@@ -201,8 +209,9 @@ public:
     virtual uint32_t pollSpeed() { return 0; }
     virtual uint32_t bufferedDataSize() const { return 0; }
     virtual void onTrackPlaying(StreamId id, uint32_t pos) {}
+    virtual void onVolumeChange(int vol) {}
 };
-inline bool AudioNode::plSendEvent(uint32_t type, size_t numArg, uintptr_t arg)
+inline bool AudioNode::plSendEvent(uint32_t type, uintptr_t numArg, uintptr_t arg)
 {
     return mPipeline.onNodeEvent(*this, type, numArg, arg);
 }

@@ -93,6 +93,11 @@ void HttpNode::onHttpHeader(const char* key, const char* val)
     else if ((strcasecmp(key, "accept-ranges") == 0) && (strcasecmp(val, "bytes") == 0)) {
         mAcceptsRangeRequests = true;
     }
+    else if (strcasecmp(key, "icy-name") == 0) {
+        if (val) {
+            mStationNameHdr.reset(strdup(val));
+        }
+    }
     else {
         mIcyParser.parseHeader(key, val);
     }
@@ -120,6 +125,7 @@ bool HttpNode::connect(bool isReconnect)
             mAcceptsRangeRequests = false;
             clearRingBuffer(); // clear in case of hard reconnect
             mStreamByteCtr = 0;
+            mStationNameHdr.reset();
             prefillStart();
         }
         recordingMaybeEnable();
@@ -189,11 +195,10 @@ bool HttpNode::connect(bool isReconnect)
         plSendEvent(kEventConnected, isReconnect);
         if (!isReconnect) {
             ESP_LOGD(TAG, "Posting kStreamChange with codec %s and streamId %ld\n", mInFormat.codec().toString(), mUrlInfo->streamId);
-            auto pkt = new NewStreamEvent(mUrlInfo->streamId, mInFormat);
+            mRingBuf.pushBack(new NewStreamEvent(mUrlInfo->streamId, mInFormat));
             if (mWaitingPrefill) {
-                pkt->flags |= StreamPacket::kFlagWaitPrefill;
+                mRingBuf.pushBack(new PrefillEvent(mUrlInfo->streamId, mStationNameHdr.release()));
             }
-            mRingBuf.pushBack(pkt);
         }
         return true;
     }
@@ -286,16 +291,24 @@ int8_t HttpNode::recv()
                 bool isFirst = !mIcyParser.trackName();
                 bool gotTitle = mIcyParser.processRecvData(dataPacket->data, rlen);
                 if (gotTitle) {
-                    ESP_LOGW(TAG, "Track title changed to: '%s'", mIcyParser.trackName());
-                    TitleChangeEvent::unique_ptr pkt(TitleChangeEvent::create(mIcyParser.trackName()));
-                    {
-                        MutexUnlocker unlocker(mMutex);
-                        mRingBuf.pushBack(pkt.release());
+                    const char* newTitle = mIcyParser.trackName();
+                    if (!newTitle) {
+                        newTitle = "";
                     }
-                    // offset of title within packet: (rlen - mIcyParser.bytesSinceLastMeta())
-                    if (mRecorder && !isFirst) { // start recording only on second icy track event - first track may be incomplete
-                        bool ok = mRecorder->onNewTrack(mIcyParser.trackName(), mInFormat.codec());
-                        plSendEvent(kEventRecording, ok);
+                    if (mLastTitle != newTitle) {
+                        mLastTitle = newTitle;
+                        ESP_LOGW(TAG, "Track title changed to: '%s'", mIcyParser.trackName());
+                        TitleChangeEvent::unique_ptr pkt(new TitleChangeEvent(
+                            mIcyParser.trackName() ? strdup(mIcyParser.trackName()) : nullptr, nullptr));
+                        {
+                            MutexUnlocker unlocker(mMutex);
+                            mRingBuf.pushBack(pkt.release());
+                        }
+                        // offset of title within packet: (rlen - mIcyParser.bytesSinceLastMeta())
+                        if (mRecorder && !isFirst) { // start recording only on second icy track event - first track may be incomplete
+                            bool ok = mRecorder->onNewTrack(mIcyParser.trackName(), mInFormat.codec());
+                            plSendEvent(kEventRecording, ok);
+                        }
                     }
                 }
             }

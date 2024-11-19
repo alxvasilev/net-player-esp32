@@ -315,9 +315,16 @@ bool SpotifyNode::recv()
         mRingBuf.pushBack(
             new NewStreamEvent(mInStreamId, Codec(Codec::kCodecVorbis, Codec::kTransportOgg), mTsSeek)
         );
-        mRingBuf.pushBack(TitleChangeEvent::create((mCurrentTrack->name + " - " + mCurrentTrack->artist).c_str(),
-            mWaitingPrefill ? StreamPacket::kFlagWaitPrefill : 0));
-        pkt->flags |= StreamPacket::kFlagStreamHeader;
+        mRingBuf.pushBack(new TitleChangeEvent(strdup(mCurrentTrack->name.c_str()),
+            strdup(mCurrentTrack->artist.c_str())));
+        if (mWaitingPrefill) {
+            mRingBuf.pushBack(new PrefillEvent(mInStreamId, ""));
+        }
+    }
+    if (mWaitingPrefill >= mRingBuf.dataSize()) {
+        mWaitingPrefill = 0;
+        ESP_LOGI(TAG, "Prefill complete, sending event");
+        plSendEvent(kEventPrefillComplete, mInStreamId);
     }
     mRingBuf.pushBack(pkt.release());
     return true;

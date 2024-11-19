@@ -3,6 +3,7 @@
 
 #include "streamDefs.hpp"
 #include <memory>
+#include "utils.hpp"
 #include <utils-parse.hpp>
 
 constexpr uint32_t myLog2(uint32_t n) noexcept
@@ -28,17 +29,13 @@ public:
     enum: uint8_t {
         kFlagHasSpaceFor32Bit = 1 << 0,
         kFlagLeftAlignedSamples = 1 << 1,
-        kFlagStreamHeader = 1 << 2,
-        kFlagCustomAlloc = 1 << 3,
-        kFlagWaitPrefill = 1 << 4
+        kFlagCustomAlloc = 1 << 2
     };
-    typedef uint32_t AlignAs;  // 4-byte aligned
     StreamEvent type;
     uint8_t flags;
     void destroy() { // may use custom allocation
         if (flags & kFlagCustomAlloc) {
-            //printf("freeing packet type %d of size %d\n", this->type, (this->type == 0) ? *((int16_t*)(((char*)this) + 2)) : -1);
-            free(this); //delete[] (AlignAs(*)[])this;
+            free(this);
         }
         else {
             delete this;
@@ -46,7 +43,7 @@ public:
     }
     template<class T>
     static T* allocWithDataSize(StreamEvent type, size_t dataSize) {
-        auto inst = (T*)heap_caps_malloc(sizeof(T) + dataSize, MALLOC_CAP_SPIRAM); //new AlignAs[sizeToArraySize<AlignAs>(sizeof(T) + dataSize)];
+        auto inst = (T*)heap_caps_malloc(sizeof(T) + dataSize, MALLOC_CAP_SPIRAM);
         inst->type = type;
         inst->flags = kFlagCustomAlloc;
         return inst;
@@ -54,16 +51,11 @@ public:
 };
 struct TitleChangeEvent: public StreamPacket {
     typedef std::unique_ptr<TitleChangeEvent, Deleter> unique_ptr;
-    char title[];
-    static TitleChangeEvent* create(const char* aTitle, uint8_t flags=0) {
-        auto len = strlen(aTitle) + 1;
-        auto inst = allocWithDataSize<TitleChangeEvent>(kEvtTitleChanged, len);
-        inst->flags = flags;
-        memcpy(inst->title, aTitle, len);
-        return inst;
-    }
-protected:
-    TitleChangeEvent() = delete;
+    unique_ptr_mfree<const char> title;
+    unique_ptr_mfree<const char> artist;
+    TitleChangeEvent(const char* aTitle, const char* aArtist, uint8_t flags=0)
+    : StreamPacket(kEvtTitleChanged, flags), title(aTitle), artist(aArtist)
+    {}
 };
 struct DataPacket: public StreamPacket {
     typedef std::unique_ptr<DataPacket, Deleter> unique_ptr;
@@ -119,5 +111,11 @@ struct NewStreamEvent: public GenericEvent {
 struct StreamEndEvent: public GenericEvent {
     StreamEndEvent(StreamId streamId): GenericEvent(kEvtStreamEnd, streamId, 0) {}
 };
-
+struct PrefillEvent: public GenericEvent {
+    typedef std::unique_ptr<PrefillEvent, Deleter> unque_ptr;
+    unique_ptr_mfree<const char> displayText;
+    PrefillEvent(StreamId aStreamId, const char* display, uint8_t flags=0)
+    : GenericEvent(kEvtPrefill, aStreamId, flags), displayText(display)
+    {}
+};
 #endif

@@ -20,6 +20,8 @@
 
 #define kStreamInfoFont font_Camingo22
 #define kTrackTitleFont font_CamingoBold43
+#define kArtistNameFont font_Camingo32
+
 const LcdColor kLcdColorBackground(0, 0, 128);
 const LcdColor kLcdColorCaption(255, 255, 128);
 const LcdColor kLcdColorGrid(0, 128, 128);
@@ -164,7 +166,7 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         break;
     }
     case AudioNode::kTypeA2dpIn:
-        mStreamIn.reset(new A2dpInputNode(*this));
+        mStreamIn.reset(new A2dpInputNode(*this, true));
         mDecoder.reset();
         pcmSource = mStreamIn.get();
         break;
@@ -245,9 +247,9 @@ void AudioPlayer::lcdUpdateTrackDisplay()
         if (stationList) {
             lcdUpdateStationInfo();
         }
-    } else if (mTrackInfo) {
-        lcdUpdateArtistName(mTrackInfo->artistName);
-        lcdUpdateTrackTitle(mTrackInfo->trackName);
+    }
+    else if (mTrackInfo) {
+        lcdUpdateTitleAndArtist(mTrackInfo->trackName, mTrackInfo->artistName);
     }
     else if (mStreamIn && mStreamIn->type() == AudioNode::kTypeHttpIn) {
         lcdUpdateArtistName("Playing URL");
@@ -282,7 +284,7 @@ void AudioPlayer::lcdUpdateStationInfo()
 }
 void AudioPlayer::lcdUpdateArtistName(const char* name)
 {
-    mLcd.setFont(font_Camingo32);
+    mLcd.setFont(kArtistNameFont);
     mLcd.clear(0, kLcdArtistNameLineY, mLcd.width(), mLcd.fontHeight());
     if (name) {
         mLcd.gotoXY(0, kLcdArtistNameLineY);
@@ -290,7 +292,37 @@ void AudioPlayer::lcdUpdateArtistName(const char* name)
         mLcd.putsCentered(name);
     }
 }
-
+void AudioPlayer::lcdUpdateTitleAndArtist(const char* title, const char* artist)
+{
+    bool merge = true;
+    int artistLen = artist ? strlen(artist) : 0;
+    if (mPlayerMode != kModeRadio) {
+        if (!artistLen || mLcd.textWidth(kArtistNameFont, artistLen) <= mLcd.width()) {
+            lcdUpdateArtistName(artist);
+            lcdUpdateTrackTitle(title);
+            merge = false;
+        }
+        else { // artist too long to fit screen, display empty artist field and artist + title in title field
+            lcdUpdateArtistName(nullptr);
+        }
+    }
+    // in radio mode: display only artist + track in track field
+    if (merge) {
+        int titleLen = title ? strlen(title) : 0;
+        DynBuffer marquee(artistLen + titleLen + 4);
+        if (artist) {
+            marquee.append(artist, artistLen);
+        }
+        if (titleLen) {
+            if (artist) {
+                marquee.appendStr(" - ");
+            }
+            marquee.append(title, titleLen);
+        }
+        marquee.nullTerminate();
+        lcdUpdateTrackTitle(marquee.data(), marquee.dataSize()-1);
+    }
+}
 void AudioPlayer::lcdUpdatePlayState(const char* text, bool isRecording)
 {
     mLcd.setFont(font_Camingo22);
@@ -1029,27 +1061,26 @@ void AudioPlayer::onNodeError(AudioNode& node, int error, uintptr_t arg)
     });
 }
 
-bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, uintptr_t arg)
+bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t arg1, uintptr_t arg2)
 {
     // For most of the events, we do an asyncCall to access the player, to avoid deadlocks
     // Must not do any locking from here, so we call into the player via async messages
-    if (event == AudioNode::kEventTrackInfo) {
-        const std::string title((const char*)arg);
-        ESP_LOGI(TAG, "Received title event: '%s'", title.c_str());
-        asyncCall([this, title]() {
+    if (event == AudioNode::kEventTitleChanged) {
+        asyncCall([this, arg1, arg2]() {
             LOCK_PLAYER();
             ElapsedTimer t;
-            lcdUpdateTrackTitle(title.c_str());
+            lcdUpdateTitleAndArtist((const char*)arg1, (const char*)arg2);
+            free((void*)arg1);
+            free((void*)arg2);
             printf("set title: %d\n", t.msElapsed());
         });
     }
     else if (event == AudioNode::kEventNewStream) {
-        auto& evt = *(NewStreamEvent*)arg;
+        auto& evt = *(NewStreamEvent*)arg2;
         asyncCall([this, streamId = evt.streamId, fmt = evt.fmt, sourceBps = evt.sourceBps]() {
             LOCK_PLAYER();
             onNewStream(fmt, sourceBps);
             if (mStreamIn) {
-                printf("input intf: %p\n", mStreamIn->inputNodeIntf());
                 mStreamIn->inputNodeIntf()->onTrackPlaying(streamId, 0);
             }
         });
@@ -1057,32 +1088,32 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, size_t numArg, ui
     else if (event == AudioNode::kEventPrefillComplete) {
         LOCK_PLAYER();
         if (mStreamOut) {
-            static_cast<I2sOutputNode*>(mStreamOut.get())->notifyPrefillComplete(numArg);
+            static_cast<I2sOutputNode*>(mStreamOut.get())->notifyPrefillComplete(arg1);
         }
     }
     else {
-        asyncCall([this, event, arg, numArg]() {
+        asyncCall([this, event, arg1, arg2]() {
             LOCK_PLAYER();
             switch(event) {
                 case AudioNode::kEventConnected:
-                    return lcdUpdatePlayState(numArg ? nullptr : "Buffering..."); break;
+                    return lcdUpdatePlayState(arg1 ? nullptr : "Buffering..."); break;
                 case AudioNode::kEventConnecting:
-                    return lcdUpdatePlayState(numArg ? "Reconnecting..." : "Connecting..."); break;
+                    return lcdUpdatePlayState(arg1 ? "Reconnecting..." : "Connecting..."); break;
                 case AudioNode::kEventPlaying:
                     return lcdUpdatePlayState(nullptr); break;
                 case HttpNode::kEventRecording:
-                    return lcdUpdatePlayState(nullptr, numArg); break;
+                    return lcdUpdatePlayState(nullptr, arg1); break;
                 case AudioNode::kEventBufUnderrun:
                     return lcdShowBufUnderrunImmediate(); break;
                 case AudioNode::kEventStreamEnd:
                     if ((uint8_t)mPlayerMode & (uint8_t)AudioNode::kTypeFlagPlayerCtrl) {
                         break;
                     }
-                    else if (numArg == mCurrentStreamId) {
+                    else if (arg1 == mCurrentStreamId) {
                         this->stop();
                     }
                     else {
-                        ESP_LOGI(TAG, "Discarding stream end event for a previous streamId %d", numArg);
+                        ESP_LOGI(TAG, "Discarding stream end event for a previous streamId %d", arg1);
                     }
                     break;
                 default: break;
@@ -1128,19 +1159,26 @@ void AudioPlayer::lcdTimedDrawTask()
     }
 }
 
-void AudioPlayer::lcdUpdateTrackTitle(const char* buf)
+void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int len)
 {
-    if (!buf || !buf[0]) {
+    if (!buf || !buf[0] || !len) {
         mTitleScrollEnabled = false;
-        if (!mLcdTrackTitle.isEmpty()) {
-            mLcdTrackTitle.clear();
-            mLcd.gotoXY(0, kLcdTrackTitleY);
-            mLcd.clear(mLcd.cursorX, mLcd.cursorY, mLcd.width(), kTrackTitleFont.height);
-        }
+        mLcdTrackTitle.clear();
+        mLcd.clear(0, kLcdTrackTitleY, mLcd.width(), kTrackTitleFont.height);
         return;
     }
-
-    size_t len = strlen(buf);
+    if (len < 0) {
+        len = strlen(buf);
+    }
+    if (mTitleTextFrameBuf.textWidth(len) <= mLcd.width()) {
+        mTitleScrollEnabled = false;
+        mLcdTrackTitle.clear();
+        mLcd.clear(0, kLcdTrackTitleY, mLcd.width(), kTrackTitleFont.height);
+        mLcd.setFont(kTrackTitleFont);
+        mLcd.gotoXY(0, kLcdTrackTitleY);
+        mLcd.putsCentered(buf);
+        return;
+    }
     if (len > kMaxTrackTitleLen - 3) {
         mLcdTrackTitle.reserve(kMaxTrackTitleLen + 1);
         mLcdTrackTitle.assign(buf, kMaxTrackTitleLen - 3);
@@ -1151,7 +1189,8 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf)
         mLcdTrackTitle.reserve(len + 4);
         mLcdTrackTitle.assign(buf, len);
         mLcdTrackTitle.append(" * ", 4);
-        mTitleTextWidth = (len + 3) * (kTrackTitleFont.width + kTrackTitleFont.charSpacing);
+        printf("final: '%.*s'\n", mLcdTrackTitle.dataSize(), mLcdTrackTitle.data());
+        mTitleTextWidth = mTitleTextFrameBuf.textWidth(len + 3);
     }
     mTitleScrollPixOffset = 0;
     mTitleScrollStep = 2;
