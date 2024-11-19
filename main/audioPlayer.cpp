@@ -309,18 +309,18 @@ void AudioPlayer::lcdUpdateTitleAndArtist(const char* title, const char* artist)
     // in radio mode: display only artist + track in track field
     if (merge) {
         int titleLen = title ? strlen(title) : 0;
-        DynBuffer marquee(artistLen + titleLen + 4);
+        std::string marquee;
+        marquee.reserve(artistLen + titleLen + 4);
         if (artist) {
             marquee.append(artist, artistLen);
         }
         if (titleLen) {
             if (artist) {
-                marquee.appendStr(" - ");
+                marquee.append(" - ");
             }
             marquee.append(title, titleLen);
         }
-        marquee.nullTerminate();
-        lcdUpdateTrackTitle(marquee.data(), marquee.dataSize()-1);
+        lcdUpdateTrackTitle(marquee.c_str(), marquee.size());
     }
 }
 void AudioPlayer::lcdUpdatePlayState(const char* text, bool isRecording)
@@ -1189,7 +1189,6 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int len)
         mLcdTrackTitle.reserve(len + 4);
         mLcdTrackTitle.assign(buf, len);
         mLcdTrackTitle.append(" * ", 4);
-        printf("final: '%.*s'\n", mLcdTrackTitle.dataSize(), mLcdTrackTitle.data());
         mTitleTextWidth = mTitleTextFrameBuf.textWidth(len + 3);
     }
     mTitleScrollPixOffset = 0;
