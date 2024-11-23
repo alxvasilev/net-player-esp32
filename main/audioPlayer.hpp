@@ -130,6 +130,7 @@ protected:
     void createDlnaHandler();
     void setPlayerMode(PlayerMode mode);
     void onNewStream(StreamFormat fmt, int sourceBps);
+    void onStreamEnd(StreamId streamId);
     bool streamIsCpuHeavy() const;
     // GUI stuff
     void lcdInit();
@@ -144,9 +145,10 @@ protected:
     void lcdUpdateStationInfo();
     void lcdUpdateTrackDisplay();
     // stream info line
+    int16_t audioFormatTextY() const;
     void lcdWriteStreamInfo(int8_t charOfs, const char* str);
-    void lcdUpdateCodec();
     void lcdUpdateAudioFormat();
+    void lcdClearAudioFormat();
     // net speed stuff
     void lcdUpdateNetSpeed();
     void lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize);

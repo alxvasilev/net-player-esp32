@@ -19,7 +19,7 @@ struct ITrackPlayer {
     virtual void nextTrack(bool nextPrev) = 0;
     virtual void stopPlayback() = 0;
     virtual void seekMs(uint32_t pos) = 0;
-    virtual void setVolume(uint8_t vol) = 0;
+    virtual void setVolume(uint32_t vol) = 0;
 };
 
 class SpircHandler {
@@ -49,7 +49,7 @@ class SpircHandler {
   void notifyCurrTrackUpdate(int trackIdx);
   void notifyPositionMs(uint32_t position);
   void notifyPausedState(bool paused);
-  void notifyVolumeSet(uint16_t volume);
+  void notifyVolumeSet(uint32_t volume);
   void loadTrackFromURI(const std::string& uri);
   TrackQueue& getTrackQueue() { return mTrackQueue; }
   void disconnect();

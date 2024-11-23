@@ -36,25 +36,22 @@ FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *dec
 {
 //  printf("readCb\n");
     auto& self = *static_cast<DecoderFlac*>(userp);
-    assert(self.mInputPr);
-    auto& pr = *self.mInputPr;
     if (!self.mInputPacket) {
-        auto event = self.mInputEvent = self.mSrcNode.pullData(pr);
+        AudioNode::PacketResult pr;
+        auto event = self.mSrcNode.pullData(pr);
         if (event) {
             *bytes = 0;
-            if (event == kEvtTitleChanged) {
-                return self.mParent.forwardEvent(event, pr) == kNoError
-                    ? FLAC__STREAM_DECODER_READ_STATUS_CONTINUE
-                    : FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
-            }
-            else {
+            if (event < 0) {
+                self.mInputEvent = event;
                 return FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
             }
+            auto ret = self.mParent.forwardEvent(pr);
+            return (ret != kNoError || event == kEvtStreamChanged || event == kEvtStreamEnd)
+                ? FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM
+                : FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
         }
-        else {
-            self.mInputPacket.reset((DataPacket*)pr.packet.release());
-            self.mInputPos = 0;
-        }
+        self.mInputPacket.reset((DataPacket*)pr.packet.release());
+        self.mInputPos = 0;
     }
     auto pktLen = self.mInputPacket->dataLen;
     size_t readAmount = std::min((size_t)pktLen - self.mInputPos, *bytes);
@@ -80,22 +77,22 @@ void DecoderFlac::metadataCb(const FLAC__StreamDecoder *decoder, const FLAC__Str
 }
 StreamEvent DecoderFlac::decode(AudioNode::PacketResult& dpr)
 {
-    mInputPr = &dpr;
     mHasOutput = false;
     for (int i = 0; !mHasOutput && (i < 10); i++) {
         mNumReads = 0;
+        mInputEvent = kNoError;
         auto ok = FLAC__stream_decoder_process_single(mDecoder);
+        if (mInputEvent) {
+            dpr.clear();
+            return mInputEvent;
+        }
         if (!ok) {
             auto err = FLAC__stream_decoder_get_state(mDecoder);
             const char* errStr = (err >= 0) ? FLAC__StreamDecoderStateString[err] : "(invalid code)";
             ESP_LOGW(TAG, "Decoder returned error %s(%d)", errStr, err);
-            return mInputEvent ? mInputEvent : kErrDecode;
-        }
-        if (mInputEvent) { //FLAC__stream_decoder_get_state(mDecoder) == FLAC__STREAM_DECODER_END_OF_STREAM) {
-            return mInputEvent;
+            return kErrDecode;
         }
     }
-    mInputPr = nullptr; // we don't want a dangling invalid pointer, even if it's not used
     if (!mHasOutput) {
         ESP_LOGW(TAG, "Many frames decoded without generating any output, returning error");
         dpr.clear();

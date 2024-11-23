@@ -146,8 +146,7 @@ void AudioPlayer::lcdInit()
 
 void AudioPlayer::initTimedDrawTask()
 {
-//    xTaskCreatePinnedToCore(&lcdTimedDrawTaskFunc, "lcdTask", kLcdTaskStackSize, this, kLcdTaskPrio, nullptr, kLcdTaskCore);
-    mLcdTask.createTask("lcdTask", true, kLcdTaskStackSize, kLcdTaskCore, kLcdTaskPrio, this, &AudioPlayer::lcdTimedDrawTask);
+    mLcdTask.createTask("lcdTask", false, kLcdTaskStackSize, kLcdTaskCore, kLcdTaskPrio, this, &AudioPlayer::lcdTimedDrawTask);
 }
 
 bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType)
@@ -303,7 +302,7 @@ void AudioPlayer::lcdUpdateTitleAndArtist(const char* title, const char* artist)
             merge = false;
         }
         else { // artist too long to fit screen, display empty artist field and artist + title in title field
-            lcdUpdateArtistName(nullptr);
+            lcdUpdateArtistName(playerModeToStr(mPlayerMode));
         }
     }
     // in radio mode: display only artist + track in track field
@@ -1091,6 +1090,10 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t arg1, u
             static_cast<I2sOutputNode*>(mStreamOut.get())->notifyPrefillComplete(arg1);
         }
     }
+    else if (event == AudioNode::kEventStreamEnd) {
+        LOCK_PLAYER();
+        onStreamEnd(arg1);
+    }
     else {
         asyncCall([this, event, arg1, arg2]() {
             LOCK_PLAYER();
@@ -1105,17 +1108,6 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t arg1, u
                     return lcdUpdatePlayState(nullptr, arg1); break;
                 case AudioNode::kEventBufUnderrun:
                     return lcdShowBufUnderrunImmediate(); break;
-                case AudioNode::kEventStreamEnd:
-                    if ((uint8_t)mPlayerMode & (uint8_t)AudioNode::kTypeFlagPlayerCtrl) {
-                        break;
-                    }
-                    else if (arg1 == mCurrentStreamId) {
-                        this->stop();
-                    }
-                    else {
-                        ESP_LOGI(TAG, "Discarding stream end event for a previous streamId %d", arg1);
-                    }
-                    break;
                 default: break;
             }
         });
@@ -1251,7 +1243,7 @@ void AudioPlayer::lcdWriteStreamInfo(int8_t charOfs, const char* str)
     mLcd.setFont(kStreamInfoFont);
     mLcd.setFgColor(kLcdColorStreamInfo);
     uint16_t x = (charOfs >= 0) ? mLcd.textWidth(charOfs) : mLcd.width() - mLcd.textWidth(-charOfs);
-    mLcd.gotoXY(x, mLcd.height() - mVuDisplay.height() - kStreamInfoFont.height - 2);
+    mLcd.gotoXY(x, audioFormatTextY());
     mLcd.puts(str);
 }
 void AudioPlayer::onNewStream(StreamFormat fmt, int sourceBps)
@@ -1260,31 +1252,51 @@ void AudioPlayer::onNewStream(StreamFormat fmt, int sourceBps)
     if (sourceBps < mStreamFormat.bitsPerSample()) {
         mStreamFormat.setBitsPerSample(sourceBps);
     }
-    lcdUpdateCodec();
     lcdUpdateAudioFormat();
     mTitleScrollEnabled = mLcdTrackTitle.dataSize() && !streamIsCpuHeavy();
     mBufLowThreshold = fmt.prefillAmount() / 4;
     enum { kDiv = 63 - kBufLowMinGreen };
     mBufLowDisplayGradient = (mBufLowThreshold + kBufLowMinGreen - 1) / kBufLowMinGreen;
 }
+void AudioPlayer::onStreamEnd(StreamId streamId)
+{
+    if (streamId != mCurrentStreamId) {
+        ESP_LOGI(TAG, "Discarding stream end event for a previous streamId %d", streamId);
+        return;
+    }
+    lcdClearAudioFormat();
+    if (!mStopping) {
+        asyncCall([this]() {
+            stop();
+        });
+    }
+}
 bool AudioPlayer::streamIsCpuHeavy() const
 {
     return mStreamFormat.sampleRate() > 90000 && mStreamFormat.bitsPerSample() >= 24;
 }
-void AudioPlayer::lcdUpdateCodec()
+void AudioPlayer::lcdUpdateAudioFormat()
 {
-    enum { kMaxLen = 8 };
+    lcdClearAudioFormat();
+    // codec
+    enum { kMaxLen = 31 };
     char buf[kMaxLen + 1];
     strncpy(buf, mStreamFormat.codec().toString(), kMaxLen);
     buf[kMaxLen] = 0;
     lcdWriteStreamInfo(0, buf);
-}
-void AudioPlayer::lcdUpdateAudioFormat()
-{
-    char buf[32];
+    // format
     auto end = vtsnprintf(buf, sizeof(buf), fmtInt(mStreamFormat.sampleRate() / 1000, 0, 3),
-        '.', (mStreamFormat.sampleRate() % 1000 + 50) / 100, "kHz/", mStreamFormat.bitsPerSample(), "-bit");
+        '.', (mStreamFormat.sampleRate() % 1000 + 50) / 100, "kHz/", mStreamFormat.bitsPerSample(), "b");
+    buf[kMaxLen] = 0;
     lcdWriteStreamInfo(-(end-buf), buf);
+}
+int16_t AudioPlayer::audioFormatTextY() const
+{
+    return mLcd.height() - mVuDisplay.height() - kStreamInfoFont.height - 2;
+}
+void AudioPlayer::lcdClearAudioFormat()
+{
+    mLcd.clear(0, audioFormatTextY(), mLcd.width(), kStreamInfoFont.height);
 }
 void AudioPlayer::lcdUpdateNetSpeed()
 {

@@ -96,15 +96,12 @@ void DecoderNode::nodeThreadFunc()
         }
     }
 }
-StreamEvent DecoderNode::forwardEvent(StreamEvent evt, AudioNode::PacketResult& pr) {
-    if (evt < 0) {
-        mRingBuf.pushBack(new GenericEvent(evt, pr.streamId, 0));
-        return evt;
-    }
-    else {
-        return mRingBuf.pushBack(pr.packet.release()) ? kNoError : kErrStreamStopped;
-    }
+StreamEvent DecoderNode::forwardEvent(AudioNode::PacketResult& pr)
+{
+    assert(pr.packet.get());
+    return mRingBuf.pushBack(pr.packet.release()) ? kNoError : kErrStreamStopped;
 }
+// returns errors or kNoError only, events are forwarded
 StreamEvent DecoderNode::decode()
 {
     AudioNode::PacketResult pr;
@@ -114,7 +111,7 @@ StreamEvent DecoderNode::decode()
             ESP_LOGW(mTag, "Detect codec: Discarding %d bytes of stream data", pr.dataPacket().dataLen);
         }
         if (evt != kEvtStreamChanged) {
-            return forwardEvent(evt, pr);
+            return evt > 0 ? forwardEvent(pr) : evt;
         }
         myassert(pr.packet);
         evt = detectCodecCreateDecoder(static_cast<NewStreamEvent*>(pr.packet.release()));
@@ -137,7 +134,7 @@ StreamEvent DecoderNode::decode()
             ESP_LOGI(mTag, "Stream end, deleting decoder");
             deleteDecoder();
         }
-        return forwardEvent(evt, pr);
+        return forwardEvent(pr);
     }
     return kNoError;
 }

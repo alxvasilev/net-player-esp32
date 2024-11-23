@@ -211,17 +211,19 @@ void SpotifyNode::seekMs(uint32_t pos)
 {
     mCmdQueue.post(kCmdSeek, pos);
 }
-void SpotifyNode::setVolume(uint8_t vol)
+void SpotifyNode::setVolume(uint32_t vol)
 {
-    printf("=========== volume command: %d\n", vol);
+    // volume is 0-64
+    printf("=========== volume command: %lu\n", vol);
     LOCK_PLAYER();
-    sAudioPlayer->volumeSet(vol);
+    sAudioPlayer->volumeSet(vol >> 10); // FIXME: volume range is 0-65536, changes in steps of 1024
 }
 void SpotifyNode::nodeThreadFunc()
 {
     ESP_LOGI(TAG, "Task started");
     try {
         mSpirc.start();
+        mSpirc.notifyVolumeSet(sAudioPlayer->volumeGet() << 10);
     }
     catch(std::exception& ex) {
         ESP_LOGE(TAG, "Error starting SPIRC: %s", ex.what());
@@ -321,12 +323,12 @@ bool SpotifyNode::recv()
             mRingBuf.pushBack(new PrefillEvent(mInStreamId, ""));
         }
     }
+    mRingBuf.pushBack(pkt.release());
     if (mWaitingPrefill >= mRingBuf.dataSize()) {
         mWaitingPrefill = 0;
         ESP_LOGI(TAG, "Prefill complete, sending event");
         plSendEvent(kEventPrefillComplete, mInStreamId);
     }
-    mRingBuf.pushBack(pkt.release());
     return true;
 }
 StreamEvent SpotifyNode::pullData(PacketResult &pr)

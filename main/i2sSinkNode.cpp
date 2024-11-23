@@ -134,7 +134,6 @@ void I2sOutputNode::nodeThreadFunc()
                 }
                 else if (evt == kEvtTitleChanged) {
                     auto& titleEvent = dpr.titleEvent();
-                    printf("title event: '%s' '%s'\n", titleEvent.title.get() ? titleEvent.title.get() : "null", titleEvent.artist.get() ? titleEvent.artist.get() : "null");
                     plSendEvent(kEventTitleChanged,
                         (uintptr_t)titleEvent.title.release(),
                         (uintptr_t)titleEvent.artist.release());
@@ -158,7 +157,7 @@ void I2sOutputNode::nodeThreadFunc()
                         plSendEvent(kEventNewStream, 0, (uintptr_t)dpr.packet.get());
                     }
                     else if (evt == kEvtStreamEnd) {
-                        plSendEvent(kEventStreamEnd, 0, dpr.genericEvent().streamId);
+                        plSendEvent(kEventStreamEnd, dpr.genericEvent().streamId);
                     }
                     else if (evt == kEvtPrefill) {
                         auto& prefillEvent = dpr.prefillEvent();

@@ -61,7 +61,7 @@ protected:
     virtual void nextTrack(bool nextPrev) override;
     virtual void stopPlayback() override;
     virtual void seekMs(uint32_t pos) override;
-    virtual void setVolume(uint8_t vol) override;
+    virtual void setVolume(uint32_t vol) override;
     // IPlayerCtrl interface
     virtual void onTrackPlaying(StreamId id, uint32_t pos) override;
     virtual IInputAudioNode* inputNodeIntf() override { return static_cast<IInputAudioNode*>(this); }

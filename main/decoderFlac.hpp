@@ -13,7 +13,6 @@ protected:
     typedef bool (DecoderFlac::*OutputFunc)(int nSamples, const FLAC__int32* const samples[]);
     int mOutputReadOfs = 0;
     int mNumReads = 0;
-    AudioNode::PacketResult* mInputPr = nullptr;
     DataPacket::unique_ptr mInputPacket;
     DataPacket::unique_ptr mExtraOutPacket;
     int mInputPos = 0;
@@ -21,7 +20,7 @@ protected:
     OutputFunc mOutputFunc = nullptr;
     uint16_t mOutputChunkSize = 0;
     bool mHasOutput = false;
-    StreamEvent mInputEvent;
+    StreamEvent mInputEvent = kNoError;
     void init();
     static FLAC__StreamDecoderReadStatus readCb(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void *client_data);
     static void errorCb(const FLAC__StreamDecoder *decoder, FLAC__StreamDecoderErrorStatus status, void *client_data);
