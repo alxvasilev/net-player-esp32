@@ -60,7 +60,7 @@ protected:
     enum: uint8_t
     { kEventTerminating = 1, kEventScroll = 2, kEventVolLevel = 4, kEventTerminated = 8 };
     enum {
-        kI2sStackSize = 2700, kI2sCpuCore = 0, kI2sDmaBufMs = 40, kDmaBufSizeMax = 31000,
+        kI2sStackSize = 2700, kI2sCpuCore = 0, kI2sDmaBufMs = 80, kDmaBufSizeMax = 31000,
         kLcdTaskStackSize = 2200, kLcdTaskPrio = 20, kLcdTaskCore = 1,
         kMaxTrackTitleLen = 100
     };

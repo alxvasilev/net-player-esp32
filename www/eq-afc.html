@@ -1,0 +1,579 @@
+<html>
+<head>
+<style>
+.eq-slider-cont {
+  display: inline-block;
+  width: 25px;
+  height: 150px;
+  padding: 0;
+  font-size: 0.65em;
+  text-align: center;
+}
+.eq-slider-cont input {
+  display: inline-block;
+  width: 150px;
+  height: 25px;
+  margin: 0;
+  transform-origin: 75px 75px;
+  transform: rotate(-90deg);
+}
+.dblabel {
+    position: relative;
+    top: 85%;
+}
+#equalizer {
+    height: 200px;
+}
+.grid-cont {
+    display: inline-grid;
+    grid-template-columns: 1;
+}
+.grid-cont > * {
+    align-self: start; /* or center, end */
+    justify-self: start; /* or center, end */
+}
+#afc-graph {
+}
+</style>
+</head>
+<body>
+    <datalist id="tickmarks">
+    </datalist>
+    <div class="grid-cont">
+        <div id=equalizer></div>
+        <div>
+            alt method:<input type="checkbox" id="chkAltMethod" onchange="onChkAltMethod(event)"></input>
+            <button onclick="onBtnFlat()">flat</button>
+        </div>
+        <canvas id="afc-graph"></canvas>
+    </div>
+<script>
+function byId(id) {
+    return document.getElementById(id);
+}
+function niceFreq(freq) {
+    if (freq < 1000) {
+        return freq;
+    }
+    return ((freq % 1000 === 0) ? (freq / 1000) : (freq / 1000).toFixed(1)) + 'K';
+}
+function htmlToElement(html) {
+    var template = document.createElement('template');
+    html = html.trim(); // Never return a text node of whitespace as the result
+    template.innerHTML = html;
+    return template.content.firstChild;
+}
+class Slider {
+    constructor(parent, band, slider, label) {
+        this.parent = parent;
+        this.band = band;
+        this.slider = slider;
+        this.label = label;
+        slider.addEventListener('input', this.onSlide);
+    }
+    onSlide = (event) => {
+        const strGain = this.label.innerHTML = this.slider.value;
+        this.parent.onSlide(this.band, parseFloat(strGain));
+    }
+    setDisplayed(dbGain) {
+        this.label.innerHTML = dbGain;
+        this.slider.value = dbGain;
+    }
+}
+
+const kDefaultQ = 1.5;
+const kDefaultShelfQ = 1.0;
+
+var gEq = null;
+var gRespSim = null;
+
+class Equalizer {
+    afc;
+    constructor(cont, bands) {
+        this.generateTickMarks();
+        this.sliders = [];
+        for (let i = 0; i < bands.length; i++) {
+            cont.appendChild(htmlToElement(
+                `<div class="eq-slider-cont" title="bandwidth: ${bands[i][1]/10} octaves">${niceFreq(bands[i][0])
+                }<input type="range" id="eqSlider${i}" band="${i
+                }" min="-40" max="40" value="0" step="1" list="tickmarks"><div class="dblabel" id="dbLabel${i
+                }">0</div></div>`));
+                this.sliders.push(new Slider(this, i, byId('eqSlider' + i), byId('dbLabel' + i)));
+        }
+        cont.appendChild(htmlToElement(
+            `<div class="eq-slider-cont">Band Q<input type="range" id="sliderBandQ" min="0.1" max="10" value="${kDefaultQ
+            }" step="0.1"><div class="dblabel" id="outBandQval">${kDefaultQ}</div></div>`));
+        byId("sliderBandQ").addEventListener('input', this.onBandQslider);
+        cont.appendChild(htmlToElement(
+            `<div class="eq-slider-cont">Shelf Q<input type="range" id="sliderShelfQ" min="0.1" max="10" value="${kDefaultShelfQ
+            }" step="0.1"><div class="dblabel" id="outShelfQval">${kDefaultShelfQ}</div></div>`));
+        byId("sliderShelfQ").addEventListener('input', this.onShelfQslider);
+        this.afc = new EqGraph(bands, byId("afc-graph"), 44100);
+    }
+    generateTickMarks() {
+        let cont = byId("tickmarks");
+        for (let i = -40; i <= 40; i += 1) {
+            let item = document.createElement("option");
+            item.setAttribute("value", i);
+            cont.appendChild(item);
+        }
+    }
+    onSlide(band, db) {
+        this.afc.setGain(band, db);
+    }
+    onBandQslider = (event) => {
+        byId("outBandQval").innerHTML = event.target.value;
+        this.afc.setBandQ(parseFloat(event.target.value));
+        this.afc.update();
+    }
+    onShelfQslider = (event) => {
+        byId("outShelfQval").innerHTML = event.target.value;
+        this.afc.setShelfQ(parseFloat(event.target.value));
+        this.afc.update();
+    }
+    resetGains() {
+        for (let slider of this.sliders) {
+            slider.setDisplayed(0.0);
+        }
+        for (let bq of this.afc.biquads) {
+            bq.dbGain = 0.0;
+        }
+        this.afc.recalcCoefs();
+    }
+}
+
+const kSampleRate = 44100;
+const kSineWaveEndAngle = 1800 * Math.PI;
+
+const kBand = 1; // Peaking (positive gain) or Notch (negative gain) filter
+const kLowShelf = 2;
+const kHighShelf = 3;
+
+class Biquad
+{
+    type;
+    freq;
+    Q;
+    sampleRate;
+    gain;
+    a1;
+    a2;
+    b0;
+    b1;
+    b2;
+    //delay line, for Direct Form 2
+    delay0 = 0.0;
+    delay1 = 0.0;
+    constructor(type, freq, Q, sRate, audioCtx) {
+        this.type = type;
+        this.freq = freq;
+        this.Q = Q;
+        this.sampleRate = sRate;
+        this.dbGain = 0;
+        const refType = (type === kBand) ? "peaking" : ((type === kLowShelf ? "lowshelf" : "highshelf"));
+        this.refNode = new BiquadFilterNode(audioCtx, {type: refType, Q: Q, frequency: freq, gain: 0});
+    }
+    /** Reconfigure the filter, usually used for adjusting the gain during operation */
+    recalc1() {
+        let a0inv;
+        let A = Math.pow(10.0, Math.abs(this.dbGain) / 40.0);
+        const Q = this.Q;
+        const w0 = 2 * Math.PI * this.freq / this.sampleRate;
+        let alpha = Math.sin(w0) / (2 * Q);
+        const cs = Math.cos(w0);
+        switch(this.type) {
+            case kBand:
+                if (this.dbGain >= 0) {
+                    a0inv = 1 / (1 + alpha / A);
+                    this.a1 = (-2 * cs) * a0inv;
+                    this.a2 = (1 - alpha / A) * a0inv;
+                    this.b0 = (1 + alpha * A) * a0inv;
+                    this.b1 = (-2 * cs) * a0inv;
+                    this.b2 = (1 - alpha * A) * a0inv;
+                }
+                else {
+                    a0inv = 1 / (1 + alpha * A);
+                    this.a1 = (-2 * cs) * a0inv;
+                    this.a2 = (1 - alpha * A) * a0inv;
+                    this.b0 = (1 + alpha / A) * a0inv;
+                    this.b1 = this.a1;
+                    this.b2 = (1 - alpha / A) * a0inv;
+                }
+                break;
+            case kLowShelf:
+                A = Math.pow(10.0, Math.abs(this.dbGain) / (this.dbGain >= 0 ? 20.0 : 40.0));
+                alpha = Math.sin(w0) * Math.sqrt((A + 1/A) * (1 / this.Q - 1) + 2) / 2;
+                /*
+                const aplus = (A + 1) + (A - 1) * cs;
+                const aminus = (A + 1) - (A - 1) * cs;
+                const beta = Math.sqrt(A) / Q;
+                const betaSinW = beta * Math.sin(w0);
+                a0inv = 1 / (aplus + betaSinW);
+                this.a1 = -2*((A - 1) + (A + 1)*cs) * a0inv;
+                this.a2 = (aplus - betaSinW) * a0inv;
+                this.b0 = A*(aminus + betaSinW) * a0inv;
+                this.b1 = 2*A*((A - 1) - ((A + 1)*cs)) * a0inv;
+                this.b2 = A*(aminus - betaSinW) * a0inv;
+                */
+                if (this.dbGain >= 0) {
+                    const twoSqrtAalpha = 2 * Math.sqrt(A) * alpha;
+                    const aplus = (A + 1) + (A - 1) * cs;
+                    const aminus = (A + 1) - (A - 1) * cs;
+                    a0inv = 1 / (aplus + twoSqrtAalpha);
+                    this.a1 = -2 * ((A - 1) + (A + 1) * cs) * a0inv;
+                    this.a2 = (aplus - twoSqrtAalpha) * a0inv;
+                    this.b0 = A * (aminus + twoSqrtAalpha) * a0inv;
+                    this.b1 = 2 * A * ((A - 1) - (A + 1) * cs) * a0inv;
+                    this.b2 = A * (aminus - twoSqrtAalpha) * a0inv;
+                }
+                else {
+                    a0inv = 1 / (1 + alpha * A);
+                    this.a1 = -2 * cs * a0inv;
+                    this.a2 = (1 - alpha * A) * a0inv;
+                    this.b0 = (1 + alpha / A) * a0inv;
+                    this.b1 = -2 * cs * a0inv;
+                    this.b2 = (1 - alpha / A) * a0inv;
+                }
+                break;
+            default:
+                this.a1 = this.a2 = this.b0 = this.b1 = this.b2 = 1;
+                break;
+        }
+        this.refNode.gain.value = this.type === kBand ? this.dbGain : this.dbGain * 2;
+        this.refNode.Q.value = this.Q;
+    }
+    recalc2() {
+        let a0inv;
+        let V = Math.pow(10.0, Math.abs(this.dbGain) / 20.0);
+        let K = Math.tan(Math.PI * this.freq / this.sampleRate);
+        const Q = this.Q;
+        switch (this.type) {
+        case kBand:
+            if (this.dbGain >= 0) {
+                a0inv = 1 / (1 + 1/Q * K + K * K);
+                this.b0 = (1 + V/Q * K + K * K) * a0inv;
+                this.b1 = 2 * (K * K - 1) * a0inv;
+                this.b2 = (1 - V/Q * K + K * K) * a0inv;
+                this.a1 = this.b1;
+                this.a2 = (1 - 1/Q * K + K * K) * a0inv;
+            }
+            else {
+                /*
+                a0inv = 1 / (1 + K / Q + K * K);
+                b0 = (1 + K * K) * a0inv;
+                b1 = 2 * (K * K - 1) * a0inv;
+                b2 = b0;
+                a1 = b1;
+                a2 = (1 - K / Q + K * K) * a0inv;
+                */
+                a0inv = 1 / (1 + V/Q * K + K * K);
+				this.b0 = (1 + 1/Q * K + K * K) * a0inv;
+				this.b1 = 2 * (K * K - 1) * a0inv;
+				this.b2 = (1 - 1/Q * K + K * K) * a0inv;
+				this.a1 = this.b1;
+				this.a2 = (1 - V/Q * K + K * K) * a0inv;
+            }
+            break;
+        case kLowShelf:
+            if (this.dbGain >= 0) {
+                a0inv = 1 / (1 + Math.SQRT2 * K + K * K);
+                this.b0 = (1 + Math.sqrt(2*V) * K + V * K * K) * a0inv;
+                this.b1 = 2 * (V * K * K - 1) * a0inv;
+                this.b2 = (1 - Math.sqrt(2*V) * K + V * K * K) * a0inv;
+                this.a1 = 2 * (K * K - 1) * a0inv;
+                this.a2 = (1 - Math.SQRT2 * K + K * K) * a0inv;
+            }
+            else {
+                a0inv = 1 / (1 + Math.sqrt(2*V) * K + V * K * K);
+                this.b0 = (1 + Math.SQRT2 * K + K * K) * a0inv;
+                this.b1 = 2 * (K * K - 1) * a0inv;
+                this.b2 = (1 - Math.SQRT2 * K + K * K) * a0inv;
+                this.a1 = 2 * (V * K * K - 1) * a0inv;
+                this.a2 = (1 - Math.sqrt(2*V) * K + V * K * K) * a0inv;
+            }
+            break;
+        case kHighShelf:
+            if (this.dbGain >= 0) {
+                a0inv = 1 / (1 + Math.SQRT2 * K + K * K);
+                this.b0 = (V + Math.sqrt(2*V) * K + K * K) * a0inv;
+                this.b1 = 2 * (K * K - V) * a0inv;
+                this.b2 = (V - Math.sqrt(2*V) * K + K * K) * a0inv;
+                this.a1 = 2 * (K * K - 1) * a0inv;
+                this.a2 = (1 - Math.SQRT2 * K + K * K) * a0inv;
+            }
+            else {
+                a0inv = 1 / (V + Math.sqrt(2*V) * K + K * K);
+                this.b0 = (1 + Math.SQRT2 * K + K * K) * a0inv;
+                this.b1 = 2 * (K * K - 1) * a0inv;
+                this.b2 = (1 - Math.SQRT2 * K + K * K) * a0inv;
+                this.a1 = 2 * (K * K - V) * a0inv;
+                this.a2 = (V - Math.sqrt(2*V) * K + K * K) * a0inv;
+            }
+            break;
+        default:
+            this.b0 = this.b1 = this.b2 = this.a1 = this.a2 = 0; //suppress may be used uninitialized warning
+            break;
+        }
+//        console.log("Band %d Hz, Q: %d, gain: %d\ncoeffs: b0 = %f, b1 = %f, b2 = %f, a1 = %f, a2 = %f",
+//            this.freq, this.Q, dbGain, this.coeffs[0], this.coeffs[1], this.coeffs[2], this.coeffs[3], this.coeffs[4]);
+        this.refNode.gain.value = this.type === kBand ? this.dbGain : this.dbGain * 2;
+    }
+    setGain(dbGain) {
+        this.dbGain = dbGain;
+        this.recalc();
+    }
+    setQ(q) {
+        this.Q = q;
+        this.recalc();
+    }
+    init(type)
+    {
+        this.type = type;
+    }
+    process2(samples) {
+        const len = samples.length;
+        let x1 = 0;
+        let x2 = 0;
+        let y1 = 0;
+        let y2 = 0;
+        for (let i = 0; i < len; i++) {
+            const x = samples[i];
+            const y = samples[i] = this.b0 * x + this.b1 * x1 + this.b2 * x2 - this.a1 * y1 - this.a2 * y2;
+            x2 = x1;
+            x1 = x;
+            y2 = y1;
+            y1 = y;
+        }
+    }
+    process(samples)
+    {
+        const len = samples.length;
+        let dly0 = 0;
+        let dly1 = 0;
+        for (let i = 0; i < len; i++) {
+            let input = samples[i];
+            let out = input * this.b0 + dly0;
+            dly0 = input * this.b1 + dly1 - this.a1 * out;
+            dly1 = input * this.b2 - this.a2 * out;
+            samples[i] = out;
+        }
+    }
+    refFreqResponse(freq) {
+        const freqs = new Float32Array(1);
+        freqs[0] = freq;
+        const mag = new Float32Array(1);
+        const phase = new Float32Array(1);
+        this.refNode.getFrequencyResponse(freqs, mag, phase);
+        return mag[0];
+    }
+    calcFreqResponse(freq) {
+        const a1 = this.a1;
+        const a2 = this.a2;
+        const b0 = this.b0;
+        const b1 = this.b1;
+        const b2 = this.b2;
+        const halfW = Math.PI * freq / this.sampleRate;
+        const phi = Math.sin(halfW) ** 2;
+        return Math.sqrt(((b0+b1+b2)**2 - 4*(b0*b1 + 4*b0*b2 + b1*b2)*phi + 16*b0*b2*phi*phi) /
+               ((1+a1+a2)**2 - 4*(a1 + 4*a2 + a1*a2)*phi + 16*a2*phi*phi));
+    }
+}
+Biquad.prototype.recalc = Biquad.prototype.recalc1;
+
+function onChkAltMethod(event) {
+    Biquad.prototype.recalc = Biquad.prototype[event.target.checked ? "recalc2" : "recalc1"];
+    gRespSim.recalcCoefs();
+    gRespSim.update();
+}
+function onBtnFlat() {
+    gEq.resetGains();
+    gRespSim.update();
+}
+const kPeriodsPerSineWave = 100;
+class EqGraph {
+    sampleRate;
+    biquads;
+    waveforms;
+    sineWaveEndAngle;
+    drawCtx;
+    drawScaleX;
+    drawScaleY;
+    halfY;
+    logFunc = Math.log2;
+    logBase = 2;
+    audioCtx;
+    constructor(bands, canv, sampleRate) {
+        this.sampleRate = sampleRate;
+        this.sineWaveEndAngle = Math.PI * 2 * kPeriodsPerSineWave;
+        this.audioCtx = new AudioContext({sampleRate: 44100});
+        this.biquads = new Array(bands.length);
+        for (let i = 0; i < bands.length; i++) {
+            const band = bands[i];
+            let type = (i === 0) ? kLowShelf : ((i === bands.length -1) ? kHighShelf : kBand);
+            let Q = band[1] || (type === kBand ? kDefaultQ : kDefaultShelfQ);
+            const bq = new Biquad(type, band[0], Q, sampleRate, this.audioCtx);
+            bq.setGain(0);
+            this.biquads[i] = bq;
+        }
+        this.waveforms = [];
+        const maxX = this.logFunc(20000);
+        let lastFreq = 0;
+        for (let x = this.logFunc(32); x < maxX; x += 0.05) {
+            const freq = Math.round(Math.pow(this.logBase, x));
+            if (freq === lastFreq) {
+                continue;
+            }
+            lastFreq = freq;
+            this.waveforms.push([freq, this.genSinwave(freq)]);
+        }
+        this.drawCtx = canv.getContext("2d");
+        this.drawScaleX = canv.width / this.logFunc(20000);
+        this.halfY = canv.height / 2;
+        this.drawScaleY = this.halfY / 40;
+    }
+    genSinwave(freq) {
+        const samplesPerPeriod = this.sampleRate / freq;
+        const angleStep = 2 * Math.PI / samplesPerPeriod;
+        let samples = [];
+        for (let x = 0; x <= kSineWaveEndAngle; x+= angleStep) {
+            samples.push(Math.sin(x));
+        }
+        return samples;
+    }
+    process(samples) {
+        for (let bq of this.biquads) {
+            bq.process(samples);
+        }
+    }
+    refFreqResponse(freq) {
+        let magn = 1.0;
+        for (let bq of this.biquads) {
+            magn *= bq.refFreqResponse(freq);
+        }
+        return magn;
+    }
+    calcFreqResponse(freq) {
+        let magn = 1.0;
+        for (let bq of this.biquads) {
+            magn *= bq.calcFreqResponse(freq);
+        }
+        return magn;
+    }
+    generate() {
+        this.resp = [];
+        for (let wf of this.waveforms) {
+            const samples = wf[1].slice();
+            this.process(samples);
+            let max = 0;
+            let len = samples.length;
+            for (let i = Math.round(len / 2); i < len; i++) {
+                const s = samples[i];
+                if (s > max) {
+                    max = s;
+                }
+            }
+            //console.log(wf[0], max);
+            const freq = wf[0];
+            this.resp.push([freq, 20 * Math.log10(max),
+                20 * Math.log10(this.refFreqResponse(freq)), 20 * Math.log10(this.calcFreqResponse(freq))]);
+        }
+    }
+    setGain(band, db) {
+        this.biquads[band].setGain(db);
+        this.update();
+    }
+    setBandQ(q) {
+        const last = this.biquads.length - 1;
+        for (let i = 1; i < last; i++) {
+            const bq = this.biquads[i];
+            bq.setQ(q);
+        }
+    }
+    setShelfQ(q) {
+        this.biquads[0].setQ(q);
+        this.biquads[this.biquads.length-1].setQ(q);
+    }
+    recalcCoefs() {
+        for (let bq of this.biquads) {
+            bq.recalc();
+        }
+    }
+    xformX(x) {
+        return Math.round(this.logFunc((x - 31)) * this.drawScaleX);
+    }
+    xformY(y) {
+        return this.halfY - Math.round(y * this.drawScaleY);
+    }
+    draw() {
+        const ctx = this.drawCtx;
+        const scaleX = this.drawScaleX;
+        const scaleY = this.drawScaleY;
+        const height = ctx.canvas.height;
+        let lastXTick = -1;
+        ctx.fillStyle = "white";
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        ctx.strokeStyle = "#bbb";
+        let y = this.xformY(0);
+        line(ctx, 0, y, ctx.canvas.width-1, y);
+        ctx.strokeStyle = "lightgrey";
+        y = this.xformY(30);
+        line(ctx, 0, y, ctx.canvas.width-1, y);
+        y = this.xformY(20);
+        line(ctx, 0, y, ctx.canvas.width-1, y);
+        y = this.xformY(10);
+        line(ctx, 0, y, ctx.canvas.width-1, y);
+        y = this.xformY(-10);
+        line(ctx, 0, y, ctx.canvas.width-1, y);
+        y = this.xformY(-20);
+        line(ctx, 0, y, ctx.canvas.width-1, y);
+        y = this.xformY(-30);
+        line(ctx, 0, y, ctx.canvas.width-1, y);
+        ctx.fillStyle = "black";
+        ctx.beginPath();
+        ctx.setLineDash([]);
+        let prevItem = this.resp[0];
+        let prevX = this.xformX(prevItem[0]);
+        for (const item of this.resp) {
+            const freq = item[0];
+            const x = this.xformX(freq);
+            ctx.strokeStyle = "blue";
+            line(ctx, prevX, this.xformY(prevItem[2]), x, this.xformY(item[2]));
+            ctx.strokeStyle = "green";
+            line(ctx, prevX, this.xformY(prevItem[3]), x, this.xformY(item[3]));
+            ctx.strokeStyle = "red";
+            line(ctx, prevX, this.xformY(prevItem[1]), x, this.xformY(item[1]));
+            prevItem = item;
+            prevX = x;
+            //console.log(`x=${x}, ${item[2]}, ${item[3]}`);
+            if (x - lastXTick > 25) {
+                lastXTick = x;
+                const txt = niceFreq(freq);
+                const txtHalfWidth = ctx.measureText(txt).width / 2;
+                ctx.fillRect(x, height-14, 1, 4);
+                ctx.fillText(txt, x-txtHalfWidth, height, 25);
+            }
+        }
+    }
+    update() {
+        this.generate();
+        this.draw();
+    }
+}
+function line(ctx, x1, y1, x2, y2) {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.closePath();
+}
+async function init() {
+    gEq = new Equalizer(byId("equalizer"), [
+        [32], [62], [125], [250], [512], [1000], [2000], [4000], [8000], [16000]
+    ]);
+    gRespSim = gEq.afc;
+    gRespSim.update();
+}
+window.onload = init;
+</script>
+</body>
+</html>

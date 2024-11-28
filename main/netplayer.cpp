@@ -213,7 +213,7 @@ extern "C" void app_main(void)
         msSleep(2000);
 #endif
     lcd.puts("Starting bluetooth remote...\n");
-//  btRemote.init();
+    btRemote.init();
 //===
     lcd.puts("Mounting SDCard...\n");
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };
@@ -247,6 +247,7 @@ extern "C" void app_main(void)
     */
     ESP_LOGI(TAG, "player started");
     vTaskDelay(10);
+    BtStack.becomeDiscoverableAndConnectable();
     ESP_LOGI(TAG, "Registering a2dp handler...");
     A2dpInputNode::install(a2dpOnPeerConnect, true);
 }

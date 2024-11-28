@@ -146,7 +146,7 @@ void AudioPlayer::lcdInit()
 
 void AudioPlayer::initTimedDrawTask()
 {
-    mLcdTask.createTask("lcdTask", false, kLcdTaskStackSize, kLcdTaskCore, kLcdTaskPrio, this, &AudioPlayer::lcdTimedDrawTask);
+    mLcdTask.createTask("lcdTask", false, kLcdTaskStackSize, kLcdTaskCore, 10, this, &AudioPlayer::lcdTimedDrawTask);
 }
 
 bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType)
@@ -165,7 +165,7 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
         break;
     }
     case AudioNode::kTypeA2dpIn:
-        mStreamIn.reset(new A2dpInputNode(*this, true));
+        mStreamIn.reset(new A2dpInputNode(*this, false));
         mDecoder.reset();
         pcmSource = mStreamIn.get();
         break;
@@ -1127,6 +1127,7 @@ void AudioPlayer::lcdTimedDrawTask()
     bool vuOrScroll = false;
     for (;;) {
         vTaskDelay(waitTicks);
+        heap_caps_check_integrity_all(true);
         LOCK_PLAYER();
         now = esp_timer_get_time();
         if (now - tsLastSpeedUpdate > kLcdNetSpeedUpdateIntervalUs) {
