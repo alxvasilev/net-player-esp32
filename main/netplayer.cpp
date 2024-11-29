@@ -191,16 +191,16 @@ extern "C" void app_main(void)
     /* Initialize NVS — it is used to store PHY calibration data */
     nvsSimple.init("aplayer", true);
 
-    auto before = xPortGetFreeHeapSize();
+    auto before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     BtStack.disableBLE();
-    ESP_LOGW(TAG, "Releasing BLE Bluetooth memory freed %d bytes of RAM", xPortGetFreeHeapSize() - before);
+    ESP_LOGW(TAG, "Releasing BLE Bluetooth memory freed %d bytes of RAM", heap_caps_get_free_size(MALLOC_CAP_INTERNAL) - before);
 
     lcd.puts("Starting Bluetooth...\n");
-    int beforeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     int beforeExt =heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     BtStack.start(ESP_BT_MODE_CLASSIC_BT, "netplayer");
     ESP_LOGW(TAG, "Starting bluetooth consumed %d bytes of internal and %d bytes of external RAM",
-             beforeInt - heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             before - heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              beforeExt - heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     lcd.puts("Mounting SPIFFS...\n");
     mountSpiffs();
@@ -213,7 +213,9 @@ extern "C" void app_main(void)
         msSleep(2000);
 #endif
     lcd.puts("Starting bluetooth remote...\n");
+    before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     btRemote.init();
+    ESP_LOGI(TAG, "Starting bluetooth remote consumed %d bytes of internal RAM", before - heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 //===
     lcd.puts("Mounting SDCard...\n");
     SDCard::PinCfg pins = { .clk = 14, .mosi = 13, .miso = 35, .cs = 15 };

@@ -81,6 +81,11 @@ class Slider {
     }
 }
 
+const kSampleRate = 44100;
+const kWavefmNumSamples = 20000;
+const kFrespStartFreq = 20;
+const kFrespStartFreqMinus1 = kFrespStartFreq - 1;
+
 const kDefaultQ = 1.5;
 const kDefaultShelfQ = 1.0;
 
@@ -142,9 +147,6 @@ class Equalizer {
     }
 }
 
-const kSampleRate = 44100;
-const kSineWaveEndAngle = 1800 * Math.PI;
-
 const kBand = 1; // Peaking (positive gain) or Notch (negative gain) filter
 const kLowShelf = 2;
 const kHighShelf = 3;
@@ -175,72 +177,52 @@ class Biquad
     }
     /** Reconfigure the filter, usually used for adjusting the gain during operation */
     recalc1() {
-        let a0inv;
-        let A = Math.pow(10.0, Math.abs(this.dbGain) / 40.0);
-        const Q = this.Q;
+        const dbGain = (this.type == kBand) ? this.dbGain : this.dbGain * 2;
+        this.refNode.gain.value = dbGain;
+        let A = Math.pow(10.0, dbGain / 40.0);
+        this.refNode.Q.value = this.Q;
         const w0 = 2 * Math.PI * this.freq / this.sampleRate;
-        let alpha = Math.sin(w0) / (2 * Q);
+        const sn = Math.sin(w0);
         const cs = Math.cos(w0);
+        const alpha = sn / (2 * this.Q);
+        if (this.type === kBand) {
+            let a0inv = 1 / (1 + alpha / A);
+            this.a1 = (-2 * cs) * a0inv;
+            this.a2 = (1 - alpha / A) * a0inv;
+            this.b0 = (1 + alpha * A) * a0inv;
+            this.b1 = (-2 * cs) * a0inv;
+            this.b2 = (1 - alpha * A) * a0inv;
+            return;
+        }
+        const appm = (A + 1) + (A - 1) * cs;
+        const apmm = (A + 1) - (A - 1) * cs;
+        const ampp = (A - 1) + (A + 1) * cs;
+        const ammp = (A - 1) - (A + 1)*cs;
+        const betasn = Math.sqrt(A) * sn / this.Q;
+        // When Q = 0.707 (= 1/sqrt(2) = 1 octave), betasn transforms to sqrt(2 * A) * sn, i.e. beta * sn
         switch(this.type) {
-            case kBand:
-                if (this.dbGain >= 0) {
-                    a0inv = 1 / (1 + alpha / A);
-                    this.a1 = (-2 * cs) * a0inv;
-                    this.a2 = (1 - alpha / A) * a0inv;
-                    this.b0 = (1 + alpha * A) * a0inv;
-                    this.b1 = (-2 * cs) * a0inv;
-                    this.b2 = (1 - alpha * A) * a0inv;
-                }
-                else {
-                    a0inv = 1 / (1 + alpha * A);
-                    this.a1 = (-2 * cs) * a0inv;
-                    this.a2 = (1 - alpha * A) * a0inv;
-                    this.b0 = (1 + alpha / A) * a0inv;
-                    this.b1 = this.a1;
-                    this.b2 = (1 - alpha / A) * a0inv;
-                }
+            case kLowShelf: {
+                let a0inv = 1 / (appm + betasn);
+                this.a1 = -2 * ampp * a0inv;
+                this.a2 = (appm - betasn) * a0inv;
+                this.b0 = A * (apmm + betasn) * a0inv;
+                this.b1 = 2 * A * ammp * a0inv;
+                this.b2 = A * (apmm - betasn) * a0inv;
+            }
+            break;
+            case kHighShelf: {
+                const a0inv = 1 / (apmm + betasn);
+                this.a1 = 2 * ammp * a0inv;
+                this.a2 = (apmm - betasn) * a0inv;
+                this.b0 = A * (appm + betasn) * a0inv;
+                this.b1 = -2 * A * ampp * a0inv;
+                this.b2 = A * (appm - betasn) * a0inv;
                 break;
-            case kLowShelf:
-                A = Math.pow(10.0, Math.abs(this.dbGain) / (this.dbGain >= 0 ? 20.0 : 40.0));
-                alpha = Math.sin(w0) * Math.sqrt((A + 1/A) * (1 / this.Q - 1) + 2) / 2;
-                /*
-                const aplus = (A + 1) + (A - 1) * cs;
-                const aminus = (A + 1) - (A - 1) * cs;
-                const beta = Math.sqrt(A) / Q;
-                const betaSinW = beta * Math.sin(w0);
-                a0inv = 1 / (aplus + betaSinW);
-                this.a1 = -2*((A - 1) + (A + 1)*cs) * a0inv;
-                this.a2 = (aplus - betaSinW) * a0inv;
-                this.b0 = A*(aminus + betaSinW) * a0inv;
-                this.b1 = 2*A*((A - 1) - ((A + 1)*cs)) * a0inv;
-                this.b2 = A*(aminus - betaSinW) * a0inv;
-                */
-                if (this.dbGain >= 0) {
-                    const twoSqrtAalpha = 2 * Math.sqrt(A) * alpha;
-                    const aplus = (A + 1) + (A - 1) * cs;
-                    const aminus = (A + 1) - (A - 1) * cs;
-                    a0inv = 1 / (aplus + twoSqrtAalpha);
-                    this.a1 = -2 * ((A - 1) + (A + 1) * cs) * a0inv;
-                    this.a2 = (aplus - twoSqrtAalpha) * a0inv;
-                    this.b0 = A * (aminus + twoSqrtAalpha) * a0inv;
-                    this.b1 = 2 * A * ((A - 1) - (A + 1) * cs) * a0inv;
-                    this.b2 = A * (aminus - twoSqrtAalpha) * a0inv;
-                }
-                else {
-                    a0inv = 1 / (1 + alpha * A);
-                    this.a1 = -2 * cs * a0inv;
-                    this.a2 = (1 - alpha * A) * a0inv;
-                    this.b0 = (1 + alpha / A) * a0inv;
-                    this.b1 = -2 * cs * a0inv;
-                    this.b2 = (1 - alpha / A) * a0inv;
-                }
-                break;
+            }
             default:
                 this.a1 = this.a2 = this.b0 = this.b1 = this.b2 = 1;
                 break;
         }
-        this.refNode.gain.value = this.type === kBand ? this.dbGain : this.dbGain * 2;
-        this.refNode.Q.value = this.Q;
     }
     recalc2() {
         let a0inv;
@@ -316,7 +298,7 @@ class Biquad
         }
 //        console.log("Band %d Hz, Q: %d, gain: %d\ncoeffs: b0 = %f, b1 = %f, b2 = %f, a1 = %f, a2 = %f",
 //            this.freq, this.Q, dbGain, this.coeffs[0], this.coeffs[1], this.coeffs[2], this.coeffs[3], this.coeffs[4]);
-        this.refNode.gain.value = this.type === kBand ? this.dbGain : this.dbGain * 2;
+        this.refNode.gain.value = this.dbGain;
     }
     setGain(dbGain) {
         this.dbGain = dbGain;
@@ -389,12 +371,10 @@ function onBtnFlat() {
     gEq.resetGains();
     gRespSim.update();
 }
-const kPeriodsPerSineWave = 100;
 class EqGraph {
     sampleRate;
     biquads;
     waveforms;
-    sineWaveEndAngle;
     drawCtx;
     drawScaleX;
     drawScaleY;
@@ -404,7 +384,6 @@ class EqGraph {
     audioCtx;
     constructor(bands, canv, sampleRate) {
         this.sampleRate = sampleRate;
-        this.sineWaveEndAngle = Math.PI * 2 * kPeriodsPerSineWave;
         this.audioCtx = new AudioContext({sampleRate: 44100});
         this.biquads = new Array(bands.length);
         for (let i = 0; i < bands.length; i++) {
@@ -418,11 +397,12 @@ class EqGraph {
         this.waveforms = [];
         const maxX = this.logFunc(20000);
         let lastFreq = 0;
-        for (let x = this.logFunc(32); x < maxX; x += 0.05) {
+        for (let x = this.logFunc(kFrespStartFreq); x < maxX; x += 0.1) {
             const freq = Math.round(Math.pow(this.logBase, x));
             if (freq === lastFreq) {
                 continue;
             }
+            console.log(freq);
             lastFreq = freq;
             this.waveforms.push([freq, this.genSinwave(freq)]);
         }
@@ -434,9 +414,9 @@ class EqGraph {
     genSinwave(freq) {
         const samplesPerPeriod = this.sampleRate / freq;
         const angleStep = 2 * Math.PI / samplesPerPeriod;
-        let samples = [];
-        for (let x = 0; x <= kSineWaveEndAngle; x+= angleStep) {
-            samples.push(Math.sin(x));
+        let samples = new Float32Array(kWavefmNumSamples);
+        for (let i = 0, x = 0; i < kWavefmNumSamples; x+= angleStep, i++) {
+            samples[i] = Math.sin(x);
         }
         return samples;
     }
@@ -499,7 +479,7 @@ class EqGraph {
         }
     }
     xformX(x) {
-        return Math.round(this.logFunc((x - 31)) * this.drawScaleX);
+        return Math.round(this.logFunc((x-kFrespStartFreqMinus1)) * this.drawScaleX);
     }
     xformY(y) {
         return this.halfY - Math.round(y * this.drawScaleY);
@@ -509,7 +489,7 @@ class EqGraph {
         const scaleX = this.drawScaleX;
         const scaleY = this.drawScaleY;
         const height = ctx.canvas.height;
-        let lastXTick = -1;
+        let lastXTick = -10;
         ctx.fillStyle = "white";
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
         ctx.strokeStyle = "#bbb";
@@ -533,6 +513,7 @@ class EqGraph {
         ctx.setLineDash([]);
         let prevItem = this.resp[0];
         let prevX = this.xformX(prevItem[0]);
+        let txtWidth = 12;
         for (const item of this.resp) {
             const freq = item[0];
             const x = this.xformX(freq);
@@ -545,12 +526,13 @@ class EqGraph {
             prevItem = item;
             prevX = x;
             //console.log(`x=${x}, ${item[2]}, ${item[3]}`);
-            if (x - lastXTick > 25) {
+            if (x - lastXTick > txtWidth) {
                 lastXTick = x;
                 const txt = niceFreq(freq);
-                const txtHalfWidth = ctx.measureText(txt).width / 2;
+                txtWidth = ctx.measureText(txt).width;
                 ctx.fillRect(x, height-14, 1, 4);
-                ctx.fillText(txt, x-txtHalfWidth, height, 25);
+                ctx.fillText(txt, x-txtWidth / 2, height, 25);
+                txtWidth += 4;
             }
         }
     }
