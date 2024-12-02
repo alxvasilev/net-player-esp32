@@ -1,12 +1,11 @@
 #ifndef EQUALIZER_AV_HPP
 #define EQUALIZER_AV_HPP
 #include "biquad.hpp"
-#include <array>
-#include <esp_heap_caps.h>
+#include <string.h>
 
 struct EqBandConfig {
     uint16_t freq;
-    int8_t width; // in 0.1x octaves: 10 means 1 octave
+    uint16_t Q; // Q multiplied by 1000
     static const EqBandConfig kPreset10Band[10];
     static const EqBandConfig kPreset9Band[9];
     static const EqBandConfig kPreset8Band[8];
@@ -16,87 +15,106 @@ struct EqBandConfig {
     static const EqBandConfig kPreset4Band[4];
     static const EqBandConfig kPreset3Band[3];
     static const EqBandConfig* kBandPresets[8];
-    static const EqBandConfig* defaultForNBands(int n) {
+    static const EqBandConfig* defaultCfg(int n) {
         return (n < 3 || n > 10) ? nullptr : kBandPresets[n - 3];
     }
 };
 
-template <int N, bool IsStereo>
+static_assert(sizeof(EqBandConfig) == 4, "");
+static_assert(sizeof(BiquadStereo) % 4 == 0, "");
+static_assert(sizeof(BiquadMono) % 4 == 0, "");
+
+template <bool IsStereo>
 class Equalizer
 {
 public:
-    enum { kBandCount = N };
     typedef typename std::conditional<IsStereo, BiquadStereo, BiquadMono>::type BiquadType;
+    typedef int8_t Gain;
 protected:
-    const EqBandConfig* mBandConfigs;
-    BiquadType mFilters[kBandCount];
-    int mSampleRate;
+    uint8_t mBandCount;
+    uint32_t mSampleRate;
+    BiquadType* mFilters;
+    // Need to have filter configs and gains in continguous arrays instead of members of each filter,
+    // because it's simpler and more efficient to load and store them in NVS
+    EqBandConfig* mBandConfigs;
+    Gain* mGains;
+    alignas (BiquadType) uint8_t mMem[];
+    Equalizer(uint8_t nBands, uint32_t sampleRate):
+        mBandCount(nBands), mSampleRate(sampleRate),
+        mFilters((BiquadType*)mMem),
+        mBandConfigs((EqBandConfig*)(mMem + sizeof(BiquadType) * nBands)),
+        mGains((int8_t*)mBandConfigs + sizeof(EqBandConfig) * nBands)
+    {
+        memset(mGains, 0, nBands);
+        memset(mBandConfigs, 0, nBands * sizeof(EqBandConfig));
+        for (int i = 0; i < nBands; i++) {
+            new (mFilters + i * sizeof(BiquadType)) BiquadType;
+        }
+    }
 public:
-    Equalizer(const EqBandConfig* cfg)
-        : mBandConfigs(cfg ? cfg : EqBandConfig::defaultForNBands(kBandCount))
-    {
-        mFilters[0].init((mBandConfigs[0].width < 0) ? Biquad::kLowShelf : Biquad::kBand);
-        mFilters[kBandCount - 1].init((mBandConfigs[kBandCount - 1].width < 0) ? Biquad::kHighShelf : Biquad::kBand);
-        for (int i = 1; i < kBandCount - 1; i++) {
-            mFilters[i].init(Biquad::kBand);
-        }
+    uint32_t numBands() const { return mBandCount; }
+    uint32_t sampleRate() const { return mSampleRate; }
+    EqBandConfig* bandConfigs() { return mBandConfigs; }
+    EqBandConfig& bandConfig(uint8_t band) { return mBandConfigs[band]; }
+    Gain* gains() { return mGains; }
+    void setSampleRate(uint32_t sampleRate) { mSampleRate = sampleRate; updateAllFilters(); }
+    // This class is not constructed directly via the ctor, but instead with a ::create factory function,
+    // since additional runtime-determined amount of memory needs to be allocated at the end,
+    // for the Biquad filters and the band configs
+    static uint32_t instSize(uint8_t nBands) {
+        return sizeof(Equalizer<IsStereo>) + nBands * (sizeof(BiquadType) + sizeof(EqBandConfig) + sizeof(Gain));
     }
-    static void* operator new(size_t size) { return heap_caps_malloc(size, MALLOC_CAP_INTERNAL); }
+    static Equalizer* create(uint8_t nBands, uint16_t sampleRate) {
+        void* mem = malloc(instSize(nBands));
+        if (!mem) {
+            return nullptr;
+        }
+        return new(mem) Equalizer(nBands, sampleRate);
+    }
+    static Equalizer* create(uint8_t nBands, uint32_t sampleRate, void* placementMem) {
+        bqassert(((uintptr_t)placementMem & 0x3) == 0); // must be 4-byte aligned
+        return new(placementMem) Equalizer(nBands, sampleRate);
+    }
     static void operator delete(void* p) { free(p); }
-    const EqBandConfig* bandConfigs() const { return mBandConfigs; }
-    const BiquadType& filter(uint8_t band) const
-    {
-        bqassert(band < kBandCount);
-        return mFilters[band];
-    }
-    void init(int sr, int8_t* gains)
-    {
-        mSampleRate = sr;
-        if (gains) {
-            for (int i = 0; i < kBandCount; i++) {
-                setBandGain(i,  gains[i], true);
-            }
-        } else {
-            for (int i = 0; i < kBandCount; i++) {
-                setBandGain(i, 0, true);
-            }
-        }
-    }
     void resetState()
     {
-        for (int i = 0; i < kBandCount; i++) {
+        for (int i = 0; i < mBandCount; i++) {
             mFilters[i].clearState();
         }
     }
     void process(float* input, int len)
     {
-#pragma GCC unroll 16
-        for (int i = 0; i < kBandCount; i++) {
+        for (int i = 0; i < mBandCount; i++) {
             mFilters[i].process(input, len);
         }
     }
-    void setBandGain(uint8_t band, int8_t dbGain, bool clearState=false)
+    Biquad::Type filterTypeOfBand(uint8_t band) const {
+        return band == 0 ? Biquad::kLowShelf : ((band == mBandCount - 1) ? Biquad::kHighShelf : Biquad::kPeaking);
+    }
+    void updateFilter(uint8_t band, bool clearState)
     {
-        bqassert(band < kBandCount);
+        bqassert(band < mBandCount);
         auto& filter = mFilters[band];
         auto& cfg = mBandConfigs[band];
-        filter.set(cfg.freq, ((float)abs(cfg.width)) / 10, mSampleRate, dbGain);
+        // recalc(Type type, uint16_t freq, float Q, uint32_t srate, int8_t dbGain)
+        filter.recalc(filterTypeOfBand(band), cfg.freq, (float)cfg.Q / 1000, mSampleRate, mGains[band]);
         if (clearState) {
             filter.clearState();
         }
     }
-    void setAllGains(const int8_t* gains)
+    void updateAllFilters(bool clearState)
     {
-        if (gains) {
-            for (int i = 0; i < kBandCount; i++) {
-                auto& cfg = mBandConfigs[i];
-                mFilters[i].set(cfg.freq, ((float)abs(cfg.width)) / 10, mSampleRate, gains[i]);
-            }
-        } else {
-            for (int i = 0; i < kBandCount; i++) {
-                setBandGain(i, 0, true);
-            }
+        for (int i = 0; i < mBandCount; i++) {
+            updateFilter(i, clearState);
         }
+    }
+    void setBandGain(uint8_t band, Gain gain) {
+        mGains[band] = gain;
+        updateFilter(band, false);
+    }
+    void zeroAllGains(bool clearState=true) {
+        memset(mGains, 0, mBandCount * sizeof(Gain));
+        updateAllFilters(clearState);
     }
 };
 #endif // EQUALIZERNODE_HPP

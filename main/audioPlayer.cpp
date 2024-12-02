@@ -146,7 +146,7 @@ void AudioPlayer::lcdInit()
 
 void AudioPlayer::initTimedDrawTask()
 {
-    mLcdTask.createTask("lcdTask", false, kLcdTaskStackSize, kLcdTaskCore, kLcdTaskPrio, this, &AudioPlayer::lcdTimedDrawTask);
+    mLcdTask.createTask("lcdTask", true, kLcdTaskStackSize, kLcdTaskCore, kLcdTaskPrio, this, &AudioPlayer::lcdTimedDrawTask);
 }
 
 bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType)
@@ -650,7 +650,7 @@ int AudioPlayer::volumeChange(int step)
 bool AudioPlayer::equalizerSetGainsFromString(char* str, size_t len)
 {
     if (!str) {
-        mEqualizer->setAllGains(nullptr, 0);
+        mEqualizer->zeroAllGains();
         mEqualizer->saveGains();
         return true;
     }
@@ -792,7 +792,7 @@ esp_err_t AudioPlayer::equalizerSetUrlHandler(httpd_req_t *req)
     UrlParams params(req);
     auto nbands = params.intVal("nbands", -1);
     if (nbands != -1) {
-        return respondOkOrFail(eq.setMyEqNumBands(nbands), req);
+        return respondOkOrFail(eq.setDefaultNumBands(nbands), req);
     }
     auto preset = params.strVal("preset");
     if (preset.str) {
@@ -807,8 +807,8 @@ esp_err_t AudioPlayer::equalizerSetUrlHandler(httpd_req_t *req)
     auto cfgBand = params.intVal("cfgband", -1);
     if (cfgBand > -1) {
         auto freq = params.intVal("freq", 0);
-        auto bw = params.intVal("bw", 0);
-        return respondOkOrFail(eq.reconfigEqBand(cfgBand, freq, bw), req);
+        auto q = params.intVal("q", 0);
+        return respondOkOrFail(eq.reconfigEqBand(cfgBand, freq, q), req);
     }
 
     auto data = params.strVal("vals");
@@ -853,7 +853,7 @@ esp_err_t AudioPlayer::equalizerDumpUrlHandler(httpd_req_t *req)
     buf.printf("{\"t\":%d,\"n\":\"%s\",\"b\":[", eq.eqType(), eq.presetName());
     for (int i = 0; i < eq.numBands(); i++) {
         auto cfg = eq.bandCfg(i);
-        buf.printf("[%d,%d,%d],", cfg.freq, cfg.width, levels[i]);
+        buf.printf("[%d,%d,%d],", cfg.freq, cfg.Q, levels[i]);
     }
     buf.setDataSize(buf.dataSize() - 2); // remove terminating null
     buf.appendStr("]}", true);

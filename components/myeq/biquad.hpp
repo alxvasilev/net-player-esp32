@@ -1,24 +1,5 @@
 #ifndef BIQUAD_HPP
 #define BIQUAD_HPP
-/* Simple implementation of Biquad filters -- Tom St Denis
-*
-* Based on the work
-
-Cookbook formulae for audio EQ biquad filter coefficients
----------------------------------------------------------
-by Robert Bristow-Johnson, pbjrbj@viconet.com  a.k.a. robert@audioheads.com
-
-* Available on the web at
-
-http://www.smartelectronix.com/musicdsp/text/filters005.txt
-
-* Enjoy.
-*
-* This work is hereby placed in the public domain for all purposes, whether
-* commercial, free [as in speech] or educational, etc.  Use the code and please
-* give me credit if you wish.
-*
-* Tom St Denis -- http://tomstdenis.home.dhs.org*/
 
 #include <stdint.h>
 #include <math.h>
@@ -42,91 +23,71 @@ class Biquad
 {
 public:
     enum Type: uint8_t {
-        kBand, // Peaking (positive gain) or Notch (negative gain) filter
+        kPeaking,
         kLowShelf,
         kHighShelf
     };
     typedef float Float; // floating-point type used for samples and calculations
 protected:
-    Type mType;
-    Float mCoeffs[5];
+    union {
+        Float m_coeffs[5];
+        struct {
+            Float m_b0;
+            Float m_b1;
+            Float m_b2;
+            Float m_a1;
+            Float m_a2;
+        };
+    };
     Biquad() {}
 public:
-    Type type() const { return mType; }
-    /** Reconfigure the filter, usually used for adjusting the gain during operation */
-    void set(int freq, float Q, int srate, float dbGain)
+    /** Calculate coefficients */
+    void recalc(Type type, uint16_t freq, float Q, uint32_t srate, int8_t dbGain)
     {
-        double a0inv, a1, a2, b0, b1, b2;
-        double V = powf(10.0f, fabs(dbGain) / 20.0f);
-        double K = tan(M_PI * freq / srate);
-
-        switch (mType) {
-        case kBand:
-            if (dbGain >= 0) {
-                a0inv = 1 / (1 + 1/Q * K + K * K);
-                b0 = (1 + V/Q * K + K * K) * a0inv;
-                b1 = 2 * (K * K - 1) * a0inv;
-                b2 = (1 - V/Q * K + K * K) * a0inv;
-                a1 = b1;
-                a2 = (1 - 1/Q * K + K * K) * a0inv;
-            }
-            else {
-                a0inv = 1 / (1 + K / Q + K * K);
-                b0 = (1 + K * K) * a0inv;
-                b1 = 2 * (K * K - 1) * a0inv;
-                b2 = b0;
-                a1 = b1;
-                a2 = (1 - K / Q + K * K) * a0inv;
-            }
-            break;
-        case kLowShelf:
-            if (dbGain >= 0) {
-                a0inv = 1 / (1 + sqrt(2) * K + K * K);
-                b0 = (1 + sqrt(2*V) * K + V * K * K) * a0inv;
-                b1 = 2 * (V * K * K - 1) * a0inv;
-                b2 = (1 - sqrt(2*V) * K + V * K * K) * a0inv;
-                a1 = 2 * (K * K - 1) * a0inv;
-                a2 = (1 - sqrt(2) * K + K * K) * a0inv;
-            }
-            else {
-                a0inv = 1 / (1 + sqrt(2*V) * K + V * K * K);
-                b0 = (1 + sqrt(2) * K + K * K) * a0inv;
-                b1 = 2 * (K * K - 1) * a0inv;
-                b2 = (1 - sqrt(2) * K + K * K) * a0inv;
-                a1 = 2 * (V * K * K - 1) * a0inv;
-                a2 = (1 - sqrt(2*V) * K + V * K * K) * a0inv;
-            }
-            break;
-        case kHighShelf:
-            if (dbGain >= 0) {
-                a0inv = 1 / (1 + sqrt(2) * K + K * K);
-                b0 = (V + sqrt(2*V) * K + K * K) * a0inv;
-                b1 = 2 * (K * K - V) * a0inv;
-                b2 = (V - sqrt(2*V) * K + K * K) * a0inv;
-                a1 = 2 * (K * K - 1) * a0inv;
-                a2 = (1 - sqrt(2) * K + K * K) * a0inv;
-            }
-            else {
-                a0inv = 1 / (V + sqrt(2*V) * K + K * K);
-                b0 = (1 + sqrt(2) * K + K * K) * a0inv;
-                b1 = 2 * (K * K - 1) * a0inv;
-                b2 = (1 - sqrt(2) * K + K * K) * a0inv;
-                a1 = 2 * (K * K - V) * a0inv;
-                a2 = (V - sqrt(2*V) * K + K * K) * a0inv;
-            }
-            break;
-        default:
-            b0 = b1 = b2 = a0inv = a1 = a2 = 0; //suppress may be used uninitialized warning
+        if (type != kPeaking) {
+            dbGain *= 2;
+        }
+        double A = pow(10.0, (float)dbGain / 40.0f);
+        double w0 = 2 * M_PI * (double)freq / (double)srate;
+        double sn = sin(w0);
+        double cs = cos(w0);
+        double alpha = sn / (2 * Q);
+        if (type == kPeaking) {
+            double a0inv = 1 / (1 + alpha / A);
+            m_a1 = (-2 * cs) * a0inv;
+            m_a2 = (1 - alpha / A) * a0inv;
+            m_b0 = (1 + alpha * A) * a0inv;
+            m_b1 = (-2 * cs) * a0inv;
+            m_b2 = (1 - alpha * A) * a0inv;
+            return;
+        }
+        double appm = (A + 1) + (A - 1) * cs;
+        double apmm = (A + 1) - (A - 1) * cs;
+        double ampp = (A - 1) + (A + 1) * cs;
+        double ammp = (A - 1) - (A + 1)*cs;
+        double betasn = sqrt(A) * sn / Q;
+        // When Q = 0.707 (= 1/sqrt(2) = 1 octave), betasn transforms to sqrt(2 * A) * sn, i.e. beta * sn
+        if (type == kLowShelf) {
+            double a0inv = 1 / (appm + betasn);
+            m_a1 = -2 * ampp * a0inv;
+            m_a2 = (appm - betasn) * a0inv;
+            m_b0 = A * (apmm + betasn) * a0inv;
+            m_b1 = 2 * A * ammp * a0inv;
+            m_b2 = A * (apmm - betasn) * a0inv;
+        }
+        else if (type == kHighShelf) {
+            double a0inv = 1 / (apmm + betasn);
+            m_a1 = 2 * ammp * a0inv;
+            m_a2 = (apmm - betasn) * a0inv;
+            m_b0 = A * (appm + betasn) * a0inv;
+            m_b1 = -2 * A * ampp * a0inv;
+            m_b2 = A * (appm - betasn) * a0inv;
+        }
+        else {
             bqassert(false);
         }
-        mCoeffs[0] = b0;
-        mCoeffs[1] = b1;
-        mCoeffs[2] = b2;
-        mCoeffs[3] = a1;
-        mCoeffs[4] = a2;
         BQ_LOGD("Config band %d Hz, Q: %f, gain: %f", freq, Q, dbGain);
-        BQ_LOGD("coeffs: b0 = %f, b1 = %f, b2 = %f, a1 = %f, a2 = %f",
-                mCoeffs[0], mCoeffs[1], mCoeffs[2], mCoeffs[3], mCoeffs[4]);
+        BQ_LOGD("coeffs: b0 = %f, b1 = %f, b2 = %f, a1 = %f, a2 = %f", b0, b1, b2, a1, a2);
     }
 };
 
@@ -134,26 +95,22 @@ class BiquadMono: public Biquad {
 protected:
     Float mDelay[2]; //delay line, for Direct Form 2
 public:
+    BiquadMono() { clearState(); }
     void clearState()
     {
         mDelay[0] = mDelay[1] = 0.0;
     }
-    void init(Type type)
-    {
-        mType = type;
-        clearState();
-    }
     inline void process_asm(Float* samples, int len)
     {
-        asmBiquad_f32_df2_mono(samples, samples, len, mCoeffs, mDelay);
+        asmBiquad_f32_df2_mono(samples, samples, len, m_coeffs, mDelay);
     }
     void process(Float* samples, int len)
     {
-        auto b0 = mCoeffs[0];
-        auto b1 = mCoeffs[1];
-        auto b2 = mCoeffs[2];
-        auto a1 = mCoeffs[3];
-        auto a2 = mCoeffs[4];
+        Float b0 = m_b0;
+        Float b1 = m_b1;
+        Float b2 = m_b2;
+        Float a1 = m_a1;
+        Float a2 = m_a2;
         Float dly0 = mDelay[0];
         Float dly1 = mDelay[1];
         Float* end = samples + len;
@@ -174,18 +131,14 @@ protected:
     Float mDelayL[2]; //delay line, for Direct Form 2
     Float mDelayR[2];
 public:
+    BiquadStereo() { clearState(); }
     void clearState()
     {
         mDelayL[0] = mDelayL[1] = mDelayR[0] = mDelayR[1] = 0.0;
     }
-    void init(Type type)
-    {
-        mType = type;
-        clearState();
-    }
     inline void process(Float* samples, int len)
     {
-        asmBiquad_f32_df2_stereo(samples, len, mCoeffs, mDelayL, mDelayR);
+        asmBiquad_f32_df2_stereo(samples, len, m_coeffs, mDelayL, mDelayR);
     }
     void process_C(Float* samples, int len)
     {
@@ -193,12 +146,12 @@ public:
         Float dlyL1 = mDelayL[1];
         Float dlyR0 = mDelayR[0];
         Float dlyR1 = mDelayR[1];
-        auto b0 = mCoeffs[0];
-        auto b1 = mCoeffs[1];
-        auto b2 = mCoeffs[2];
-        auto a1 = mCoeffs[3];
-        auto a2 = mCoeffs[4];
-        auto end = samples + 2 * len;
+        Float b0 = m_b0;
+        Float b1 = m_b1;
+        Float b2 = m_b2;
+        Float a1 = m_a1;
+        Float a2 = m_a2;
+        Float* end = samples + 2 * len;
         while(samples < end) {
             Float in = *samples;
             Float out = in * b0 + dlyL0;
