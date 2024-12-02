@@ -18,7 +18,7 @@ EqualizerNode::EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs)
         mDefaultNumBands = kDefaultNumBands;
     }
     mUseEspEq = mNvsHandle.readDefault("eq.useEsp", (uint8_t)1);
-    mOut24bit = mNvsHandle.readDefault("eq.out24bit", (uint8_t)0);
+    mOut24bit = mNvsHandle.readDefault("eq.out24bit", (uint8_t)1);
     size_t len = sizeof(mEqName);
     if (mNvsHandle.readString("eq.default", mEqName, len) == ESP_OK) {
         mEqName[len] = 0;
@@ -134,8 +134,9 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
     if (justCreated || forceLoadGains) {
         auto nBands = mCore->numBands();
         size_t len = nBands;
-        if ((mNvsHandle.readBlob(eqGainsKey().c_str(), mCore->gains(), len) == ESP_OK) && (len == nBands)) {
-            ESP_LOGI(TAG, "Loaded equalizer gains from NVS for '%s'", mEqName);
+        auto key = eqGainsKey();
+        if ((mNvsHandle.readBlob(key.c_str(), mCore->gains(), len) == ESP_OK) && (len == nBands)) {
+            ESP_LOGI(TAG, "Loaded equalizer gains from NVS for '%s'", key.c_str());
         }
         else {
             ESP_LOGI(TAG, "Error loading or no gains for '%s', len=%d, nbands=%d", eqGainsKey().c_str(), len, nBands);
