@@ -225,7 +225,7 @@ void EqualizerNode::useEspEqualizer(bool use)
         return;
     }
     mUseEspEq = use;
-    mNvsHandle.write("eq.useStock", (uint8_t)mUseEspEq);
+    mNvsHandle.write("eq.useEsp", (uint8_t)mUseEspEq);
     equalizerReinit(0, true);
     mCoreChanged = true;
 }
