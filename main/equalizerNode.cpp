@@ -103,9 +103,8 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
     }
     else { // need custom eq
         mOutFormat.setBitsPerSample(mOut24bit ? 24 : 16);
-        bool isDefault = (strcmp(mEqName, "default") == 0);
         if (fmtChanged || !mCore || mCore->type() != IEqualizerCore::kTypeCustom ||
-                (isDefault && (mCore->numBands() != mDefaultNumBands))) {
+                (eqIsDefault() && (mCore->numBands() != mDefaultNumBands))) {
             createCustomCore(mInFormat);
             auto bps = mInFormat.bitsPerSample();
             if (bps == 16) {

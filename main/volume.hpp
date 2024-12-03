@@ -244,7 +244,12 @@ void volumeGetLevel(DataPacket& pkt)
     if (laFlag != mGetLevelLeftAlignedFlag) {
         updateVolumeFormat(mFormat, laFlag);
     }
-    (this->*mGetLevelFunc)((DataPacket&)pkt);
+    if (mGetLevelFunc) {
+        (this->*mGetLevelFunc)((DataPacket&)pkt);
+    }
+    else {
+        printf("WOULD CRASH\n");
+    }
 }
 void volumeNotifyLevelCallback()
 {
