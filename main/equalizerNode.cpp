@@ -206,6 +206,24 @@ bool EqualizerNode::reconfigEqBand(uint8_t band, uint16_t freq, uint16_t Q)
         TAG, "writing band config", return false);
     return true;
 }
+bool EqualizerNode::setAllPeakingQ(int Q, bool clearState)
+{
+    if (mCore->type() != IEqualizerCore::kTypeCustom) {
+        ESP_LOGW(TAG, "%s: Negative or zero Q value", __FUNCTION__);
+        return false;
+    }
+    if (Q <= 0) {
+        ESP_LOGW(TAG, "%s: Negative or zero Q value", __FUNCTION__);
+        return false;
+    }
+    int last = mCore->numBands() - 1;
+    auto cfgs = mCore->bandConfigs();
+    for (int i = 1; i < last; i++) {
+        cfgs[i].Q = Q;
+        mCore->updateFilter(i, clearState);
+    }
+    return true;
+}
 bool EqualizerNode::switchPreset(const char *name)
 {
     auto len = strlen(name);

@@ -798,19 +798,23 @@ esp_err_t AudioPlayer::equalizerSetUrlHandler(httpd_req_t *req)
     if (preset.str) {
         return respondOkOrFail(eq.switchPreset(preset.str), req);
     }
-    int useEsp = params.intVal("esp", -1);
-    if (useEsp != -1) {
-        eq.useEspEqualizer(useEsp);
+    int val = params.intVal("esp", -1);
+    if (val != -1) {
+        eq.useEspEqualizer(val);
         httpd_resp_sendstr(req, "ok");
         return ESP_OK;
     }
-    auto cfgBand = params.intVal("cfgband", -1);
-    if (cfgBand > -1) {
+    val = params.intVal("cfgband", -1);
+    if (val > -1) {
         auto freq = params.intVal("freq", 0);
         auto q = params.intVal("q", 0);
-        return respondOkOrFail(eq.reconfigEqBand(cfgBand, freq, q), req);
+        return respondOkOrFail(eq.reconfigEqBand(val, freq, q), req);
     }
-
+    val = params.intVal("qpkf", 0);
+    if (val) {
+        int reset = params.intVal("rst", 0);
+        return respondOkOrFail(eq.setAllPeakingQ(val, reset), req);
+    }
     auto data = params.strVal("vals");
     if (data.str) {
         return respondOkOrFail(self->equalizerSetGainsFromString(data.str, data.len), req);

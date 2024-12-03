@@ -64,6 +64,7 @@ public:
     const int8_t* gains() { return mCore->gains(); }
     bool saveGains();
     bool reconfigEqBand(uint8_t band, uint16_t freq, uint16_t Q);
+    bool setAllPeakingQ(int Q, bool reset);
     const EqBandConfig bandCfg(uint8_t n) const { return mCore->bandConfig(n); }
     virtual IAudioVolume* volumeInterface() override { return this; }
     virtual void setVolume(uint8_t vol) override {
