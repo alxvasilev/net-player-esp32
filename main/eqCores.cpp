@@ -7,7 +7,7 @@ static const char* TAG = "eq";
 template <bool IsStereo>
 MyEqualizerCore<IsStereo>* MyEqualizerCore<IsStereo>::create(uint8_t numBands, uint32_t sampleRate)
 {
-    enum { kSelfSize = ((sizeof(MyEqualizerCore<IsStereo>) + 3) / 4) * 4 }; // align to 4 bytes
+    enum { kSelfSize = (sizeof(MyEqualizerCore<IsStereo>) + 3) & (~0x3) }; // align to 4 bytes
     auto mem = malloc(kSelfSize + Equalizer<IsStereo>::instSize(numBands));
     myassert(mem);
     auto eq = Equalizer<IsStereo>::create(numBands, sampleRate, (char*)mem + kSelfSize);
