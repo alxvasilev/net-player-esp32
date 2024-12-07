@@ -71,14 +71,13 @@ AudioNode::Type AudioPlayer::playerModeToInNodeType(PlayerMode mode)
 }
 
 AudioPlayer::AudioPlayer(ST7735Display& lcd, http::Server& httpServer, PlayerMode mode, AudioNode::Type outType)
-: mNvsHandle("aplayer", NVS_READWRITE), mLcd(lcd),
+: mNvsHandle("aplayer", true, kNvsCommitDelay), mLcd(lcd),
   mDmaFrameBuf(320, kTrackTitleFont.height + kTrackTitleFont.lineSpacing, MALLOC_CAP_DMA),
   mTitleTextFrameBuf(kMaxTrackTitleLen * (kTrackTitleFont.width + kTrackTitleFont.charSpacing),
                      kTrackTitleFont.height + kTrackTitleFont.lineSpacing, MALLOC_CAP_SPIRAM),
   mHttpServer(httpServer), mVuDisplay(mDmaFrameBuf)
 {
     lcdInit();
-    mNvsHandle.enableAutoCommit(20000);
     if (mode == kModeInvalid)
     {
         mode = initFromNvs();
@@ -949,7 +948,7 @@ esp_err_t AudioPlayer::nvsGetParamUrlHandler(httpd_req_t* req)
     NvsHandle* nvs;
     if (nsParam.str) {
         ns = nsParam.str;
-        nvsHolder.reset(new NvsHandle(ns));
+        nvsHolder.reset(new NvsHandle(ns, false, kNvsCommitDelay));
         nvs = nvsHolder.get();
     } else {
         ns = "aplayer";

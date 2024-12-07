@@ -25,7 +25,6 @@ protected:
     StreamId mStreamId = 0;
     uint8_t mSourceBps = 0;
     char mEqName[10] = {};
-    std::unique_ptr<int8_t[]> mTargetGains;
     float mFloatVolumeMul = 1.0;
     PreConvertFunc mPreConvertFunc = nullptr;
     PostConvertFunc mPostConvertFunc = nullptr;

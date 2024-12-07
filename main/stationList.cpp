@@ -11,19 +11,18 @@ static const char* TAG = "STALIST";
 using namespace std;
 
 StationList::StationList(Mutex& aMutex, const char *nsName)
-:mNsName(strdup(nsName)), mNvsHandle(nsName, NVS_READWRITE), mutex(aMutex),
+:mNsName(strdup(nsName)), mNvsHandle(nsName, true, 20), mutex(aMutex),
  currStation(*this)
 {
     if (!mNvsHandle.isValid()) {
         return;
     }
-    mNvsHandle.enableAutoCommit(30000);
     loadCurrent();
 }
 char* StationList::getString(const char* key)
 {
-    size_t len;
-    if (mNvsHandle.readString(key, nullptr, len) != ESP_OK) {
+    auto len = mNvsHandle.getStringSize(key);
+    if (len < 0) {
         return nullptr;
     }
     char* result = (char*)malloc(len + 1);
@@ -120,17 +119,15 @@ bool StationList::next()
 
 bool StationList::stationExists(const char* id)
 {
-    size_t len;
-    return mNvsHandle.readBlob(id, nullptr, len) == ESP_OK;
+    return mNvsHandle.getBlobSize(id) > 0;
 }
 
 bool Station::load(const char* id)
 {
-    size_t len;
-    auto ret = mParent.nvsHandle().readBlob(id, nullptr, len);
-    if (ret != ESP_OK) {
-        if (ret != ESP_ERR_NVS_NOT_FOUND) {
-            ESP_LOGW(TAG, "Station::load: Error reading record for id '%s'", id);
+    auto len = mParent.nvsHandle().getBlobSize(id);
+    if (len <= 0) {
+        if (len < -1) {
+            ESP_LOGW(TAG, "%s: Error reading record for id '%s'", __FUNCTION__, id);
         }
         return false;
     }

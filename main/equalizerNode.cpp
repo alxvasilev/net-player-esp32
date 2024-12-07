@@ -9,6 +9,7 @@
 //#define CONVERT_PERF 1
 
 static const char* TAG = "eq";
+#define LOCK_EQ() MutexLocker locker(mMutex)
 
 EqualizerNode::EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs)
 : AudioNode(parent, "equalizer"), mNvsHandle(nvs)
@@ -19,7 +20,7 @@ EqualizerNode::EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs)
     }
     mUseEspEq = mNvsHandle.readDefault("eq.useEsp", (uint8_t)1);
     mOut24bit = mNvsHandle.readDefault("eq.out24bit", (uint8_t)1);
-    size_t len = sizeof(mEqName);
+    int len = sizeof(mEqName);
     if (mNvsHandle.readString("eq.default", mEqName, len) == ESP_OK) {
         mEqName[len] = 0;
     }
@@ -63,7 +64,7 @@ void EqualizerNode::createCustomCore(StreamFormat fmt)
     else {
         mCore.reset(MyEqualizerCore<false>::create(nBands, fmt.sampleRate()));
     }
-    size_t expectedLen = nBands * sizeof(EqBandConfig);
+    int expectedLen = nBands * sizeof(EqBandConfig);
     auto len = expectedLen;
     if (mNvsHandle.readBlob(eqConfigKey().c_str(), mCore->bandConfigs(), len) != ESP_OK || len != expectedLen) {
         memcpy(mCore->bandConfigs(), EqBandConfig::defaultCfg(nBands), expectedLen);
@@ -132,7 +133,7 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
     // load gains
     if (justCreated || forceLoadGains) {
         auto nBands = mCore->numBands();
-        size_t len = nBands;
+        int len = nBands;
         auto key = eqGainsKey();
         if ((mNvsHandle.readBlob(key.c_str(), mCore->gains(), len) == ESP_OK) && (len == nBands)) {
             ESP_LOGI(TAG, "Loaded equalizer gains from NVS for '%s'", key.c_str());
@@ -150,7 +151,7 @@ bool EqualizerNode::setDefaultNumBands(uint8_t n)
     if (n < kMyEqMinBands || n > kMyEqMaxBands) {
         return false;
     }
-    MutexLocker locker(mMutex);
+    LOCK_EQ();
     mDefaultNumBands = n;
     equalizerReinit();
     mNvsHandle.write("eq.nbands", (uint8_t)n);
@@ -158,7 +159,7 @@ bool EqualizerNode::setDefaultNumBands(uint8_t n)
 }
 bool EqualizerNode::setBandGain(uint8_t band, int8_t dbGain)
 {
-    MutexLocker locker(mMutex);
+    LOCK_EQ();
     myassert(mCore);
     if (band > mCore->numBands()) {
         return false;
@@ -169,19 +170,28 @@ bool EqualizerNode::setBandGain(uint8_t band, int8_t dbGain)
 
 void EqualizerNode::zeroAllGains()
 {
-    MutexLocker locker(mMutex);
+    LOCK_EQ();
     auto nBands = mCore->numBands();
     memset(mCore->gains(), 0, nBands);
     mCore->updateAllFilters();
 }
 bool EqualizerNode::saveGains()
 {
-    MutexLocker locker(mMutex);
-    return mNvsHandle.writeBlob(eqGainsKey().c_str(), mCore->gains(), mCore->numBands()) == ESP_OK;
+    int nbands;
+    int8_t* gains;
+    std::string key;
+    {
+        LOCK_EQ();
+        nbands = mCore->numBands();
+        gains = (int8_t*)alloca(nbands);
+        memcpy(gains, mCore->gains(), nbands);
+        key = eqGainsKey();
+    }
+    return mNvsHandle.writeBlob(key.c_str(), gains, nbands) == ESP_OK;
 }
 bool EqualizerNode::reconfigEqBand(uint8_t band, uint16_t freq, uint16_t Q)
 {
-    MutexLocker locker(mMutex);
+    LOCK_EQ();
     assert(mCore);
     if (mCore->type() != IEqualizerCore::kTypeCustom) {
         ESP_LOGW(TAG, "ESP equalizer is not configurable");
@@ -208,6 +218,7 @@ bool EqualizerNode::reconfigEqBand(uint8_t band, uint16_t freq, uint16_t Q)
 }
 bool EqualizerNode::setAllPeakingQ(int Q, bool clearState)
 {
+    LOCK_EQ();
     if (mCore->type() != IEqualizerCore::kTypeCustom) {
         ESP_LOGW(TAG, "%s: Negative or zero Q value", __FUNCTION__);
         return false;
@@ -227,6 +238,7 @@ bool EqualizerNode::setAllPeakingQ(int Q, bool clearState)
 bool EqualizerNode::switchPreset(const char *name)
 {
     auto len = strlen(name);
+    LOCK_EQ();
     if (len >= sizeof(mEqName)) {
         ESP_LOGW(TAG, "switchPreset: Name is too long");
         return false;
@@ -237,7 +249,7 @@ bool EqualizerNode::switchPreset(const char *name)
 }
 void EqualizerNode::useEspEqualizer(bool use)
 {
-    MutexLocker locker(mMutex);
+    LOCK_EQ();
     if (mUseEspEq == use) {
         return;
     }

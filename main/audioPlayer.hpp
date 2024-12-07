@@ -42,7 +42,8 @@ public:
         kHttpBufSizeSpiRam = 800 * 1024,
         kHttpBufPrefillSpiRam = 65536,
         kDefTitleScrollFps = 25,
-        kLcdNetSpeedUpdateIntervalUs = 1 * 1000000
+        kLcdNetSpeedUpdateIntervalUs = 1 * 1000000,
+        kNvsCommitDelay = 20
     };
     enum PlayerMode: uint8_t {
         kModeInvalid = 0,
