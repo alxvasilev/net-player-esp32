@@ -173,7 +173,7 @@ FLAC__StreamDecoderWriteStatus DecoderFlac::writeCb(const FLAC__StreamDecoder *d
     }
     self.mHasOutput = true;
     if ((self.*self.mOutputFunc)(nSamples, buffer) == false) {
-        ESP_LOGE(TAG, "Output of FLAC codec is too large to fit into output buffer, aborting decode");
+        ESP_LOGE(TAG, "output: ringbuf aborted, aborting decode");
         return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
     }
     return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;

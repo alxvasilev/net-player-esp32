@@ -948,8 +948,12 @@ esp_err_t AudioPlayer::nvsGetParamUrlHandler(httpd_req_t* req)
     NvsHandle* nvs;
     if (nsParam.str) {
         ns = nsParam.str;
-        nvsHolder.reset(new NvsHandle(ns, false, kNvsCommitDelay));
+        nvsHolder.reset(new NvsHandle(ns, false, 0));
         nvs = nvsHolder.get();
+        if (!nvs->isValid()) {
+            httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Namespace not found");
+            return ESP_FAIL;
+        }
     } else {
         ns = "aplayer";
         nvs = &self->mNvsHandle;
@@ -959,11 +963,9 @@ esp_err_t AudioPlayer::nvsGetParamUrlHandler(httpd_req_t* req)
     MutexLocker locker(self->mutex);
     httpd_resp_send_chunk(req, "{", 1);
     bool isFirst = true;
-    nvs_iterator_t it;
-    for(it = nvsEntryFind("nvs", ns, NVS_TYPE_ANY); it; it = nvsEntryNext(it)) {
-        nvs_entry_info_t info;
-        nvs_entry_info(it, &info);
-        if (key.str && strcmp(info.key, key.str) != 0) {
+    NvsIterator it(*nvs, NVS_TYPE_ANY, true);
+    for(; it; it.next()) {
+        if (key.str && strcmp(it.key, key.str) != 0) {
             continue;
         }
         buf.clear();
@@ -971,14 +973,13 @@ esp_err_t AudioPlayer::nvsGetParamUrlHandler(httpd_req_t* req)
             buf.appendChar(',');
         }
         isFirst = false;
-        buf.appendChar('"').appendStr(info.key).appendChar('"').appendChar(':');
-        auto err = nvs->valToString(info.key, info.type, buf, true);
+        buf.appendChar('"').appendStr(it.key).appendChar('"').appendChar(':');
+        auto err = nvs->valToString(it.key, it.type, buf, true);
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "NvsHandle::valToString error %s, key: '%s'", esp_err_to_name(err), info.key);
+            ESP_LOGE(TAG, "NvsHandle::valToString error %s, key: '%s'", esp_err_to_name(err), it.key);
         }
         httpd_resp_send_chunk(req, buf.buf(), buf.dataSize()); // don't send null terminator
     }
-    nvs_release_iterator(it);
     httpd_resp_send_chunk(req, "}", 1);
     httpd_resp_send_chunk(req, nullptr, 0);
     return ESP_OK;
