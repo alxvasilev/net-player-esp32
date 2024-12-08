@@ -247,9 +247,11 @@ void volumeGetLevel(DataPacket& pkt)
     if (mGetLevelFunc) {
         (this->*mGetLevelFunc)((DataPacket&)pkt);
     }
+    /*
     else {
         printf("WOULD CRASH\n");
     }
+    */
 }
 void volumeNotifyLevelCallback()
 {
