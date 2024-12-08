@@ -136,11 +136,11 @@ public:
     {
         mDelayL[0] = mDelayL[1] = mDelayR[0] = mDelayR[1] = 0.0;
     }
-    inline void process(Float* samples, int len)
+    inline void process_asm(Float* samples, int len)
     {
         asmBiquad_f32_df2_stereo(samples, len, m_coeffs, mDelayL, mDelayR);
     }
-    void process_C(Float* samples, int len)
+    void process(Float* samples, int len)
     {
         Float dlyL0 = mDelayL[0];
         Float dlyL1 = mDelayL[1];

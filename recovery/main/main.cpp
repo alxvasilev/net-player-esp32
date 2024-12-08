@@ -241,6 +241,7 @@ esp_err_t httpNvsClear(httpd_req_t* req)
         http::sendEspError(req, HTTPD_500_INTERNAL_SERVER_ERROR, err, "Error mounting NVS after erase");
         return ESP_FAIL;
     }
+    httpd_resp_sendstr(req, "NVS partition erased");
     return ESP_OK;
 }
 esp_err_t httpIsRecovery(httpd_req_t* req)
