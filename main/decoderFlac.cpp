@@ -31,26 +31,30 @@ void DecoderFlac::reset()
     FLAC__stream_decoder_reset(mDecoder);
     mInputPos = 0;
     mInputPacket.reset();
+    mNumReads = 0;
 }
 FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void* userp)
 {
 //  printf("readCb\n");
     auto& self = *static_cast<DecoderFlac*>(userp);
     if (!self.mInputPacket) {
-        AudioNode::PacketResult pr;
-        auto event = self.mSrcNode.pullData(pr);
+        auto event = self.mLastInputEvent = self.mSrcNode.pullData(*self.mLastInputPr);
         if (event) {
             *bytes = 0;
             if (event < 0) {
-                self.mInputEvent = event;
                 return FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
             }
-            auto ret = self.mParent.forwardEvent(pr);
-            return (ret != kNoError || event == kEvtStreamChanged || event == kEvtStreamEnd)
-                ? FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM
-                : FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
+            else if (event == kEvtStreamChanged || event == kEvtStreamChanged) {
+                return FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
+            }
+            else {
+                self.mLastInputEvent = kNoError;
+                return self.mParent.forwardEvent(*self.mLastInputPr)
+                    ? FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM
+                    : FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
+            }
         }
-        self.mInputPacket.reset((DataPacket*)pr.packet.release());
+        self.mInputPacket.reset((DataPacket*)self.mLastInputPr->packet.release());
         self.mInputPos = 0;
     }
     auto pktLen = self.mInputPacket->dataLen;
@@ -63,8 +67,9 @@ FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *dec
         self.mInputPacket.reset();
         self.mInputPos = 0;
     }
-    if (++self.mNumReads > 30) {
-        ESP_LOGW(TAG, "Codec did %d reads without producing an output", self.mNumReads);
+    if (++self.mNumReads > kMaxNumReads) {
+        ESP_LOGW(TAG, "Codec did %d reads without producing any output", self.mNumReads);
+        return FLAC__STREAM_DECODER_READ_STATUS_ABORT;
     }
     return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
 }
@@ -75,17 +80,24 @@ void DecoderFlac::errorCb(const FLAC__StreamDecoder *decoder, FLAC__StreamDecode
 void DecoderFlac::metadataCb(const FLAC__StreamDecoder *decoder, const FLAC__StreamMetadata *metadata, void *client_data)
 {
 }
+template<typename T>
+struct RestoreToNull {
+    T*& mPtr;
+    RestoreToNull(T*& ptr): mPtr(ptr) {}
+    ~RestoreToNull() { mPtr = nullptr; }
+};
+
 StreamEvent DecoderFlac::decode(AudioNode::PacketResult& dpr)
 {
-    mHasOutput = false;
-    for (int i = 0; !mHasOutput && (i < 10); i++) {
-        mNumReads = 0;
-        mInputEvent = kNoError;
+    mLastInputPr = &dpr;
+    RestoreToNull<AudioNode::PacketResult> autoNull(mLastInputPr);
+    while (mNumReads < kMaxNumReads) {
+        mLastInputEvent = kNoError;
         auto ok = FLAC__stream_decoder_process_single(mDecoder);
-        if (mInputEvent) {
-            dpr.clear();
-            return mInputEvent;
+        if (mLastInputEvent) {
+            return mLastInputEvent;
         }
+        dpr.clear();
         if (!ok) {
             auto err = FLAC__stream_decoder_get_state(mDecoder);
             const char* errStr = (err >= 0) ? FLAC__StreamDecoderStateString[err] : "(invalid code)";
@@ -93,9 +105,8 @@ StreamEvent DecoderFlac::decode(AudioNode::PacketResult& dpr)
             return kErrDecode;
         }
     }
-    if (!mHasOutput) {
+    if (mNumReads >= kMaxNumReads) {
         ESP_LOGW(TAG, "Many frames decoded without generating any output, returning error");
-        dpr.clear();
         return kErrDecode;
     }
     return kNoError;
@@ -158,6 +169,7 @@ FLAC__StreamDecoderWriteStatus DecoderFlac::writeCb(const FLAC__StreamDecoder *d
         ESP_LOGE(TAG, "No channels or samples on output");
         return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
     }
+    self.mNumReads = 0;
     auto bps = header.bits_per_sample;
     auto oldFmt = self.outputFormat;
     auto& fmt = self.outputFormat;
@@ -171,7 +183,6 @@ FLAC__StreamDecoderWriteStatus DecoderFlac::writeCb(const FLAC__StreamDecoder *d
         }
         self.mParent.codecOnFormatDetected(self.outputFormat, bps);
     }
-    self.mHasOutput = true;
     if ((self.*self.mOutputFunc)(nSamples, buffer) == false) {
         ESP_LOGE(TAG, "output: ringbuf aborted, aborting decode");
         return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
