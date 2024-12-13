@@ -48,7 +48,7 @@ protected:
         memset(mGains, 0, nBands);
         memset(mBandConfigs, 0, nBands * sizeof(EqBandConfig));
         for (int i = 0; i < nBands; i++) {
-            new (mFilters + i * sizeof(BiquadType)) BiquadType;
+            new (mFilters + i) BiquadType;
         }
     }
 public:
