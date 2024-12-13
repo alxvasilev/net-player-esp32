@@ -1,40 +1,85 @@
 <html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <head>
 <style>
+.eq-container {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    width: max-content;
+}
 .eq-slider-cont {
-  display: inline-block;
-  width: 25px;
-  height: 150px;
-  padding: 0;
-  font-size: 0.65em;
-  text-align: center;
+    display: inline-block;
+    width: 28px;
+    padding: 0;
+    font-size: 0.65em;
+    text-align: center;
 }
 .eq-slider-cont input {
     display: inline-block;
-
-  width: 150px;
-  height: 25px;
-  margin: 0;
-  transform-origin: 75px 75px;
-  transform: rotate(-90deg);
+    writing-mode: vertical-lr;
+    direction: rtl;
+    appearance: slider-vertical;
+    vertical-align: bottom;
+    margin: 0;
 }
-.dblabel {
-    position: relative;
-    top: 85%;
+.eq-freq-label {
+    user-select: none;
+    cursor:context-menu;
+}
+.eq-db-label {
+    user-select: none;
+}
+.eq-settings {
+    margin-top: 6px;
+}
+.eq-band-editor {
+    padding: 4px;
+    border-radius: 8px;
+    border: 0px;
+}
+.eq-band-editor * {
+    padding-top: 4px;
+}
+.eq-band-editor > hr {
+    padding: 0;
+    margin: 0;
+}
+.eq-band-editor input, button {
+    border: 1px solid #ddd;
+}
+.eqed-title {
+    padding: 0px;
+    margin: 0px;
+    display: block;
+    width: 100%;
+    text-align: center;
+}
+.eqed-button-cont {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: flex-end;
+}
+#eqedBtnCancel {
+    margin-right: 10px;
+}
+#eqedInputFreq {
+    width: 50px;
+}
+#eqedInputQ {
+    width: 40px;
 }
 </style>
 </head>
-<body>
-    <datalist id="tickmarks">
-    </datalist>
-    <div id=equalizer>
-    </div>
+<body id="body">
 <script>
 function byId(id) {
     return document.getElementById(id);
 }
 function niceFreq(freq) {
-    return (freq < 1000) ? freq : (freq / 1000).toFixed(0) + 'K';
+    return (freq < 1000) ? freq : (freq / 1000).toFixed(0) + 'k';
 }
 
 function htmlToElement(html) {
@@ -44,93 +89,466 @@ function htmlToElement(html) {
     return template.content.firstChild;
 }
 class Slider {
-    constructor(parent, band, slider, label) {
+    constructor(parent, band) {
         this.parent = parent;
         this.band = band;
-        this.slider = slider;
-        this.label = label;
-        slider.addEventListener('input', this.onSlide.bind(this));
+        this.slider = byId('eqSlider' + band);
+        this.dbLabel = byId('eqDbLabel' + band);
+        this.freqLabel = byId('eqFreqLabel' + band)
+        this.slider.addEventListener('input', this.onSlide);
     }
-
-    onSlide = function(event) {
-        let db = this.label.innerHTML = this.slider.value;
-        if (this.dirty) {
-            return;
-        }
-        this.dirty = Date.now();
-        this.parent.onSlide();
+    onSlide = (event) => {
+        let db = this.dbLabel.innerHTML = this.slider.value;
+        this.parent.onDbSlider(this, parseInt(db));
     }
-
     load = function(db) {
         this.slider.value = db;
-        this.label.innerHTML = db;
+        this.dbLabel.innerHTML = db;
+    }
+    updateBandParams() {
+        const bq = this.parent.biquads[this.band];
+        this.freqLabel.innerHTML = bq.freq;
+        const hint = "Q = " + bq.Q;
+        this.slider.parentNode.setAttribute("title", hint);
+        //this.dbLabel.setAttribute("title", hint);
     }
 }
 
-class Equalizer {
-    static kThrottleInterval = 100;
-    constructor(cont, bands) {
-        this.generateTickMarks();
-        this.sliders = [];
-        for (let i = 0; i < bands.length; i++) {
-            cont.appendChild(htmlToElement(
-                `<div class="eq-slider-cont" title="bandwidth: ${bands[i][1]/10} octaves">${niceFreq(bands[i][0])
-                }<input type="range" id="eqSlider${i}" band="${i
-                }" min="-40" max="40" value="0" step="1" list="tickmarks"><div class="dblabel" id="dbLabel${i
-                }">db</div></div>`));
-                this.sliders.push(new Slider(this, i, byId('eqSlider' + i), byId('dbLabel' + i)));
-        }
-        this.load(bands);
+const kPeaking = 1;
+const kLowShelf = 2;
+const kHighShelf = 3;
+
+class Biquad
+{
+    type;
+    freq;
+    Q;
+    sampleRate;
+    gain;
+    a1;
+    a2;
+    b0;
+    b1;
+    b2;
+    //delay line, for Direct Form 2
+    delay0 = 0.0;
+    delay1 = 0.0;
+    constructor(type, freq, Q, sRate, audioCtx) {
+        this.type = type;
+        this.freq = freq;
+        this.Q = Q;
+        this.sampleRate = sRate;
+        this.dbGain = 0;
+        const refType = (type === kPeaking) ? "peaking" : ((type === kLowShelf ? "lowshelf" : "highshelf"));
+        this.refNode = new BiquadFilterNode(audioCtx, {type: refType, Q: Q, frequency: freq, gain: 0});
     }
-    generateTickMarks() {
-        let cont = byId("tickmarks");
-        for (let i = -40; i <= 40; i += 1) {
-            let item = document.createElement("option");
-            item.setAttribute("value", i);
-            cont.appendChild(item);
+    /** Reconfigure the filter, usually used for adjusting the gain during operation */
+    recalc() {
+        const dbGain = (this.type == kPeaking) ? this.dbGain : this.dbGain * 2;
+        this.refNode.gain.value = dbGain;
+        let A = Math.pow(10.0, dbGain / 40.0);
+        const w0 = 2 * Math.PI * this.freq / this.sampleRate;
+        const sn = Math.sin(w0);
+        const cs = Math.cos(w0);
+        const alpha = sn / (2 * this.Q);
+        if (this.type === kPeaking) {
+            let a0inv = 1 / (1 + alpha / A);
+            this.a1 = (-2 * cs) * a0inv;
+            this.a2 = (1 - alpha / A) * a0inv;
+            this.b0 = (1 + alpha * A) * a0inv;
+            this.b1 = (-2 * cs) * a0inv;
+            this.b2 = (1 - alpha * A) * a0inv;
+            return;
+        }
+        const appm = (A + 1) + (A - 1) * cs;
+        const apmm = (A + 1) - (A - 1) * cs;
+        const ampp = (A - 1) + (A + 1) * cs;
+        const ammp = (A - 1) - (A + 1)*cs;
+        const betasn = Math.sqrt(A) * sn / this.Q;
+        // When Q = 0.707 (= 1/sqrt(2) = 1 octave), betasn transforms to sqrt(2 * A) * sn, i.e. beta * sn
+        switch(this.type) {
+            case kLowShelf: {
+                let a0inv = 1 / (appm + betasn);
+                this.a1 = -2 * ampp * a0inv;
+                this.a2 = (appm - betasn) * a0inv;
+                this.b0 = A * (apmm + betasn) * a0inv;
+                this.b1 = 2 * A * ammp * a0inv;
+                this.b2 = A * (apmm - betasn) * a0inv;
+            }
+            break;
+            case kHighShelf: {
+                const a0inv = 1 / (apmm + betasn);
+                this.a1 = 2 * ammp * a0inv;
+                this.a2 = (apmm - betasn) * a0inv;
+                this.b0 = A * (appm + betasn) * a0inv;
+                this.b1 = -2 * A * ampp * a0inv;
+                this.b2 = A * (appm - betasn) * a0inv;
+                break;
+            }
+            default:
+                this.a1 = this.a2 = this.b0 = this.b1 = this.b2 = 1;
+                break;
         }
     }
-    load(bands) {
-        for (let i = 0; i < bands.length; i++) {
-            let slider = this.sliders[i].load(bands[i][2]);
+    setGain(dbGain) {
+        this.dbGain = dbGain;
+        this.recalc();
+    }
+    setQ(q, noRecalc) {
+        this.Q = q;
+        this.refNode.Q.value = this.Q;
+        if (!noRecalc) {
+            this.recalc();
         }
     }
-    onSlide() {
-        if (!this.throttleTimer) {
-            this.throttleTimer = setInterval(this.onThrottleTimer.bind(this), Equalizer.kThrottleInterval);
+    setFreq(freq, noRecalc) {
+        this.freq = freq;
+        this.refNode.frequency.value = freq;
+        if (!noRecalc) {
+            this.recalc();
         }
     }
-    onThrottleTimer() {
-        let now = Date.now();
-        let commit = "";
-        let remain = false;
-        for (let slider of this.sliders) {
-            if (slider.dirty) {
-                if(now - slider.dirty >= Equalizer.kThrottleInterval) {
-                    if (commit) {
-                        commit += ';';
+    refFreqResponse(freq) {
+        const freqs = new Float32Array(1);
+        freqs[0] = freq;
+        const mag = new Float32Array(1);
+        const phase = new Float32Array(1);
+        this.refNode.getFrequencyResponse(freqs, mag, phase);
+        return mag[0];
+    }
+    calcFreqResponse(freq) {
+        const a1 = this.a1;
+        const a2 = this.a2;
+        const b0 = this.b0;
+        const b1 = this.b1;
+        const b2 = this.b2;
+        const halfW = Math.PI * freq / this.sampleRate;
+        const phi = Math.sin(halfW) ** 2;
+        return Math.sqrt(((b0+b1+b2)**2 - 4*(b0*b1 + 4*b0*b2 + b1*b2)*phi + 16*b0*b2*phi*phi) /
+               ((1+a1+a2)**2 - 4*(a1 + 4*a2 + a1*a2)*phi + 16*a2*phi*phi));
+    }
+}
+class RequestThrottle {
+    constructor(commitTimeout = 100) {
+        this.pending = new Map;
+        this.commitTimeout = commitTimeout;
+    }
+    request(id, url) {
+        let item = this.pending.get(id);
+        if (item) {
+            item[0] = Date.now();
+            item[1] = url;
+        }
+        else {
+            this.pending.set(id, [Date.now(), url]);
+            this.startTimer();
+        }
+    }
+    startTimer() {
+        if (!this.timer) {
+            this.timer = setInterval(this.onTimer, this.commitTimeout);
+        }
+    }
+    stopTimer() {
+        if (this.timer) {
+            clearInterval(this.timer);
+            delete this.timer;
+        }
+    }
+    onTimer = async () => {
+        const now = Date.now();
+        for (let [key, item] of this.pending) {
+            if (item[0] <= now) {
+                this.pending.delete(key);
+                for (let i = 0; i < 2; i++) {
+                    try {
+                        await fetch(item[1]);
+                        break;
                     }
-                    commit += slider.band + '=' + slider.slider.value;
-                    delete slider.dirty;
-                } else {
-                    remain = true;
+                    catch(ex) {}
                 }
             }
         }
-        if (!commit) {
-            return;
+        if (this.pending.size === 0) {
+            this.stopTimer();
         }
-        fetch('/eqset?vals=' + commit);
-        if (!remain) {
-            clearInterval(this.throttleTimer);
-            delete this.throttleTimer;
+    }
+};
+
+class Equalizer {
+    constructor(parent, data) {
+        const bands = data.b;
+        this.reqThrottle = new RequestThrottle(100);
+        const cont = this.cont = document.createElement("div");
+        cont.classList.add("eq-container");
+        const sliders = this.sliderCont = document.createElement("div");
+        sliders.classList.add("eq-sliders");
+        cont.appendChild(sliders);
+        const canv = htmlToElement(`<canvas id=eqGraph width=${(bands.length + 1) * 28} height=150 class=eq-graph-canvas></canvas>`);
+        cont.appendChild(canv);
+        cont.appendChild(htmlToElement(
+            '<div class=eq-settings id=eqSettings><input type=checkbox id=espChk></input>ESP eq</div>'
+        ));
+        this.canvCtx = canv.getContext("2d");
+        this.logFunc = Math.log2;
+        this.drawScaleX = canv.width / this.logFunc(20000);
+        this.halfY = canv.height / 2 - 8;
+        this.drawScaleY = (this.halfY - 4) / 40;
+        parent.appendChild(cont);
+        this.generateTickMarks();
+        this.sliders = [];
+        this.biquads = [];
+        this.audioCtx = new AudioContext({sampleRate: 44100});
+        const last = bands.length - 1;
+        for (let i = 0; i <= last; i++) {
+            const band = bands[i];
+            const Q = band[1] / 1000;
+            this.sliderCont.appendChild(htmlToElement(
+                `<div class="eq-slider-cont" title="Q: ${Q
+                }"><div id=eqFreqLabel${i} class=eq-freq-label band=${i}>${niceFreq(band[0])
+                }</div><input type="range" orient="vertical" id="eqSlider${i}" band="${i
+                }" min="-40" max="40" value="0" step="1" list="eqTickmarks"><div class="eq-db-label" id="eqDbLabel${i
+                }">db</div></div>`)
+            );
+            const slider = new Slider(this, i);
+            this.sliders.push(slider);
+            slider.load(band[2]);
+            const bqType = (i === 0) ? kLowShelf : ((i === last) ? kHighShelf : kPeaking);
+            const biquad = new Biquad(bqType, band[0], Q, 44100, this.audioCtx);
+            this.biquads.push(biquad);
+            biquad.setGain(band[2]); // calls recalc()
         }
+        this.appendQslider("bQ", "band Q", bands[1][1] / 1000, this.onInnerQslider);
+        //this.appendQslider("sQ", "outer slope Q", bands[0][1] / 1000, this.onOuterQslider);
+        byId("espChk").onclick = this.onEspChk;
+        this.setEspMode(data.t === 1, true);
+        const freqLabels = this.cont.getElementsByClassName("eq-freq-label");
+        for (let label of freqLabels) {
+            label.onclick = this.onFreqLabelClick;
+        }
+        this.plotFreqResponse();
+    }
+    appendQslider(id, name, Q, handler) {
+        const elem = htmlToElement(
+            `<div class="eq-slider-cont" title=${name}: ${Q
+            }">${id}<input type="range" id="eqSlider_${id}" min=0.1 max=10 value=${Q
+            } step=0.1><div class="dblabel" id="qdisp_${id}">${Q.toFixed(1)}</div></div>`);
+        this.sliderCont.appendChild(elem);
+        elem.oninput = (event) => {
+            const slider = event.target;
+            handler(parseFloat(slider.value));
+            byId(`qdisp_${id}`).innerHTML = slider.value;
+        };
+        return elem;
+    }
+    generateTickMarks() {
+        let ticks = document.createElement("datalist");
+        ticks.setAttribute("id", "eqTickmarks");
+        for (let i = -40; i <= 40; i += 10) {
+            let item = document.createElement("option");
+            item.setAttribute("value", i);
+            ticks.appendChild(item);
+        }
+        this.cont.appendChild(ticks);
+    }
+    onFreqLabelClick = (event) => {
+        const band = Number(event.target.getAttribute("band"));
+        this.showBandEditDlg(band)
+        .then(() => {
+            this.sliders[band].updateBandParams();
+            this.plotFreqResponse();
+        });
+    }
+    onEspChk = async (event) => {
+        const enable = byId("espChk").checked;
+        await fetch("/eqset?esp=" + (enable ? "1" : "0"));
+        this.setEspMode(enable);
+    }
+    setEspMode(enable, updateChk) {
+        if (enable) {
+            byId("eqSlider_bQ").setAttribute("disabled", "1");
+        }
+        else {
+            byId("eqSlider_bQ").removeAttribute("disabled");
+        }
+        if (updateChk) {
+            byId("espChk").checked = enable;
+        }
+    }
+    onDbSlider = (slider, db) => {
+        this.biquads[slider.band].setGain(db);
+        this.plotFreqResponse();
+        this.reqThrottle.request(slider.band, `/eqset?vals=${slider.band}=${db}`);
+    }
+    onInnerQslider = (Q) => {
+        for (const bq of this.biquads) {
+            if (bq.type === kPeaking) {
+                bq.setQ(Q);
+            }
+        }
+        this.plotFreqResponse();
+        this.reqThrottle.request("qpk", `/eqset?qpkf=${Math.round(Q*1000)}&rst=0`);
+    }
+    calcFreqResponse(freq) {
+        let val = 1.0;
+        for (let bq of this.biquads) {
+            val *= bq.calcFreqResponse(freq);
+        }
+        return 20 * Math.log10(val);
+    }
+    refFreqResponse(freq) {
+        let val = 1.0;
+        for (let bq of this.biquads) {
+            val *= bq.refFreqResponse(freq);
+        }
+        return 20 * Math.log10(val);
+    }
+    xformY(db) {
+        return this.halfY - db * this.drawScaleY;
+    }
+    plotFreqResponse() {
+        const ctx = this.canvCtx;
+        const scaleX = this.drawScaleX;
+        const scaleY = this.drawScaleY;
+        const height = ctx.canvas.height;
+        const width = ctx.canvas.width;
+        let lastXTick = -20;
+        ctx.fillStyle = "white";
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        ctx.strokeStyle = "#bbb";
+        let y = this.xformY(0);
+        line(ctx, 0, y, width-1, y);
+        ctx.strokeStyle = "lightgrey";
+        y = this.xformY(40);
+        line(ctx, 0, y, width-1, y);
+        y = this.xformY(30);
+        line(ctx, 0, y, width-1, y);
+        y = this.xformY(20);
+        line(ctx, 0, y, width-1, y);
+        y = this.xformY(10);
+        line(ctx, 0, y, width-1, y);
+        y = this.xformY(-10);
+        line(ctx, 0, y, width-1, y);
+        y = this.xformY(-20);
+        line(ctx, 0, y, width-1, y);
+        y = this.xformY(-30);
+        line(ctx, 0, y, width-1, y);
+        y = this.xformY(-40);
+        line(ctx, 0, y, width-1, y);
+        ctx.fillStyle = "black";
+        let txtWidth = 12;
+        ctx.font = "12px monospace";
+        let prevX = 0;
+        let prevRefY = this.xformY(this.refFreqResponse(20));
+        let prevCalcY = this.xformY(this.calcFreqResponse(20));
+        for (let x = 0; x < width; x++) {
+            const freq = Math.pow(2, x / scaleX) + 19;
+            const refY = this.xformY(this.refFreqResponse(freq));
+            const calcY = this.xformY(this.calcFreqResponse(freq));
+            ctx.strokeStyle = "skyblue";
+            line(ctx, prevX, prevRefY, x, refY);
+            ctx.strokeStyle = "green";
+            line(ctx, prevX, prevCalcY, x, calcY);
+            prevRefY = refY;
+            prevCalcY = calcY;
+            prevX = x;
+            //console.log(`x=${x}, freq=${freq}, ref=${dbRef}, calc=${dbCalc}`);
+            if (x - lastXTick > txtWidth) {
+                lastXTick = x;
+                const txt = niceFreq(Math.round(freq));
+                txtWidth = ctx.measureText(txt).width;
+                ctx.fillRect(x, height-20, 1, 4);
+                let txtX = x-txtWidth / 2;
+                if (txtX < 0) {
+                    txtX = 0;
+                }
+                else if (txtX + txtWidth > width) {
+                    txtX = width - txtWidth;
+                }
+                ctx.fillText(txt, txtX, height-1, 30);
+                txtWidth += 10;
+            }
+        }
+    }
+    showBandEditDlg(band) {
+        const biquad = this.biquads[band];
+        if (!biquad) {
+            return Promise.reject();
+        }
+        let cbResolve, cbReject;
+        const pms = new Promise((resolve, reject) => {
+            cbResolve = resolve;
+            cbReject = reject;
+        });
+        const dlg = htmlToElement(
+            `<dialog class=eq-band-editor><span class=eqed-title>Editing ${niceFreq(biquad.freq)}Hz band</span><hr />
+             <div>
+                Frequency: <input id=eqedInputFreq value=${biquad.freq} width=25 autofocus></input>
+                Q: <input id=eqedInputQ value=${biquad.Q}></input>
+             </div>
+             <div class=eqed-button-cont><button id=eqedBtnCancel>Cancel</button><button id=eqedBtnOk>Ok</button></div>
+             <span id=eqedStatus></span></dialog>`
+        );
+        this.cont.appendChild(dlg);
+        const okHandler = async () => {
+            const freq = Number((byId("eqedInputFreq").value));
+            if (isNaN(freq) || freq < 0 || freq > 40000) {
+                byId("eqedStatus").innerHTML = "Invalid frequency";
+                return;
+            }
+            const Q = Number(byId("eqedInputQ").value);
+            if(isNaN(Q) || Q < 0) {
+                byId("eqedStatus").innerHTML = "Invalid Q value";
+                return;
+            }
+            byId("eqedStatus").innerHTML = "";
+            try {
+                await fetch(`/eqset?cfgband=${band}&freq=${freq}&q=${Math.round(Q*1000)}`);
+            }
+            catch(ex) {
+                byId("eqedStatus").innerHTML = "Error sending request";
+                return;
+            }
+            dlg.close();
+            this.cont.removeChild(dlg);
+            const bq = this.biquads[band];
+            bq.setFreq(freq, true);
+            bq.setQ(Q, true);
+            bq.recalc();
+            cbResolve();
+        }
+        byId("eqedBtnOk").onclick = okHandler;
+        dlg.onkeypress = (event) => {
+            if (event.which === 13) {
+                okHandler();
+            }
+        };
+        byId("eqedBtnCancel").onclick = async () => {
+            dlg.close();
+            this.cont.removeChild(dlg);
+            cbReject();
+        }
+        dlg.showModal();
+        return pms;
     }
 }
 
+function line(ctx, x1, y1, x2, y2) {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.closePath();
+}
+
+var gEq = null;
 async function init() {
     var data = await(await fetch("/eqget")).json();
-    let eq = new Equalizer(byId("equalizer"), data.b);
+    /*
+    const data = {b:[[32, 1000, 0], [64, 707, 0], [125, 707, 0], [250, 707, 0], [500, 707, 0], [1000, 707, 0], [2000, 707, 0],
+        [4000, 707, 0], [8000, 707, 0], [15500, 1000, 0]]};
+    */
+    gEq = new Equalizer(byId("body"), data);
 }
 window.onload = init;
 </script>
