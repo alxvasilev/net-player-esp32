@@ -22,7 +22,7 @@ public:
     StreamId mLastUncorkStreamId = 0;
 protected:
     enum {
-        kTaskPriority = 20, kDefaultBps = 16, kDefaultSamplerate = 44100,
+        kTaskPriority = 22, kDefaultBps = 16, kDefaultSamplerate = 44100,
         kFadeInMs = 400, kFadeOutMs = 50, kTicksBeforeDacUnmute = 10
     };
     enum: uint8_t { kCommandPrefillComplete = AudioNodeWithTask::kCommandLast + 1 };

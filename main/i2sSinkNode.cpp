@@ -116,11 +116,11 @@ void I2sOutputNode::nodeThreadFunc()
 #endif
             auto evt = mPrev->pullData(dpr);
 #ifdef DEBUG_TIMING
-            auto elapsed = t.msElapsed();
+            auto elapsed = t.usElapsed();
 #if DEBUG_TIMING < 2
-            if (elapsed >= 15) {
+            if (elapsed >= 12000) {
 #endif
-                ESP_LOGI(mTag, "pullData took %d ms", elapsed);
+                ESP_LOGI(mTag, "pullData took %d ms", (int)((elapsed + 500) / 1000));
 #if DEBUG_TIMING < 2
             }
 #endif

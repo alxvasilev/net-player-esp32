@@ -928,11 +928,13 @@ esp_err_t AudioPlayer::nvsSetParamUrlHandler(httpd_req_t* req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No 'type' param specified");
         return ESP_FAIL;
     }
-    auto err = self->mNvsHandle.writeValueFromString(key.str, type.str, strVal.str);
+    bool writeDirect = !params.intVal("delay", 0);
+    auto err = self->mNvsHandle.writeValueFromString(key.str, type.str, strVal.str, writeDirect);
     if (err == ESP_OK) {
         httpd_resp_sendstr(req, "ok");
         return ESP_OK;
-    } else {
+    }
+    else {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, esp_err_to_name(err));
         return ESP_FAIL;
     }
