@@ -410,7 +410,7 @@ HttpNode::~HttpNode()
 }
 
 HttpNode::HttpNode(IAudioPipeline& parent)
-    : AudioNodeWithTask(parent, "node-http", true, kStackSize, 15, 0), mIcyParser(mMutex)
+    : AudioNodeWithTask(parent, "node-http", true, kStackSize, 15, 1), mIcyParser(mMutex)
 {
 }
 

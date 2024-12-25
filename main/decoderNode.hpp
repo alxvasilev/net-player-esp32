@@ -40,7 +40,7 @@ protected:
     void deleteDecoder();
 public:
     enum { kEventCodecChange = AudioNode::kEventLast + 1 };
-    enum { kStackSize = 10000, kPrio = 19, kCore = 1 };
+    enum { kStackSize = 10000, kPrio = 20, kCore = 0 };
     DecoderNode(IAudioPipeline& parent): AudioNodeWithTask(parent, "decoder", true, kStackSize, kPrio, kCore){}
     virtual Type type() const { return kTypeDecoder; }
     virtual void nodeThreadFunc();
