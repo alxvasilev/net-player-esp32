@@ -18,6 +18,11 @@
 #include "utils.hpp"
 #include "task.hpp"
 #include <atomic>
+#ifdef ALT_TASK_PINNING
+    #define ALT_TASK_PIN(deflt, alt) alt
+#else
+    #define ALT_TASK_PIN(deflt, alt) deflt
+#endif
 
 class AudioNode;
 class IInputAudioNode;

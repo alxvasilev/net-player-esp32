@@ -28,7 +28,8 @@ public:
     mutable Mutex mMutex;
 protected:
     enum {
-        kHttpRecvTimeoutMs = 10000, kHttpClientBufSize = 1024, kRingQueueLen = 256, kStackSize = 5120
+        kHttpRecvTimeoutMs = 10000, kHttpClientBufSize = 1024, kRingQueueLen = 256, kStackSize = 5120,
+        kCpuCore = 1
     };
     enum: uint8_t { kCommandSetUrl = AudioNodeWithTask::kCommandLast + 1 };
     // Read mode dictates how the pullData() caller behaves. Since it may
