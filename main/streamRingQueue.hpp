@@ -10,6 +10,7 @@ template<int N>
 class StreamRingQueue: protected RingQueue<StreamPacket*, N>, public Waitable {
 protected:
     typedef RingQueue<StreamPacket*, N> Base;
+    enum { kFlagHasData = kFlagLast << 1 };
     int mDataSize = 0;
 public:
     mutable Mutex mMutex;
@@ -59,6 +60,9 @@ public:
         }
         return result;
     }
+    int8_t waitForData(int timeout) {
+        return waitFor(kFlagHasData, timeout);
+    }
     /** Returns the first data packet found in the queue. If canBePrecededBy is specified, and any other
      *  than that type of packet precedes the data packet, null is returned. This is useful to peek the
      *  next data packet, but only if it doesn't belong to a new stream.
@@ -87,7 +91,7 @@ public:
         MutexLocker locker(mMutex);
         while (Base::empty()) {
             MutexUnlocker unlocker(mMutex);
-            int ret = waitForData(-1);
+            int ret = waitForItems(-1);
             if (ret < 0) {
                 return nullptr;
             }
@@ -109,15 +113,20 @@ public:
         bool ok = Base::emplaceBack(item);
         assert(ok);
 
+        EventBits_t bitsToSet = kFlagWriteOp | kFlagHasItems;
         if (item->type == kEvtData) {
+            auto prevData = mDataSize;
             mDataSize += static_cast<DataPacket*>(item)->dataLen;
+            if ((prevData == 0) && (mDataSize > 0)) {
+                bitsToSet |= kFlagHasData;
+            }
         }
         EventBits_t bitsToClear = kFlagIsEmpty;
         if (Base::full()) {
             bitsToClear |= kFlagHasSpace;
         }
         mEvents.clearBits(bitsToClear);
-        mEvents.setBits(kFlagWriteOp | kFlagHasData);
+        mEvents.setBits(bitsToSet);
         return true;
     }
     StreamPacket* front() {
@@ -137,14 +146,24 @@ public:
         auto item = Base::front();
         assert(item);
         Base::popFront();
+        EventBits_t bitsToClear = 0;
+        EventBits_t bitsToSet = kFlagReadOp | kFlagHasSpace;
         if ((*item)->type == kEvtData) {
+            auto prevData = mDataSize;
             mDataSize -= static_cast<DataPacket*>(*item)->dataLen;
+            if ((mDataSize == 0) && (prevData > 0)) {
+                bitsToClear |= kFlagHasData;
+            }
         }
         if (Base::empty()) {
-            mEvents.clearBits(kFlagHasData);
-            mEvents.setBits(kFlagIsEmpty);
+            assert(mDataSize == 0);
+            bitsToClear |= kFlagHasItems;
+            bitsToSet |= kFlagIsEmpty;
         }
-        mEvents.setBits(kFlagReadOp|kFlagHasSpace);
+        mEvents.setBits(bitsToSet);
+        if (bitsToClear) {
+            mEvents.clearBits(bitsToClear);
+        }
         return *item;
     }
     void clear() {
