@@ -17,6 +17,7 @@
 #include "pb.h"                  // for pb_bytes_array_t, PB_BYTES_ARRAY_T_A...
 #include "pb_decode.h"           // for pb_release
 #include "protobuf/spirc.pb.h"
+#include "TrackQueue.h"
 
 using namespace cspot;
 
@@ -26,8 +27,11 @@ PlaybackState::PlaybackState(cspot::Context& ctx)
   remoteFrame = {};
 
   // Prepare callbacks for decoding of remote frame track data
-  remoteFrame.state.track.funcs.decode = &TrackReference::pbDecodeTrackList;
-  remoteFrame.state.track.arg = &remoteTracks;
+  remoteFrame.state.track.funcs.decode = &PlaybackState::pbDecodeTrackRef;
+  remoteFrame.state.track.arg = this;
+
+  innerFrame.state.track.funcs.encode = &PlaybackState::pbEncodeTrackList;
+  innerFrame.state.track.arg = this;
 
   innerFrame.ident = strdup(mCtx.mConfig.deviceId.c_str());
   innerFrame.protocol_version = strdup(protocolVersion);
@@ -110,10 +114,10 @@ void PlaybackState::setPlaybackState(const PlaybackState::State state) {
   }
 }
 
-void PlaybackState::syncWithRemote() {
+void PlaybackState::syncWithRemote()
+{
   innerFrame.state.context_uri = (char*)realloc(
       innerFrame.state.context_uri, strlen(remoteFrame.state.context_uri) + 1);
-
   strcpy(innerFrame.state.context_uri, remoteFrame.state.context_uri);
 
   innerFrame.state.has_playing_track_index = true;
@@ -145,17 +149,22 @@ void PlaybackState::setVolume(uint16_t volume)
     mCtx.mConfig.volume = volume;
 }
 
-bool PlaybackState::decodeRemoteFrame(std::vector<uint8_t>& data) {
-  pb_release(Frame_fields, &remoteFrame);
-
-  remoteTracks.clear();
-
-  pbDecode(remoteFrame, Frame_fields, data);
-
-  return true;
+bool PlaybackState::decodeRemoteFrame(std::vector<uint8_t>& data)
+{
+    pb_release(Frame_fields, &remoteFrame);
+    hasTrackDecoded = false;
+    pbDecode(remoteFrame, Frame_fields, data);
+    // if message type is track update, but it didn't contain any tracks, clear them
+    if (!hasTrackDecoded &&
+       (remoteFrame.typ == MessageType_kMessageTypeLoad || remoteFrame.typ == MessageType_kMessageTypeReplace)) {
+        remoteTracks.clear();
+        rawRemoteTracks.clear();
+    }
+    return true;
 }
 
-std::vector<uint8_t> PlaybackState::encodeCurrentFrame(MessageType typ) {
+std::vector<uint8_t> PlaybackState::encodeCurrentFrame(MessageType typ)
+{
   // Prepare current frame info
   innerFrame.version = 1;
   innerFrame.seq_nr = this->seqNum;
@@ -170,7 +179,7 @@ std::vector<uint8_t> PlaybackState::encodeCurrentFrame(MessageType typ) {
   innerFrame.has_state_update_id = true;
 
   this->seqNum += 1;
-
+  printf("==============encode frame\n");
   return pbEncode(Frame_fields, &innerFrame);
 }
 
@@ -200,4 +209,103 @@ void PlaybackState::addCapability(CapabilityType typ, int intValue,
       .stringValue_count = stringValue.size();
 
   this->capabilityIndex += 1;
+}
+
+bool PlaybackState::pbDecodeTrackRef(pb_istream_t* stream, const pb_field_t* field, void** arg)
+{
+    auto& self = *static_cast<PlaybackState*>(*arg);
+    auto& trackQueue = self.remoteTracks;
+    auto& rawTracks = self.rawRemoteTracks;
+    if (!self.hasTrackDecoded) {
+        trackQueue.clear();
+        rawTracks.clear();
+        self.hasTrackDecoded = true;
+    }
+    // Push a new reference
+    trackQueue.emplace_back();
+    auto& track = trackQueue.back();
+    // save raw track data
+    auto& raw = rawTracks.add(stream->bytes_left);
+    memcpy(raw.data, stream->state, stream->bytes_left);
+    pb_wire_type_t wire_type;
+    pb_istream_t substream;
+    uint32_t tag;
+    std::string uri;
+
+    for(;;) {
+        bool eof;
+        if (!pb_decode_tag(stream, &wire_type, &tag, &eof)) { // decoding failed
+            if (eof) { // EOF
+                break;
+            }
+            return false; // error
+        }
+        switch (tag) {
+            case TrackRef_uri_tag:
+            case TrackRef_gid_tag: {
+            // Make substream
+                if (!pb_make_string_substream(stream, &substream)) {
+                    return false;
+                }
+                uint8_t* destBuffer = nullptr;
+                // Handle GID
+                if (tag == TrackRef_gid_tag) {
+                    track.gid.resize(substream.bytes_left);
+                    destBuffer = track.gid.data();
+                }
+                // uri
+                else if (tag == TrackRef_uri_tag) {
+                    uri.resize(substream.bytes_left);
+                    destBuffer = reinterpret_cast<uint8_t*>(uri.data());
+                }
+                if (!pb_read(&substream, destBuffer, substream.bytes_left)) {
+                    return false;
+                }
+                // Close substream
+                if (!pb_close_string_substream(stream, &substream)) {
+                    return false;
+                }
+                break;
+            }
+            default:
+                // Field not known, skip
+                pb_skip_field(stream, wire_type);
+                break;
+        }
+    }
+    // Fill in GID when only URI is provided
+    track.decodeURI(uri);
+    printf("===========decoded: %zu\n", trackQueue.size());
+    return true;
+}
+bool PlaybackState::pbEncodeTrackList(pb_ostream_t* stream, const pb_field_t* field, void* const* arg)
+{
+    auto& self = *static_cast<PlaybackState*>(*arg);
+    auto& rawTracks = self.rawRemoteTracks;
+    int cnt = 0;
+    for (auto rawTrack = rawTracks.head; rawTrack; rawTrack = rawTrack->next) {
+        if (!pb_encode_tag_for_field(stream, field)) {
+            printf("pb_encode_tag_for_field failed\n");
+            return false;
+        }
+        bool ok;
+        if (rawTrack->size < 128) {
+            pb_byte_t size = rawTrack->size; // platform endian-ness agnostic
+            ok = pb_write(stream, &size, 1);
+        }
+        else {
+            ok = pb_encode_varint(stream, rawTrack->size);
+        }
+        if (!ok) {
+            printf("pb_write len failed\n");
+            return false;
+        }
+        if (!pb_write(stream, rawTrack->data, rawTrack->size)) {
+            printf("pb_write failed\n");
+            return false;
+        }
+        cnt++;
+    }
+    printf("=========encoded tracklist: %d\n", cnt);
+    return true;
 }

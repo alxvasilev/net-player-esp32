@@ -7,6 +7,7 @@
 
 #include "TrackReference.h"
 #include "protobuf/spirc.pb.h"  // for Frame, TrackRef, CapabilityType, Mess...
+#include "TrackQueue.h"
 
 namespace cspot {
 struct Context;
@@ -17,17 +18,50 @@ class PlaybackState {
   uint32_t seqNum = 0;
   uint8_t capabilityIndex = 0;
   std::vector<uint8_t> frameData;
-
   void addCapability(
       CapabilityType typ, int intValue = -1,
       std::vector<std::string> stringsValue = std::vector<std::string>());
-
+  // Encodes list of track references into a pb structure, used by nanopb
+  static bool pbEncodeTrackList(pb_ostream_t* stream, const pb_field_t* field, void* const* arg);
+  static bool pbDecodeTrackRef(pb_istream_t* stream, const pb_field_t* field, void** arg);
+  struct Buf {
+      Buf* next;
+      int16_t size;
+      uint8_t data[];
+  };
+  struct BufList {
+      Buf* head = nullptr;
+      Buf* tail = nullptr;
+      Buf& add(int16_t size) {
+          auto buf = (Buf*)malloc(sizeof(Buf) + size);
+          buf->size = size;
+          buf->next = nullptr;
+          if (tail) {
+              tail->next = buf;
+          }
+          else { // empty
+              myassert(!head);
+              head = buf;
+          }
+          tail = buf;
+          return *buf;
+      }
+      void clear() {
+          for(Buf* item = head; item;) {
+              auto toDel = item;
+              item = item->next;
+              free(toDel);
+          }
+          head = tail = nullptr;
+      }
+      ~BufList() { clear(); }
+ };
  public:
   Frame innerFrame;
   Frame remoteFrame;
-
-  std::vector<TrackReference> remoteTracks;
-
+  std::vector<TrackQueueItem> remoteTracks;
+  BufList rawRemoteTracks;
+  bool hasTrackDecoded = false; // used to determine when to clear remoteTracks and rawRemoteTracks while parsing
   enum class State { Playing, Stopped, Loading, Paused };
 
   /**

@@ -36,7 +36,7 @@ protected:
     cspot::SpircHandler mSpirc;
     StreamRingQueue<100> mRingBuf;
     HttpClient mHttp;
-    std::shared_ptr<cspot::TrackItem> mCurrentTrack;
+    cspot::TrackInfo::SharedPtr mCurrentTrack;
     Crypto mCrypto;
     int32_t mFileSize = 0;
     int32_t mRecvPos = 0;

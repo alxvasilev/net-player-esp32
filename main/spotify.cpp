@@ -135,7 +135,7 @@ bool SpotifyNode::startCurrentTrack(bool flush, uint32_t tsSeek)
     mRecvPos = 0;
     mTsSeek = tsSeek;
     mCurrentTrack = mSpirc.mTrackQueue.currentTrack();
-    if (!mCurrentTrack.get()) {
+    if (!mCurrentTrack) {
         return false;
     }
     if (flush) {
@@ -231,13 +231,13 @@ void SpotifyNode::nodeThreadFunc()
     }
     for (;;) {
         try {
-            while (mCmdQueue.numMessages() || !mCurrentTrack.get() || (mState == kStateStopped)) {
+            while (mCmdQueue.numMessages() || !mCurrentTrack || (mState == kStateStopped)) {
                 processMessages();
             }
             if (mState == kStateTerminated) {
                 return;
             }
-            myassert(mCurrentTrack.get());
+            myassert(mCurrentTrack);
             myassert(mState == kStateRunning);
             mRingBuf.clearStopSignal();
             if (!mHttp.connected()) {
@@ -259,7 +259,7 @@ void SpotifyNode::nodeThreadFunc()
 }
 void SpotifyNode::connect()
 {
-    myassert(mCurrentTrack.get() && !mCurrentTrack->cdnUrl.empty());
+    myassert(mCurrentTrack && !mCurrentTrack->cdnUrl.empty());
     std::unique_ptr<HttpClient::Headers> hdrs;
     if (mRecvPos) {
         hdrs.reset(new HttpClient::Headers({{"Range", (std::string("bytes=") + std::to_string(mRecvPos) + '-').c_str()}}));

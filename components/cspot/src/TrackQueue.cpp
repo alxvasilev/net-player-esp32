@@ -71,76 +71,79 @@ bool canPlayTrack(Track& trackInfo, int altIndex, const char* country) {
 }
 }  // namespace TrackDataUtils
 
-void TrackInfo::loadPbTrack(Track* pbTrack, const std::vector<uint8_t>& gid) {
-  // Generate ID based on GID
-  trackId = bytesToHexString(gid);
-
-  name = std::string(pbTrack->name);
-
-  if (pbTrack->artist_count > 0) {
-    // Handle artist data
-    artist = std::string(pbTrack->artist[0].name);
-  }
-
-  if (pbTrack->has_album) {
-    // Handle album data
-    album = std::string(pbTrack->album.name);
-
-    if (pbTrack->album.has_cover_group &&
-        pbTrack->album.cover_group.image_count > 0) {
-      auto imageId =
-          pbArrayToVector(pbTrack->album.cover_group.image[0].file_id);
-      imageUrl = "https://i.scdn.co/image/" + bytesToHexString(imageId);
-    }
-  }
-
-  number = pbTrack->has_number ? pbTrack->number : 0;
-  discNumber = pbTrack->has_disc_number ? pbTrack->disc_number : 0;
-  duration = pbTrack->duration;
-}
-
-void TrackInfo::loadPbEpisode(Episode* pbEpisode,
-                              const std::vector<uint8_t>& gid) {
-  // Generate ID based on GID
-  trackId = bytesToHexString(gid);
-
-  name = std::string(pbEpisode->name);
-
-  if (pbEpisode->covers->image_count > 0) {
-    // Handle episode info
-    auto imageId = pbArrayToVector(pbEpisode->covers->image[0].file_id);
-    imageUrl = "https://i.scdn.co/image/" + bytesToHexString(imageId);
-  }
-
-  number = pbEpisode->has_number ? pbEpisode->number : 0;
-  discNumber = 0;
-  duration = pbEpisode->duration;
-}
-
-TrackItem::TrackItem(TrackQueue& queue, TrackReference& aRef)
-  : mRef(&aRef), mQueue(queue)
+void TrackInfo::fromPbTrack(Track* pbTrack)
 {
-    mQueue.mLoadedCnt++;
+    name = std::string(pbTrack->name);
+    if (pbTrack->artist_count > 0) {
+        // Handle artist data
+        artist = std::string(pbTrack->artist[0].name);
+    }
+
+    if (pbTrack->has_album) {
+        // Handle album data
+        album = std::string(pbTrack->album.name);
+        if (pbTrack->album.has_cover_group &&
+            pbTrack->album.cover_group.image_count > 0) {
+            auto imageId = pbArrayToVector(pbTrack->album.cover_group.image[0].file_id);
+            imageUrl = "https://i.scdn.co/image/" + bytesToHexString(imageId);
+        }
+    }
+
+    number = pbTrack->has_number ? pbTrack->number : 0;
+    discNumber = pbTrack->has_disc_number ? pbTrack->disc_number : 0;
+    duration = pbTrack->duration;
 }
 
-void TrackItem::signalLoadStep() {
+void TrackInfo::fromPbEpisode(Episode* pbEpisode)
+{
+    name = std::string(pbEpisode->name);
+    if (pbEpisode->covers->image_count > 0) {
+        // Handle episode info
+        auto imageId = pbArrayToVector(pbEpisode->covers->image[0].file_id);
+        imageUrl = "https://i.scdn.co/image/" + bytesToHexString(imageId);
+    }
+
+    number = pbEpisode->has_number ? pbEpisode->number : 0;
+    discNumber = 0;
+    duration = pbEpisode->duration;
+}
+void TrackInfo::clear()
+{
+    name.clear();
+    // loaded by parseMetaData
+    album.clear();
+    artist.clear();
+    imageUrl.clear();
+    duration = 0;
+    number = 0;
+    discNumber = 0;
+    audioKey.clear();
+    cdnUrl.clear();
+}
+TrackInfo::Loader::Loader(TrackInfo& track, TrackQueue& queue)
+: mTrack(track), mQueue(queue)
+{}
+
+void TrackInfo::Loader::signalLoadStep()
+{
     mQueue.mEvents.setBits(TrackQueue::kEvtTrackLoadStep);
 }
-bool TrackItem::resetForLoadRetry(bool force)
+bool TrackInfo::Loader::resetForLoadRetry(bool force)
 {
     if (!force && mLoadRetryCtr >= kMaxLoadRetries) {
         return false;
     }
     mLoadRetryCtr++;
-    audioKey.clear();
-    cdnUrl.clear();
-    trackId.clear();
-    fileId.clear();
+    mTrack.clear();
+    mActualGid.clear();
+    mFileId.clear();
     mState = State::QUEUED;
     delayBeforeRetry();
     return true;
 }
-TrackItem::~TrackItem() {
+TrackInfo::Loader::~Loader()
+{
+    printf("=============Loader destroying\n");
     mState = State::FAILED;
     auto& sess = mQueue.mSpirc.mCtx.mSession;
     if (mPendingMercuryRequest != 0) {
@@ -149,96 +152,90 @@ TrackItem::~TrackItem() {
     if (mPendingAudioKeyRequest != 0) {
         sess.unregisterAudioKey(mPendingAudioKeyRequest);
     }
-    mQueue.mLoadedCnt--;
 }
 
-bool TrackItem::parseMetadata(Track* pbTrack, Episode* pbEpisode) {
-  int filesCount = 0;
-  AudioFile* selectedFiles = nullptr;
-  const char* countryCode = mQueue.mSpirc.mCtx.mConfig.countryCode.c_str();
+bool TrackInfo::Loader::parseMetadata(void* pbTrackOrEpisode)
+{
+    int filesCount = 0;
+    AudioFile* selectedFiles = nullptr;
+    const char* countryCode = mQueue.mSpirc.mCtx.mConfig.countryCode.c_str();
 
-  if (mRef->type == TrackReference::Type::TRACK) {
-    CSPOT_LOG(info, "Track name: %s", pbTrack->name);
-    CSPOT_LOG(info, "Track duration: %d", pbTrack->duration);
+    if (mTrack.type == TrackReference::Type::TRACK) {
+        auto pbTrack = (Track*)pbTrackOrEpisode;
+        CSPOT_LOG(info, "Track name: %s", pbTrack->name);
+        CSPOT_LOG(info, "Track duration: %d", pbTrack->duration);
+        CSPOT_LOG(debug, "trackInfo.restriction.size() = %d", pbTrack->restriction_count);
 
-    CSPOT_LOG(debug, "trackInfo.restriction.size() = %d",
-              pbTrack->restriction_count);
-
-    // Check if we can play the track, if not, try alternatives
-    if (TrackDataUtils::doRestrictionsApply(
-            pbTrack->restriction, pbTrack->restriction_count, countryCode)) {
-      // Go through alternatives
-      for (int x = 0; x < pbTrack->alternative_count; x++) {
-        if (!TrackDataUtils::doRestrictionsApply(
-                pbTrack->alternative[x].restriction,
-                pbTrack->alternative[x].restriction_count, countryCode)) {
-          selectedFiles = pbTrack->alternative[x].file;
-          filesCount = pbTrack->alternative[x].file_count;
-          trackId = pbArrayToVector(pbTrack->alternative[x].gid);
-          break;
+        // Check if we can play the track, if not, try alternatives
+        if (TrackDataUtils::doRestrictionsApply(pbTrack->restriction, pbTrack->restriction_count, countryCode)) {
+            // Go through alternatives
+            for (int x = 0; x < pbTrack->alternative_count; x++) {
+                if (!TrackDataUtils::doRestrictionsApply(
+                    pbTrack->alternative[x].restriction,
+                    pbTrack->alternative[x].restriction_count, countryCode)) {
+                        selectedFiles = pbTrack->alternative[x].file;
+                        filesCount = pbTrack->alternative[x].file_count;
+                        mActualGid = pbArrayToVector(pbTrack->alternative[x].gid);
+                        break;
+                }
+            }
         }
-      }
-    } else {
-      // We can play the track
-      selectedFiles = pbTrack->file;
-      filesCount = pbTrack->file_count;
-      trackId = pbArrayToVector(pbTrack->gid);
+        else {
+            // We can play the track
+            selectedFiles = pbTrack->file;
+            filesCount = pbTrack->file_count;
+            mActualGid = pbArrayToVector(pbTrack->gid);
+        }
+
+        if (mActualGid.size() > 0) {
+            // Load track information
+            mTrack.fromPbTrack(pbTrack);
+        }
+    }
+    else {
+        // Handle episodes
+        auto pbEpisode = (Episode*)pbTrackOrEpisode;
+        CSPOT_LOG(info, "Episode name: %s", pbEpisode->name);
+        CSPOT_LOG(info, "Episode duration: %d", pbEpisode->duration);
+        CSPOT_LOG(debug, "episodeInfo.restriction.size() = %d", pbEpisode->restriction_count);
+
+        // Check if we can play the episode
+        if (!TrackDataUtils::doRestrictionsApply(pbEpisode->restriction, pbEpisode->restriction_count, countryCode)) {
+            selectedFiles = pbEpisode->file;
+            filesCount = pbEpisode->file_count;
+            mActualGid = pbArrayToVector(pbEpisode->gid);
+            // Load track information
+            mTrack.fromPbEpisode(pbEpisode);
+        }
     }
 
-    if (trackId.size() > 0) {
-      // Load track information
-      loadPbTrack(pbTrack, trackId);
-    }
-  } else {
-    // Handle episodes
-    CSPOT_LOG(info, "Episode name: %s", pbEpisode->name);
-    CSPOT_LOG(info, "Episode duration: %d", pbEpisode->duration);
+    // Find playable file
+    for (int x = 0; x < filesCount; x++) {
+        CSPOT_LOG(debug, "File format: %d", selectedFiles[x].format);
+        if (selectedFiles[x].format == mQueue.mSpirc.mCtx.mConfig.audioFormat) {
+            mFileId = pbArrayToVector(selectedFiles[x].file_id);
+            break;  // If file found stop searching
+        }
 
-    CSPOT_LOG(debug, "episodeInfo.restriction.size() = %d",
-              pbEpisode->restriction_count);
-
-    // Check if we can play the episode
-    if (!TrackDataUtils::doRestrictionsApply(pbEpisode->restriction,
-                                             pbEpisode->restriction_count,
-                                             countryCode)) {
-      selectedFiles = pbEpisode->file;
-      filesCount = pbEpisode->file_count;
-      trackId = pbArrayToVector(pbEpisode->gid);
-
-      // Load track information
-      loadPbEpisode(pbEpisode, trackId);
-    }
-  }
-
-  // Find playable file
-  for (int x = 0; x < filesCount; x++) {
-    CSPOT_LOG(debug, "File format: %d", selectedFiles[x].format);
-    if (selectedFiles[x].format == mQueue.mSpirc.mCtx.mConfig.audioFormat) {
-      fileId = pbArrayToVector(selectedFiles[x].file_id);
-      break;  // If file found stop searching
+        // Fallback to OGG Vorbis 96kbps
+        if (mFileId.size() == 0 && selectedFiles[x].format == AudioFormat_OGG_VORBIS_96) {
+            mFileId = pbArrayToVector(selectedFiles[x].file_id);
+        }
     }
 
-    // Fallback to OGG Vorbis 96kbps
-    if (fileId.size() == 0 &&
-        selectedFiles[x].format == AudioFormat_OGG_VORBIS_96) {
-      fileId = pbArrayToVector(selectedFiles[x].file_id);
+    // No viable files found for playback
+    if (mFileId.size() == 0) {
+        CSPOT_LOG(info, "File not available for playback");
+        // no alternatives for song
+        return false;
     }
-  }
-
-  // No viable files found for playback
-  if (fileId.size() == 0) {
-      CSPOT_LOG(info, "File not available for playback");
-      // no alternatives for song
-      return false;
-  }
-  else {
-      return true;
-  }
+    return true;
 }
 
-void TrackItem::stepLoadAudioKey() {
+void TrackInfo::Loader::stepLoadAudioKey()
+{
   // Request audio key
-  mPendingAudioKeyRequest = mQueue.mSpirc.mCtx.mSession.requestAudioKey(trackId, fileId,
+  mPendingAudioKeyRequest = mQueue.mSpirc.mCtx.mSession.requestAudioKey(mActualGid, mFileId,
       [this, wptr = weak_from_this()](bool success, const std::vector<uint8_t>& audioKey) {
         if (wptr.expired()) {
             return;
@@ -246,7 +243,7 @@ void TrackItem::stepLoadAudioKey() {
         std::scoped_lock lock(mQueue.mTracksMutex);
         if (success) {
           CSPOT_LOG(info, "Got audio key");
-          this->audioKey = std::vector<uint8_t>(audioKey.begin() + 4, audioKey.end());
+          this->mTrack.audioKey = std::vector<uint8_t>(audioKey.begin() + 4, audioKey.end());
           mState = State::CDN_REQUIRED;
         }
         else {
@@ -258,87 +255,78 @@ void TrackItem::stepLoadAudioKey() {
   mState = State::PENDING_KEY;
 }
 
-void TrackItem::stepLoadCDNUrl(const std::string& accessKey) {
-  if (accessKey.size() == 0) {
-    // Wait for access key
-    return;
-  }
-  // Request CDN URL
-  CSPOT_LOG(info, "Received access key, fetching CDN URL...");
-  try {
-    std::string requestUrl = string_format(
-        "https://api.spotify.com/v1/storage-resolve/files/audio/interactive/"
-        "%s?alt=json&product=9",
-        bytesToHexString(fileId).c_str());
-
-    auto result = httpGet<std::string>(
-        requestUrl.c_str(), {{"Authorization", ("Bearer " + accessKey).c_str()}});
+void TrackInfo::Loader::stepLoadCDNUrl(const std::string& accessKey)
+{
+    if (accessKey.size() == 0) {
+        // Wait for access key
+        return;
+    }
+    // Request CDN URL
+    CSPOT_LOG(info, "Received access key, fetching CDN URL...");
+    try {
+        std::string requestUrl = string_format(
+            "https://api.spotify.com/v1/storage-resolve/files/audio/interactive/%s?alt=json&product=9",
+            bytesToHexString(mFileId).c_str());
+        auto result = httpGet<std::string>(requestUrl.c_str(), {{"Authorization", ("Bearer " + accessKey).c_str()}});
 
 #ifdef BELL_ONLY_CJSON
-    cJSON* jsonResult = cJSON_Parse(result.data());
-    cdnUrl = cJSON_GetArrayItem(cJSON_GetObjectItem(jsonResult, "cdnurl"), 0)
-                 ->valuestring;
-    cJSON_Delete(jsonResult);
+        cJSON* jsonResult = cJSON_Parse(result.data());
+        mTrack.cdnUrl = cJSON_GetArrayItem(cJSON_GetObjectItem(jsonResult, "cdnurl"), 0)->valuestring;
+        cJSON_Delete(jsonResult);
 #else
-    auto jsonResult = nlohmann::json::parse(result);
-    cdnUrl = jsonResult["cdnurl"][0];
+        auto jsonResult = nlohmann::json::parse(result);
+        mTrack.cdnUrl = jsonResult["cdnurl"][0];
 #endif
 
-    CSPOT_LOG(info, "Received CDN URL, %s", cdnUrl.c_str());
-    mState = State::READY;
-    signalLoadStep();
+        CSPOT_LOG(info, "Received CDN URL, %s", mTrack.cdnUrl.c_str());
+        mState = State::READY;
+        signalLoadStep();
   }
   catch (...) {
-    CSPOT_LOG(error, "Cannot fetch CDN URL");
-    mState = State::FAILED;
-    signalLoadStep();
+        CSPOT_LOG(error, "Cannot fetch CDN URL");
+        mState = State::FAILED;
+        signalLoadStep();
   }
 }
 
-void TrackItem::stepLoadMetadata()
+void TrackInfo::Loader::stepLoadMetadata()
 {
-  // Prepare request ID
-  std::string requestUrl = string_format(
-      "hm://metadata/3/%s/%s",
-      mRef->type == TrackReference::Type::TRACK ? "track" : "episode",
-      bytesToHexString(mRef->gid).c_str());
+    // Prepare request ID
+    std::string requestUrl = string_format("hm://metadata/3/%s/%s",
+        mTrack.type == TrackReference::Type::TRACK ? "track" : "episode",
+        bytesToHexString(mTrack.gid).c_str());
 
-  auto responseHandler = [this, wptr = weak_from_this()](MercurySession::Response& res)
-  {
-    if (wptr.expired()) {
-        printf("============wptr expired\n");
-        return;
-    }
-    std::scoped_lock lock(mQueue.mTracksMutex);
-    if (res.parts.size() == 0) {
-      // Invalid metadata, cannot proceed
-      mState = State::FAILED;
-      signalLoadStep();
-      return;
-    }
+    auto responseHandler = [this, wptr = weak_from_this()](MercurySession::Response& res)
+    {
+        if (wptr.expired()) {
+            printf("============wptr expired\n");
+            return;
+        }
+        std::scoped_lock lock(mQueue.mTracksMutex);
+        if (res.parts.size() == 0) {
+            // Invalid metadata, cannot proceed
+            mState = State::FAILED;
+            signalLoadStep();
+            return;
+        }
 
-    Track pbTrack = Track_init_zero;
-    Episode pbEpisode = Episode_init_zero;
-
-    // Parse the metadata
-    if (mRef->type == TrackReference::Type::TRACK) {
-      pbDecode(pbTrack, Track_fields, res.parts[0]);
-    }
-    else {
-      pbDecode(pbEpisode, Episode_fields, res.parts[0]);
-    }
-
-    // Parse received metadata
-    if (parseMetadata(&pbTrack, &pbEpisode)) {
-        mState = State::KEY_REQUIRED;
-    }
-    else {
-        mState = State::FAILED;
-    }
-    pb_release(Track_fields, &pbTrack);
-    pb_release(Episode_fields, &pbEpisode);
-    signalLoadStep();
-  };
+        bool parseOk;
+        // Parse the metadata
+        if (mTrack.type == TrackReference::Type::TRACK) {
+            Track pbTrack = Track_init_zero;
+            pbDecode(pbTrack, Track_fields, res.parts[0]);
+            parseOk = parseMetadata(&pbTrack);
+            pb_release(Track_fields, &pbTrack);
+        }
+        else {
+            Episode pbEpisode = Episode_init_zero;
+            pbDecode(pbEpisode, Episode_fields, res.parts[0]);
+            parseOk = parseMetadata(&pbEpisode);
+            pb_release(Episode_fields, &pbEpisode);
+        }
+        mState = parseOk ? State::KEY_REQUIRED : State::FAILED;
+        signalLoadStep();
+    };
   // Execute the request
   mPendingMercuryRequest = mQueue.mSpirc.mCtx.mSession.execute(
       MercurySession::RequestType::GET, requestUrl, responseHandler);
@@ -346,19 +334,26 @@ void TrackItem::stepLoadMetadata()
   // Set the state to pending
   mState = State::PENDING_META;
 }
-void TrackItem::delayBeforeRetry() const
+void TrackInfo::Loader::delayBeforeRetry() const
 {
     int delay = (mLoadRetryCtr < 2) ? 500 : std::min(mLoadRetryCtr * 2000, 10000);
     mQueue.mEvents.waitForOneNoReset(TrackQueue::kEvtTerminateReq, delay);
 }
-
+TrackInfo::SharedPtr TrackInfo::Cache::get(const TrackReference& ref)
+{
+    auto it = find(ref);
+    if (it != end()) {
+        printf("Cache hit\n");
+        return *it;
+    }
+    auto ret = emplace(new TrackInfo(ref, mQueue));
+    printf("Cache miss, loading new TrackInfo\n");
+    return *ret.first;
+}
 TrackQueue::TrackQueue(SpircHandler& spirc)
     : mEvents(kEvtTerminateReq|kStateStopped|kStateTerminated),
-      mSpirc(spirc), mAccessKeyFetcher(spirc.mCtx)
+      mSpirc(spirc), mAccessKeyFetcher(spirc.mCtx), mCache(*this)
 {
-    // Assign encode callback to track list
-    mSpirc.mPlaybackState.innerFrame.state.track.funcs.encode = &TrackReference::pbEncodeTrackList;
-    mSpirc.mPlaybackState.innerFrame.state.track.arg = &mTracks;
 }
 
 TrackQueue::~TrackQueue()
@@ -374,25 +369,23 @@ bool TrackQueue::loadTrack(int idx)
         return false; // it's valid to try an invalid index, fail silently
     }
     auto& track = mTracks[idx];
-    if (track.mDetails.get()) {
-        if (track.mDetails->state() == TrackItem::State::FAILED) { // retry a previous fail
-            if (!track.mDetails->resetForLoadRetry()) {
+    if (track.info) {
+        if (track.info->loadState() == TrackInfo::Loader::State::FAILED) { // retry a previous fail
+            if (!track.info->mLoader->resetForLoadRetry()) { // loader is guaranteed to exist if state is FAILED
+                CSPOT_LOG(error, "Gave up retrying failed load of track %d", idx);
                 return false;
             }
             CSPOT_LOG(info, "Re-trying failed loading of track %d", idx);
         }
         else { // in progress or done
-            printf("loadTrack[%d]: already loading or loaded: state: %d\n", idx, (int)track.mDetails->state());
+            printf("loadTrack[%d]: already loading or loaded: state: %d\n", idx, (int)track.info->loadState());
             return true;
         }
     }
-    else {
-        if (mLoadedCnt >= kMaxTracksPreload) {
-            freeMostDistantTrack();
-        }
-        track.mDetails = std::make_shared<TrackItem>(*this, track);
+    else { // no TrackInfo at all, create and start loading
+        track.info = mCache.get(track);
     }
-    return track.mDetails->load(true, idx);
+    return track.info->mLoader->load(true, idx);
 }
 void TrackQueue::taskFunc()
 {
@@ -433,39 +426,17 @@ void TrackQueue::taskFunc()
     }
     mEvents.setBits(kStateTerminated);
 }
-void TrackQueue::freeMostDistantTrack()
+void TrackQueue::unrefDistantTracks()
 {
-    // free the info of the track that is more distant than mCurrentTrackIdx
-    int firstBefore = -1;
-    int lastAfter = -1;
-    for (int i = 0; i < mCurrentTrackIdx; i++) {
-        if (mTracks[i].isLoaded()) {
-            firstBefore = i;
-            break;
+    int bound = mCurrentTrackIdx - kTrackLoadDistanceFromCurr;
+    if (bound > 0) {
+        for (int i = 0; i < bound; i++) {
+            mTracks[i].info.release();
         }
     }
-    for (int i = mTracks.size() - 1; i > mCurrentTrackIdx; i--) {
-        if (mTracks[i].isLoaded()) {
-            lastAfter = i;
-            break;
-        }
-    }
-    int chosen = -1;
-    if (firstBefore < 0) {
-        chosen = lastAfter;
-    }
-    else if (lastAfter < 0) {
-        chosen = firstBefore;
-    }
-    // if distance to left >= distance to right
-    else if (mCurrentTrackIdx - firstBefore >= lastAfter - mCurrentTrackIdx) {
-        chosen = firstBefore;
-    }
-    else {
-        chosen = lastAfter;
-    }
-    if (chosen > -1) {
-        mTracks[chosen].mDetails.reset();
+    bound = mCurrentTrackIdx + kTrackLoadDistanceFromCurr;
+    for (int i = bound; i < mTracks.size(); i++) {
+        mTracks[i].info.release();
     }
 }
 void TrackQueue::startTask()
@@ -486,17 +457,14 @@ void TrackQueue::terminateTask()
     mEvents.waitForOneNoReset(kStateTerminated, -1);
 }
 
-std::shared_ptr<TrackItem> TrackQueue::currentTrack()
+TrackInfo::SharedPtr TrackQueue::currentTrack()
 {
     std::scoped_lock lock(mTracksMutex);
     for(;;) {
         if (mCurrentTrackIdx >= 0 && mCurrentTrackIdx < mTracks.size()) {
             auto& track = mTracks[mCurrentTrackIdx];
-            if (track.mDetails.get()) {
-                auto state = track.mDetails->state();
-                if (state == TrackItem::State::READY) {
-                    return track.mDetails;
-                }
+            if (track.info && track.info->loadState() == TrackInfo::Loader::State::READY) {
+                return track.info;
             }
         }
         scoped_unlock unlock(mTracksMutex);
@@ -504,7 +472,7 @@ std::shared_ptr<TrackItem> TrackQueue::currentTrack()
     }
 }
 
-bool TrackItem::load(bool retry, int idx)
+bool TrackInfo::Loader::load(bool retry, int idx)
 {
     // assumes trackMutex is locked!
     for (;;) {
@@ -525,7 +493,7 @@ bool TrackItem::load(bool retry, int idx)
             case State::READY:
                 mLoadRetryCtr = 0;
                 mQueue.mEvents.setBits(TrackQueue::kEvtTrackLoaded);
-                CSPOT_LOG(info, "Details loaded for track %d: name: '%s'", idx, name.c_str());
+                CSPOT_LOG(info, "Details loaded for track %d: name: '%s'", idx, mTrack.name.c_str());
                 return true;
             case State::FAILED:
                 CSPOT_LOG(info, "Details load failed for track %d", idx);
@@ -585,7 +553,7 @@ bool TrackQueue::isFinished() {
     return mCurrentTrackIdx >= mTracks.size();
 }
 
-void TrackQueue::updateTracks(bool initial)
+void TrackQueue::updateTracks(bool replace)
 {
     mTaskStopReq = true;
     mEvents.setBits(kEvtTracksUpdated);
@@ -596,10 +564,7 @@ void TrackQueue::updateTracks(bool initial)
     std::scoped_lock lock(mTracksMutex);
     // Copy requested track list
     mTracks.clear();
-    mTracks.reserve(mSpirc.mPlaybackState.remoteTracks.size());
-    for (const auto& trk: mSpirc.mPlaybackState.remoteTracks) {
-        mTracks.emplace_back(trk);
-    }
+    mTracks.swap(mSpirc.mPlaybackState.remoteTracks);
     mCurrentTrackIdx = mSpirc.mPlaybackState.innerFrame.state.playing_track_index;
     CSPOT_LOG(info, "Updated playlist");
     mTaskStopReq = false;

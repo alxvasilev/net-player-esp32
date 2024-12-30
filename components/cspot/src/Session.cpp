@@ -60,11 +60,20 @@ void Session::connectWithRandomAp() {
   };
 
   auto apAddr = apResolver->fetchFirstApAddress();
-
   CSPOT_LOG(debug, "Connecting with AP <%s>", apAddr.c_str());
-  conn->connect(apAddr);
-
-  this->connect(std::move(conn));
+  int retry = 0;
+  for (;;) {
+      try {
+          conn->connect(apAddr);
+          this->connect(std::move(conn));
+          break;
+      }
+      catch(std::exception& ex) {
+          if (++retry > 4) {
+              throw ex;
+          }
+      }
+  }
 }
 
 std::vector<uint8_t> Session::authenticate() {

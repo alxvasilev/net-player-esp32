@@ -10,26 +10,33 @@
 #include <memory>
 
 namespace cspot {
-class TrackItem;
+struct TrackGid: public std::vector<uint8_t> {
+    bool operator<(const TrackGid& other) const {
+        int diff = memcmp(data(), other.data(), std::min(size(), other.size()));
+        if (size() == other.size()) {
+            return diff < 0;
+        }
+        else { // sizes differ
+            return (diff == 0) ? size() < other.size() : diff < 0;
+       }
+    }
+    TrackGid& operator=(const std::vector<uint8_t>& other) {
+        std::vector<uint8_t>::operator=(other);
+        return *this;
+    }
+};
+class TrackInfo;
 struct TrackReference {
-  TrackReference();
-  TrackReference(const TrackReference& other) = default;
-  ~TrackReference();
-  std::shared_ptr<TrackItem> mDetails;
-  // Resolved track GID
-  std::vector<uint8_t> gid;
-  std::string uri, context;
-  std::optional<bool> queued;
-  // Type identifier
-  enum class Type { TRACK, EPISODE };
-  Type type;
-
-  void decodeURI();
-  bool operator==(const TrackReference& other) const;
-  bool isLoaded() const;
-  bool isLoadedOrFailed() const;
-  // Encodes list of track references into a pb structure, used by nanopb
-  static bool pbEncodeTrackList(pb_ostream_t* stream, const pb_field_t* field, void* const* arg);
-  static bool pbDecodeTrackList(pb_istream_t* stream, const pb_field_t* field, void** arg);
+    enum Type: int8_t { TRACK, EPISODE };
+    TrackGid gid;
+    Type type = TRACK;
+    bool operator==(const TrackReference& other) const {
+        return other.type == type && other.gid == gid;
+    }
+    bool operator<(const TrackReference& other) const {
+        int tdiff = (int8_t)type - (int8_t)other.type;
+        return tdiff ? tdiff < 0 : gid < other.gid;
+    }
+    void decodeURI(const std::string& uri);
 };
 }  // namespace cspot

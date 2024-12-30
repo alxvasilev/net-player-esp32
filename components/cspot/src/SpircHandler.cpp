@@ -86,7 +86,7 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data)
   // Decode received spirc frame
   mPlaybackState.decodeRemoteFrame(data);
   auto typ = mPlaybackState.remoteFrame.typ;
-  SPIRC_LOGP("Received message %s", messageTypeToStr(typ));
+  SPIRC_LOGP("Received message %s (%d)", messageTypeToStr(typ), typ);
 
   switch (typ) {
     case MessageType_kMessageTypeNotify: {
@@ -125,7 +125,7 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data)
         break;
     case MessageType_kMessageTypeLoad: {
         SPIRC_LOGI("New play queue of %d tracks", mPlaybackState.remoteTracks.size());
-        if (mPlaybackState.remoteTracks.size() == 0) {
+        if (mPlaybackState.remoteTracks.empty()) {
             SPIRC_LOGI("No tracks in frame, stopping playback");
             break;
         }
@@ -144,7 +144,7 @@ void SpircHandler::handleFrame(std::vector<uint8_t>& data)
         SPIRC_LOGI("Play queue replace with %d tracks", mPlaybackState.remoteTracks.size());
         mPlaybackState.syncWithRemote();
         // 1st track is the current one, but update the position
-        mTrackQueue.updateTracks(false);
+        mTrackQueue.updateTracks(true);
         notify();
         // need to re-load all if streaming track is completed
         mPlayer.play(mPlaybackState.remoteFrame.state.position_ms +
