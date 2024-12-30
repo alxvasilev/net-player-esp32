@@ -29,8 +29,8 @@ public:
         MutexLocker locker(mMutex);
         Base::iterate(std::forward<CB>(cb));
     }
-    /* The packets returned by the peekXXX methods cannot be destroyed even if the queue is not locked,
-     * unless someone else reads the queue meanwhile.
+    /* The packets returned by the peekXXX methods cannot be destroyed by someone else,
+     * even if the queue is not locked, unless someone else reads the queue meanwhile.
      */
     StreamPacket* peekFirstOfType(StreamEvent type, StreamEvent cantBePrecededBy=kInvalidStreamEvent) {
         StreamPacket* result = nullptr;
