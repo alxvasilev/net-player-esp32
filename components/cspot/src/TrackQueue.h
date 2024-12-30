@@ -62,8 +62,8 @@ protected:
 public:
     class Loader: public std::enable_shared_from_this<Loader> { // need weak pointer for async requests
     public:
-        enum class State: uint8_t {
-            QUEUED, PENDING_META, KEY_REQUIRED, PENDING_KEY, CDN_REQUIRED, READY, FAILED
+        enum State: uint8_t {
+            kStateComplete = 0, kStatePending, kStateLoading, kStateFailed
         };
     protected:
         friend class TrackQueue;
@@ -75,24 +75,29 @@ public:
         uint64_t mPendingMercuryRequest = 0;
         uint32_t mPendingAudioKeyRequest = 0;
         int8_t mLoadRetryCtr = 0;
-        State mState = State::QUEUED;  // Current state of the track
+        int8_t mCdnUrlRetryCtr = 0;
+        State mStateMetaData = kStatePending;  // Current state of the track
+        State mStateAudioKey = kStatePending;
+        State mStateCdnUrl = kStatePending;
+        State mState = kStatePending;
     public:
-        bool load(bool retry, int idx); // idx is only needed for debug print
+        static const char* stateToStr(State state);
+        bool load(int idx); // idx is only needed for debug print
         void delayBeforeRetry() const;
         State state() const { return mState; }
         Loader(TrackInfo& info, TrackQueue& queue);
         ~Loader();
-        bool resetForLoadRetry(bool force=false); // clear metadata and reset loading state to QUEUED to retry loading
+        bool resetForLoadRetry(bool resetRetries=false); // clear metadata and reset loading state to QUEUED to retry loading
         bool parseMetadata(void* pbTrackOrEpisode);
     // --- Steps ---
         void stepLoadMetadata();
         void stepLoadAudioKey();
-        void stepLoadCDNUrl(const std::string& accessKey);
+        void stepLoadCDNUrl();
         //===
         void signalLoadStep();
     };
     Loader::State loadState() const {
-        return mLoader ? mLoader->state() : (cdnUrl.empty() ? Loader::State::QUEUED : Loader::State::READY);
+        return mLoader ? mLoader->state() : (cdnUrl.empty() ? Loader::kStatePending : Loader::kStateComplete);
     }
     struct SharedPtr {
         TrackInfo* mPtr;

@@ -19,6 +19,8 @@
 #endif
 #include "protobuf/metadata.pb.h"
 
+#define TAGQ "cspot-queue"
+
 using namespace cspot;
 namespace TrackDataUtils {
 bool countryListContains(char* countryList, const char* country) {
@@ -128,23 +130,26 @@ void TrackInfo::Loader::signalLoadStep()
 {
     mQueue.mEvents.setBits(TrackQueue::kEvtTrackLoadStep);
 }
-bool TrackInfo::Loader::resetForLoadRetry(bool force)
+bool TrackInfo::Loader::resetForLoadRetry(bool resetRetries)
 {
-    if (!force && mLoadRetryCtr >= kMaxLoadRetries) {
-        return false;
+    if (resetRetries) {
+        mLoadRetryCtr = 0;
     }
-    mLoadRetryCtr++;
+    else {
+        if (mLoadRetryCtr >= kMaxLoadRetries) {
+            return false;
+        }
+        mLoadRetryCtr++;
+    }
     mTrack.clear();
     mActualGid.clear();
     mFileId.clear();
-    mState = State::QUEUED;
+    mState = mStateMetaData = mStateAudioKey = mStateCdnUrl = kStatePending;
     delayBeforeRetry();
     return true;
 }
 TrackInfo::Loader::~Loader()
 {
-    printf("=============Loader destroying\n");
-    mState = State::FAILED;
     auto& sess = mQueue.mSpirc.mCtx.mSession;
     if (mPendingMercuryRequest != 0) {
         sess.unregister(mPendingMercuryRequest);
@@ -162,10 +167,10 @@ bool TrackInfo::Loader::parseMetadata(void* pbTrackOrEpisode)
 
     if (mTrack.type == TrackReference::Type::TRACK) {
         auto pbTrack = (Track*)pbTrackOrEpisode;
-        CSPOT_LOG(info, "Track name: %s", pbTrack->name);
-        CSPOT_LOG(info, "Track duration: %d", pbTrack->duration);
-        CSPOT_LOG(debug, "trackInfo.restriction.size() = %d", pbTrack->restriction_count);
-
+        TRKLDR_LOGD("Track info:\n\tname: %s\n\tartist: %s\n\tduration: %ld\n\t",
+                    strOrNull(pbTrack->name),
+                    pbTrack->artist ? strOrNull(pbTrack->artist->name) : "(null)",
+                    pbTrack->duration);
         // Check if we can play the track, if not, try alternatives
         if (TrackDataUtils::doRestrictionsApply(pbTrack->restriction, pbTrack->restriction_count, countryCode)) {
             // Go through alternatives
@@ -195,9 +200,8 @@ bool TrackInfo::Loader::parseMetadata(void* pbTrackOrEpisode)
     else {
         // Handle episodes
         auto pbEpisode = (Episode*)pbTrackOrEpisode;
-        CSPOT_LOG(info, "Episode name: %s", pbEpisode->name);
-        CSPOT_LOG(info, "Episode duration: %d", pbEpisode->duration);
-        CSPOT_LOG(debug, "episodeInfo.restriction.size() = %d", pbEpisode->restriction_count);
+        TRKLDR_LOGD("Episode info:\n\tname: %s\n\tduration: %ld\n\trestrictions: %zu",
+            strOrNull(pbEpisode->name), pbEpisode->duration, pbEpisode->restriction_count);
 
         // Check if we can play the episode
         if (!TrackDataUtils::doRestrictionsApply(pbEpisode->restriction, pbEpisode->restriction_count, countryCode)) {
@@ -211,7 +215,7 @@ bool TrackInfo::Loader::parseMetadata(void* pbTrackOrEpisode)
 
     // Find playable file
     for (int x = 0; x < filesCount; x++) {
-        CSPOT_LOG(debug, "File format: %d", selectedFiles[x].format);
+        TRKLDR_LOGD("\tFile format: %d", selectedFiles[x].format);
         if (selectedFiles[x].format == mQueue.mSpirc.mCtx.mConfig.audioFormat) {
             mFileId = pbArrayToVector(selectedFiles[x].file_id);
             break;  // If file found stop searching
@@ -225,7 +229,7 @@ bool TrackInfo::Loader::parseMetadata(void* pbTrackOrEpisode)
 
     // No viable files found for playback
     if (mFileId.size() == 0) {
-        CSPOT_LOG(info, "File not available for playback");
+        TRKLDR_LOGE("\tFile not available for playback");
         // no alternatives for song
         return false;
     }
@@ -242,32 +246,29 @@ void TrackInfo::Loader::stepLoadAudioKey()
         }
         std::scoped_lock lock(mQueue.mTracksMutex);
         if (success) {
-          CSPOT_LOG(info, "Got audio key");
+          TRKLDR_LOGD("Got audio key");
           this->mTrack.audioKey = std::vector<uint8_t>(audioKey.begin() + 4, audioKey.end());
-          mState = State::CDN_REQUIRED;
+          mStateAudioKey = kStateComplete;
         }
         else {
-          CSPOT_LOG(error, "Failed to get audio key");
-          mState = State::FAILED;
+          TRKLDR_LOGE("Failed to get audio key for file '%s'", mTrack.name.c_str());
+          mStateAudioKey = kStateFailed;
         }
         signalLoadStep();
       });
-  mState = State::PENDING_KEY;
+  mStateAudioKey = kStateLoading;
 }
 
-void TrackInfo::Loader::stepLoadCDNUrl(const std::string& accessKey)
+void TrackInfo::Loader::stepLoadCDNUrl()
 {
-    if (accessKey.size() == 0) {
-        // Wait for access key
-        return;
-    }
-    // Request CDN URL
-    CSPOT_LOG(info, "Received access key, fetching CDN URL...");
+    myassert(!mQueue.accessKey.empty());
+    mStateCdnUrl = kStateLoading;
+    TRKLDR_LOGD("fetching CDN URL for file '%s'...", mTrack.name.c_str());
     try {
         std::string requestUrl = string_format(
             "https://api.spotify.com/v1/storage-resolve/files/audio/interactive/%s?alt=json&product=9",
             bytesToHexString(mFileId).c_str());
-        auto result = httpGet<std::string>(requestUrl.c_str(), {{"Authorization", ("Bearer " + accessKey).c_str()}});
+        auto result = httpGet<std::string>(requestUrl.c_str(), {{"Authorization", ("Bearer " + mQueue.accessKey).c_str()}});
 
 #ifdef BELL_ONLY_CJSON
         cJSON* jsonResult = cJSON_Parse(result.data());
@@ -278,13 +279,13 @@ void TrackInfo::Loader::stepLoadCDNUrl(const std::string& accessKey)
         mTrack.cdnUrl = jsonResult["cdnurl"][0];
 #endif
 
-        CSPOT_LOG(info, "Received CDN URL, %s", mTrack.cdnUrl.c_str());
-        mState = State::READY;
+        TRKLDR_LOGD("Received CDN URL for '%s': %s", mTrack.name.c_str(), mTrack.cdnUrl.c_str());
+        mStateCdnUrl = kStateComplete;
         signalLoadStep();
   }
   catch (...) {
-        CSPOT_LOG(error, "Cannot fetch CDN URL");
-        mState = State::FAILED;
+        TRKLDR_LOGE("Cannot fetch CDN URL for '%s'", mTrack.name.c_str());
+        mStateCdnUrl = kStateFailed;
         signalLoadStep();
   }
 }
@@ -299,17 +300,15 @@ void TrackInfo::Loader::stepLoadMetadata()
     auto responseHandler = [this, wptr = weak_from_this()](MercurySession::Response& res)
     {
         if (wptr.expired()) {
-            printf("============wptr expired\n");
             return;
         }
         std::scoped_lock lock(mQueue.mTracksMutex);
         if (res.parts.size() == 0) {
             // Invalid metadata, cannot proceed
-            mState = State::FAILED;
+            mStateMetaData = kStateFailed;
             signalLoadStep();
             return;
         }
-
         bool parseOk;
         // Parse the metadata
         if (mTrack.type == TrackReference::Type::TRACK) {
@@ -324,15 +323,13 @@ void TrackInfo::Loader::stepLoadMetadata()
             parseOk = parseMetadata(&pbEpisode);
             pb_release(Episode_fields, &pbEpisode);
         }
-        mState = parseOk ? State::KEY_REQUIRED : State::FAILED;
+        mStateMetaData = parseOk ? kStateComplete : kStateFailed;
         signalLoadStep();
     };
+  mStateMetaData = kStateLoading;
   // Execute the request
   mPendingMercuryRequest = mQueue.mSpirc.mCtx.mSession.execute(
       MercurySession::RequestType::GET, requestUrl, responseHandler);
-
-  // Set the state to pending
-  mState = State::PENDING_META;
 }
 void TrackInfo::Loader::delayBeforeRetry() const
 {
@@ -343,11 +340,11 @@ TrackInfo::SharedPtr TrackInfo::Cache::get(const TrackReference& ref)
 {
     auto it = find(ref);
     if (it != end()) {
-        printf("Cache hit\n");
+        TRKLDR_LOGI("Cache hit");
         return *it;
     }
     auto ret = emplace(new TrackInfo(ref, mQueue));
-    printf("Cache miss, loading new TrackInfo\n");
+    TRKLDR_LOGD("Cache miss");
     return *ret.first;
 }
 TrackQueue::TrackQueue(SpircHandler& spirc)
@@ -370,26 +367,27 @@ bool TrackQueue::loadTrack(int idx)
     }
     auto& track = mTracks[idx];
     if (track.info) {
-        if (track.info->loadState() == TrackInfo::Loader::State::FAILED) { // retry a previous fail
-            if (!track.info->mLoader->resetForLoadRetry()) { // loader is guaranteed to exist if state is FAILED
-                CSPOT_LOG(error, "Gave up retrying failed load of track %d", idx);
+        if (track.info->loadState() == TrackInfo::Loader::kStateFailed) { // retry a previous fail
+            if (!track.info->mLoader->resetForLoadRetry(true)) { // loader is guaranteed to exist if state is FAILED
+                ESP_LOGE(TAGQ, "Gave up retrying failed load of track %d", idx);
                 return false;
             }
-            CSPOT_LOG(info, "Re-trying failed loading of track %d", idx);
+            ESP_LOGW(TAGQ, "Re-trying failed loading of track %d", idx);
         }
         else { // in progress or done
-            printf("loadTrack[%d]: already loading or loaded: state: %d\n", idx, (int)track.info->loadState());
+            ESP_LOGD(TAGQ, "loadTrack[%d]: already loading or loaded: state: %s",
+                     idx, TrackInfo::Loader::stateToStr(track.info->loadState()));
             return true;
         }
     }
     else { // no TrackInfo at all, create and start loading
         track.info = mCache.get(track);
     }
-    return track.info->mLoader->load(true, idx);
+    return track.info->mLoader->load(idx);
 }
 void TrackQueue::taskFunc()
 {
-    CSPOT_LOG(info, "Track queue task started");
+    ESP_LOGI(TAGQ, "Task started");
     mEvents.clearBits(0xff);
     try {
         for (;;) {
@@ -401,28 +399,28 @@ void TrackQueue::taskFunc()
                 }
                 mEvents.clearBits(kStateStopped);
             }
-            CSPOT_LOG(info, "Monitoring playlist/curr track for changes(kEvtTracksUpdated)...");
+            ESP_LOGI(TAGQ, "Monitoring playlist/curr track for changes...");
             waitForEvents(kEvtTracksUpdated);
-            CSPOT_LOG(info, "Playlist or current track changed, preloading track info...");
+            ESP_LOGW(TAGQ, "Playlist or current track changed");
             if (mCurrentTrackIdx < 0) {
                 continue;
             }
             // Make sure we have the newest access key
             accessKey = mAccessKeyFetcher.getAccessKey();
-            CSPOT_LOG(info, "Loading tracks around current index %d", mCurrentTrackIdx);
+            ESP_LOGI(TAGQ, "Preloading track info around current index %d", mCurrentTrackIdx);
             loadTrack(mCurrentTrackIdx);
-            vTaskDelay(100 / portTICK_PERIOD_MS); // give a chance to currentTrack() to return here
-            printf("=========loading track +1 details...\n");
+            vTaskDelay(pdMS_TO_TICKS(100)); // give a chance to currentTrack() to return here
+            ESP_LOGI(TAGQ, "Loading curr+1 info...");
             loadTrack(mCurrentTrackIdx + 1);
-            printf("=========loading track +2 details...\n");
+            ESP_LOGI(TAGQ, "Loading track+2 info...");
             loadTrack(mCurrentTrackIdx + 2);
-            printf("=========loading track -1 details...\n");
+            ESP_LOGI(TAGQ, "Loading track-1 info...");
             loadTrack(mCurrentTrackIdx - 1);
-            printf("==========done loading all track details...\n");
+            ESP_LOGI(TAGQ, "Done pre-loading track info of tracks around current");
         }
     }
     catch(std::exception& ex) {
-        CSPOT_LOG(info, "TrackQueue terminating due to exception '%s'", ex.what());
+        ESP_LOGE(TAGQ, "TrackQueue terminating due to exception '%s'", ex.what());
     }
     mEvents.setBits(kStateTerminated);
 }
@@ -463,7 +461,7 @@ TrackInfo::SharedPtr TrackQueue::currentTrack()
     for(;;) {
         if (mCurrentTrackIdx >= 0 && mCurrentTrackIdx < mTracks.size()) {
             auto& track = mTracks[mCurrentTrackIdx];
-            if (track.info && track.info->loadState() == TrackInfo::Loader::State::READY) {
+            if (track.info && track.info->loadState() == TrackInfo::Loader::kStateComplete) {
                 return track.info;
             }
         }
@@ -471,44 +469,97 @@ TrackInfo::SharedPtr TrackQueue::currentTrack()
         waitForEvents(kEvtTrackLoaded);
     }
 }
-
-bool TrackInfo::Loader::load(bool retry, int idx)
+const char* TrackInfo::Loader::stateToStr(TrackInfo::Loader::State state) {
+    switch(state) {
+        case kStateComplete: return "complete";
+        case kStateLoading: return "loading";
+        case kStateFailed: return "failed";
+        case kStatePending: return "pending";
+        default: return "(invalid)";
+    }
+}
+bool TrackInfo::Loader::load(int idx)
 {
     // assumes trackMutex is locked!
+    mState = kStateLoading;
     for (;;) {
         if (mQueue.mTaskStopReq) {
             return false;
         }
-        printf("==========load[%d]: state %d\n", idx, (int)mState);
-        switch (mState) {
-            case State::QUEUED:
-                stepLoadMetadata();
+        TRKLDR_LOGD("load track %d: metaData %s, audioKey: %s, cdnUrl: %s",
+            idx, stateToStr(mStateMetaData), stateToStr(mStateAudioKey), stateToStr(mStateCdnUrl));
+        switch (mStateMetaData) {
+            case kStateComplete:
                 break;
-            case State::KEY_REQUIRED:
-                stepLoadAudioKey();
-                break;
-            case State::CDN_REQUIRED:
-                stepLoadCDNUrl(mQueue.accessKey);
-                break;
-            case State::READY:
+            case kStatePending:
                 mLoadRetryCtr = 0;
-                mQueue.mEvents.setBits(TrackQueue::kEvtTrackLoaded);
-                CSPOT_LOG(info, "Details loaded for track %d: name: '%s'", idx, mTrack.name.c_str());
-                return true;
-            case State::FAILED:
-                CSPOT_LOG(info, "Details load failed for track %d", idx);
-                if (retry && resetForLoadRetry()) {
-                    delayBeforeRetry();
+                stepLoadMetadata();
+                goto waitEvent;
+            case kStateFailed:
+                TRKLDR_LOGE("Metadata load failed for track %d", idx);
+                if (resetForLoadRetry()) {
                     continue;
                 }
                 mQueue.mEvents.setBits(TrackQueue::kEvtTrackLoaded);
                 return false;
-            default:
-                break;
+            case kStateLoading: goto waitEvent;
+            default: myassert(false);
         }
-        scoped_unlock unlock(mQueue.mTracksMutex);
-        mQueue.waitForEvents(TrackQueue::kEvtTrackLoadStep);
+        switch(mStateAudioKey) {
+            case kStateComplete:
+                if (mStateCdnUrl == kStateComplete && mState == kStateLoading) {
+                    mState = kStateComplete;
+                    goto done;
+                }
+                break;
+            case kStateFailed:
+                mTrack.audioKey.clear();
+                if (++mLoadRetryCtr > kMaxLoadRetries) {
+                    goto failed;
+                }
+                [[fallthrough]];
+            case kStatePending:
+                mLoadRetryCtr = 0; // shared with metadata load: they are always sequential
+                stepLoadAudioKey();
+                break;
+            case kStateLoading: break;
+            default: myassert(false);
+        }
+        switch(mStateCdnUrl) {
+            case kStateComplete:
+                if (mStateAudioKey == kStateComplete && mState == kStateLoading) {
+                    mState = kStateComplete;
+                    goto done;
+                }
+                break;
+            case kStateFailed:
+                if (++mCdnUrlRetryCtr > kMaxLoadRetries) {
+                    goto failed;
+                }
+                [[fallthrough]];
+            case kStatePending:
+                mCdnUrlRetryCtr = 0;
+                stepLoadCDNUrl();
+                break;
+            case kStateLoading: break;
+            default: myassert(false);
+        }
+        waitEvent: {
+            scoped_unlock unlock(mQueue.mTracksMutex);
+            mQueue.waitForEvents(TrackQueue::kEvtTrackLoadStep);
+            continue;
+        }
     }
+failed:
+        mState = kStateFailed;
+        mQueue.mEvents.setBits(TrackQueue::kEvtTrackLoaded);
+        TRKLDR_LOGE("Failed to load track %d", idx);
+        return false;
+done:
+        mState = kStateComplete;
+        TRKLDR_LOGI("Info loaded for track %d: '%s'", idx, mTrack.name.c_str());
+        mQueue.mEvents.setBits(TrackQueue::kEvtTrackLoaded);
+        return true;
 }
 
 bool TrackQueue::nextTrack(bool nextPrev)
@@ -566,7 +617,7 @@ void TrackQueue::updateTracks(bool replace)
     mTracks.clear();
     mTracks.swap(mSpirc.mPlaybackState.remoteTracks);
     mCurrentTrackIdx = mSpirc.mPlaybackState.innerFrame.state.playing_track_index;
-    CSPOT_LOG(info, "Updated playlist");
+    ESP_LOGI(TAGQ, "Updated playlist");
     mTaskStopReq = false;
     mEvents.setBits(kEvtTracksUpdated);
 }

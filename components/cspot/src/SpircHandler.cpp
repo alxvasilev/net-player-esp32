@@ -19,7 +19,6 @@
 #include "protobuf/spirc.pb.h"  // for Frame, State, Frame_fields, MessageTy...
 
 using namespace cspot;
-static const char* TAG = "spirc";
 
 SpircHandler::SpircHandler(const LoginBlob& loginBlob, ITrackPlayer& trackPlayer)
     : mCtx(loginBlob), mPlaybackState(mCtx), mTrackQueue(*this), mPlayer(trackPlayer)

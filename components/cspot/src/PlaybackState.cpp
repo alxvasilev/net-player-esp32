@@ -179,35 +179,28 @@ std::vector<uint8_t> PlaybackState::encodeCurrentFrame(MessageType typ)
   innerFrame.has_state_update_id = true;
 
   this->seqNum += 1;
-  printf("==============encode frame\n");
   return pbEncode(Frame_fields, &innerFrame);
 }
 
 // Wraps messy nanopb setters. @TODO: find a better way to handle this
-void PlaybackState::addCapability(CapabilityType typ, int intValue,
-                                  std::vector<std::string> stringValue) {
-  innerFrame.device_state.capabilities[capabilityIndex].has_typ = true;
-  this->innerFrame.device_state.capabilities[capabilityIndex].typ = typ;
+void PlaybackState::addCapability(CapabilityType typ, int intValue, std::vector<std::string> stringValue)
+{
+  auto& cap = innerFrame.device_state.capabilities[capabilityIndex];
+  cap.has_typ = true;
+  cap.typ = typ;
 
   if (intValue != -1) {
-    this->innerFrame.device_state.capabilities[capabilityIndex].intValue[0] =
-        intValue;
-    this->innerFrame.device_state.capabilities[capabilityIndex].intValue_count =
-        1;
-  } else {
-    this->innerFrame.device_state.capabilities[capabilityIndex].intValue_count =
-        0;
+    cap.intValue[0] = intValue;
+    cap.intValue_count = 1;
+  }
+  else {
+    cap.intValue_count = 0;
   }
 
   for (int x = 0; x < stringValue.size(); x++) {
-    pbPutString(stringValue[x],
-                this->innerFrame.device_state.capabilities[capabilityIndex]
-                    .stringValue[x]);
+    pbPutString(stringValue[x], cap.stringValue[x]);
   }
-
-  this->innerFrame.device_state.capabilities[capabilityIndex]
-      .stringValue_count = stringValue.size();
-
+  cap.stringValue_count = stringValue.size();
   this->capabilityIndex += 1;
 }
 
@@ -275,7 +268,6 @@ bool PlaybackState::pbDecodeTrackRef(pb_istream_t* stream, const pb_field_t* fie
     }
     // Fill in GID when only URI is provided
     track.decodeURI(uri);
-    printf("===========decoded: %zu\n", trackQueue.size());
     return true;
 }
 bool PlaybackState::pbEncodeTrackList(pb_ostream_t* stream, const pb_field_t* field, void* const* arg)
@@ -285,7 +277,7 @@ bool PlaybackState::pbEncodeTrackList(pb_ostream_t* stream, const pb_field_t* fi
     int cnt = 0;
     for (auto rawTrack = rawTracks.head; rawTrack; rawTrack = rawTrack->next) {
         if (!pb_encode_tag_for_field(stream, field)) {
-            printf("pb_encode_tag_for_field failed\n");
+            SPIRC_LOGE("%s: pb_encode_tag_for_field failed", __FUNCTION__);
             return false;
         }
         bool ok;
@@ -297,15 +289,14 @@ bool PlaybackState::pbEncodeTrackList(pb_ostream_t* stream, const pb_field_t* fi
             ok = pb_encode_varint(stream, rawTrack->size);
         }
         if (!ok) {
-            printf("pb_write len failed\n");
+            SPIRC_LOGE("%s: pb_write len failed", __FUNCTION__);
             return false;
         }
         if (!pb_write(stream, rawTrack->data, rawTrack->size)) {
-            printf("pb_write failed\n");
+            SPIRC_LOGE("%s: pb_write raw trackref failed", __FUNCTION__);
             return false;
         }
         cnt++;
     }
-    printf("=========encoded tracklist: %d\n", cnt);
     return true;
 }
