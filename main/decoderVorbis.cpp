@@ -28,88 +28,105 @@ bool assignComment(const char* prefix, int pfxLen, unique_ptr_mfree<const char>&
         src++;
     }
 }
-StreamEvent DecoderVorbis::decode(AudioNode::PacketResult& dpr)
+StreamEvent DecoderVorbis::reinit(AudioNode::PacketResult& pr, bool isInitial)
 {
-    if (!outputFormat) {
-        int bytesIn = 0;
-        for (;;) {
-            auto event = mSrcNode.pullData(dpr);
-            if (event) {
-                return event;
-            }
-            auto& pkt = dpr.dataPacket();
-            mVorbis.write(pkt.data, pkt.dataLen);
-            bytesIn += pkt.dataLen;
-            if (bytesIn >= kInitChunkSize) {
-                break;
-            }
+    myassert(isInitial == !outputFormat);
+    int bytesIn;
+    if (!isInitial) {
+        mVorbis.reset(false);
+        bytesIn = mVorbis.pendingBytes();
+    }
+    else {
+        bytesIn = 0;
+    }
+    for (;;) {
+        auto event = mSrcNode.pullData(pr);
+        if (event) {
+            return event;
         }
-        auto ret = mVorbis.init();
-        if (ret <= 0) {
-            if (ret == 0) {
-                ESP_LOGE(TAG, "First chunk of size %d is too small to init decoder", bytesIn);
-            }
-            else {
-                ESP_LOGE(TAG, "Error %d initializing decoder", ret);
-            }
+        auto& pkt = pr.dataPacket();
+        mVorbis.write(pkt.data, pkt.dataLen);
+        bytesIn += pkt.dataLen;
+        if (bytesIn >= kInitChunkSize) {
+            break;
+        }
+    }
+    auto ret = mVorbis.init();
+    if (ret <= 0) {
+        if (ret == 0) {
+            ESP_LOGE(TAG, "Too little data (%d bytes) to init decoder", bytesIn);
+        }
+        else {
+            ESP_LOGE(TAG, "Error %d initializing decoder", ret);
+        }
+        return kErrDecode;
+    }
+    if (isInitial) {
+        outputFormat = getOutputFormat();
+        mParent.codecOnFormatDetected(outputFormat, 16);
+    }
+    else {
+        auto newFmt = getOutputFormat();
+        if (newFmt != outputFormat) {
+            ESP_LOGE(TAG, "Output format changed between chained files within the same stream");
             return kErrDecode;
         }
-        updateOutputFormat();
-
-        char** ptr = mVorbis.streamComments().user_comments;
-        if (*ptr) {
-            unique_ptr_mfree<const char> title;
-            unique_ptr_mfree<const char> artist;
-            do {
-                if (assignComment("TITLE=", 6, title, *ptr)) {
-                    if (artist) {
-                        break;
-                    }
-                }
-                else if (assignComment("ARTIST=", 7, artist, *ptr)) {
-                    if (title) {
-                        break;
-                    }
-                }
-                ptr++;
-            } while (*ptr);
-            if (title || artist) {
-                mParent.codecPostOutput(new TitleChangeEvent(title.release(), artist.release()));
-            }
-        }
-        return kNoError;
     }
-    DataPacket::unique_ptr pkt(DataPacket::create<true>(kTargetOutputSamples * 4));
+
+    char** ptr = mVorbis.streamComments().user_comments;
+    if (*ptr) {
+        unique_ptr_mfree<const char> title;
+        unique_ptr_mfree<const char> artist;
+        do {
+            if (assignComment("TITLE=", 6, title, *ptr)) {
+                if (artist) {
+                    break;
+                }
+            }
+            else if (assignComment("ARTIST=", 7, artist, *ptr)) {
+                if (title) {
+                    break;
+                }
+            }
+            ptr++;
+        } while (*ptr);
+        if (title || artist) {
+            mParent.codecPostOutput(new TitleChangeEvent(title.release(), artist.release()));
+        }
+    }
+    return kNoError;
+}
+StreamEvent DecoderVorbis::decode(AudioNode::PacketResult& pr)
+{
+    if (!outputFormat) {
+        auto event = reinit(pr, true);
+        if (event) {
+            return event;
+        }
+    }
+    DataPacket::unique_ptr pkt(DataPacket::create<true>(kTargetOutputSamples * 8));
     pkt->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
     int written = 0;
     while (written < kTargetOutputSamples) {
         int nSamples;
         while ((nSamples = mVorbis.numOutputSamples()) < 1) {
-        decode:
             int ret = mVorbis.decode();
             if (ret < 0) {
                 if (ret == OV_EOF) {
                     ESP_LOGI(TAG, "End of vorbis stream, resetting codec");
-                    mVorbis.reset(false);
-                    outputFormat.clear();
-                    return kNoError;
+                    return reinit(pr, false);
                 }
                 ESP_LOGW(TAG, "Decode error %d", ret);
                 return kErrDecode;
             }
             else if (ret == 0) {
-            /*    if (mVorbis.eos()) {
-                    ESP_LOGI(TAG, "Decode needs more data, but reached end of stream, resetting");
-                    reset();
-                    return kNoError;
-                } */
-                auto event = mSrcNode.pullData(dpr);
+                auto event = mSrcNode.pullData(pr);
                 if (event) {
                     return event;
                 }
-                auto& inPkt = dpr.dataPacket();
+                auto& inPkt = pr.dataPacket();
                 mVorbis.write(inPkt.data, inPkt.dataLen);
-                goto decode;
+                continue;
             }
         }
         int remain = std::min(nSamples, kTargetOutputSamples - written);
@@ -124,12 +141,8 @@ StreamEvent DecoderVorbis::decode(AudioNode::PacketResult& dpr)
     mParent.codecPostOutput(pkt.release());
     return kNoError;
 }
-void DecoderVorbis::updateOutputFormat()
+StreamFormat DecoderVorbis::getOutputFormat()
 {
     const auto& info = mVorbis.streamInfo();
-    outputFormat.setCodec(Codec(Codec::kCodecVorbis, Codec::kTransportOgg));
-    outputFormat.setSampleRate(info.rate);
-    outputFormat.setNumChannels(info.channels);
-    outputFormat.setBitsPerSample(16);
-    mParent.codecOnFormatDetected(outputFormat, 16);
+    return StreamFormat(Codec(Codec::kCodecVorbis, Codec::kTransportOgg), info.rate, 16, info.channels);
 }

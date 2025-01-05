@@ -6,13 +6,16 @@
 #include <ivorbiscodec.h>
 #include "codec_internal.h"
 #include <assert.h>
-
-#ifdef VORB_DEBUG
-  #define vorb_err(fmt,...) printf(fmt "\n", ##__VA_ARGS__)
-#else
-  #define vorb_err(fmt,...)
+#ifndef vorb_err
+    #define vorb_err(fmt,...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
 #endif
-#define vorb_dbg vorb_err
+#ifdef VORB_DEBUG
+  #ifndef vorb_dbg
+    #define vorb_dbg vorb_err
+  #endif
+#else
+    #define vorb_dbg(...)
+#endif
 
 class VorbisDecoder {
 protected:
@@ -26,6 +29,7 @@ protected:
     vorbis_dsp_state mVd; /* central working state for the packet->PCM decoder */
     vorbis_block     mVb; /* local working space for packet->PCM decode */
     bool mNeedMoreData = false;
+    bool mReachedEos = false;
     int setNeedMoreData() { mNeedMoreData = true; return 0; }
     template<typename T, int Bps>
     T convertSample(ogg_int32_t);
@@ -39,6 +43,7 @@ public:
         ogg_sync_wrote(&mOy, len);
         mNeedMoreData = false;
     }
+    int pendingBytes() const { return mOy.fill - mOy.returned; }
     bool eos() const { return ogg_page_eos(&mOg); }
     int streamSerialNo() const { return ogg_page_serialno(&mOg); }
     int64_t lastSamplePos() const { return ogg_page_granulepos(&mOg); }
@@ -56,17 +61,20 @@ public:
     const int64_t& granulePos() const { return mOs.granulepos; }
     int init()
     {
+        enum { kNumSyncRetries = 10 };
+        mReachedEos = false;
         /* We want the first page (which is guaranteed to be small and only contain the Vorbis
         stream initial header) We need the first page to get the stream serialno. */
         int ret;
         int i = 0;
-        for (; i < 40; i++) { // finite attempts to sync
+        // sync: read pages till beginning-of-stream page found
+        for (; i < kNumSyncRetries; i++) { // finite attempts to sync
             ret = ogg_sync_pageout(&mOy, &mOg);
             if (ret == 0) {
                 return setNeedMoreData();
             }
             else if (ret == 1) {
-                if (ogg_page_bos(&mOg)) { // skip pages till beginning-of-stream page found
+                if (ogg_page_bos(&mOg)) { // found beginning-of-stream page, bail out
                     break;
                 }
                 vorb_dbg("init: Skipping non-BOS page, with EOS=%d", ogg_page_eos(&mOg));
@@ -75,7 +83,7 @@ public:
                 vorb_dbg("init: No sync, retrying");
             }
         }
-        if (i == 10) {
+        if (i == kNumSyncRetries) {
             vorb_err("init: Invalid stream or couldn't find a BOS page");
             return -1;
         }
@@ -172,38 +180,51 @@ public:
     int decode()
     {
         for (;;) {
+          //consume packets already in buffer, if any
           for (;;) {
             int result = ogg_stream_packetout(&mOs, &mOp);
             if (result == 0) {
                 break;
             }
             else if(result < 0) { /* missing or corrupt data at this page position */
-                vorb_err("decode: Error reading packet, continuing...");
+                vorb_err("ogg_stream_packetout: error %d, continuing...", result);
                 continue;
             }
             result = vorbis_synthesis(&mVb, &mOp);
             if (result) {
+                vorb_err("vorbis_synthesis: error %d", result);
                 return result;
             }
             result = vorbis_synthesis_blockin(&mVd, &mVb);
+            if (result) {
+                vorb_err("vorbis_synthesis_blockin: error %d", result);
+            }
             return result ? result : 1;
           }
+          // feed a new page into buffer
           for(;;) {
-//              if (ogg_page_eos(&mOg)) {
-//                  return OV_EOF;
-//              }
+              if (mReachedEos) {
+                  return OV_EOF;
+              }
               // get more data
               int result = ogg_sync_pageout(&mOy, &mOg);
               if (result == 0) {
                   return setNeedMoreData(); /* need more data */
               }
               else if(result < 0) { /* missing or corrupt data at this page position */
-                  vorb_err("decode: Error reading page, continuing...");
+                  vorb_err("ogg_sync_pageout: error %d, continuing...", result);
                   continue;
               }
-              ogg_stream_pagein(&mOs, &mOg); /* can safely ignore errors at this point */
+              mReachedEos = ogg_page_eos(&mOg);
+              if (mReachedEos) {
+                  vorb_dbg("ogg_sync_pageout: EOS page detected");
+              }
+              result = ogg_stream_pagein(&mOs, &mOg);
+              if (result) {
+                  vorb_err("ogg_stream_pagein: error %d", result);
+              }
           }
-        }
+       }
     }
     template <typename T, int Bps=16>
     int getSamples(T* samples, int num)

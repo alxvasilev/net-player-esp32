@@ -87,7 +87,7 @@ public:
     }
     StreamFormat(Codec codec): mNumCode(0) { members.codec = codec; }
     StreamFormat(Codec::Type codec): mNumCode(0) { members.codec = codec; }
-    StreamFormat(Codec::Type codec, uint32_t sr, uint8_t bps, uint8_t channels): mNumCode(0)
+    StreamFormat(Codec codec, uint32_t sr, uint8_t bps, uint8_t channels): mNumCode(0)
     {
         initSampleFormat(sr, bps, channels);
         members.codec = codec;
