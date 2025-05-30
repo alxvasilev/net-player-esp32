@@ -53,7 +53,7 @@ http::Server gHttpServer;
 std::unique_ptr<AudioPlayer> player;
 std::unique_ptr<WifiBase> gWiFi;
 TaskList taskList;
-ST7735Display lcd(VSPI_HOST);
+ST7735Display lcd(VSPI_HOST, St7735Driver::k1_9inch320x170);
 NvsSimple nvsSimple;
 SDCard sdcard;
 NetLogger netLogger(false);
@@ -184,7 +184,7 @@ extern "C" void app_main(void)
     utils::detectSpiRam();
     configGpios();
 
-    lcd.init(320, 240, lcdPins);
+    lcd.init(lcdPins);
     lcd.dmaEnable(2, false);
     lcd.setFont(Font_7x11);
     lcd.puts("Mounting NVS...\n");
