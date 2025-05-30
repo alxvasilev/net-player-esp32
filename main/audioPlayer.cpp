@@ -18,13 +18,15 @@
 #include "wifi.hpp" // need reference to the global Wifi instance, for createDlnaHandler
 #include "asyncCall.hpp"
 
+#define kTopLineFont font_Camingo22
+#define kPlayStateFont font_Camingo22
 #define kStreamInfoFont font_Camingo22
 #define kTrackTitleFont font_CamingoBold43
 #define kArtistNameFont font_Camingo32
 
 const LcdColor kLcdColorBackground(0, 0, 128);
 const LcdColor kLcdColorCaption(255, 255, 128);
-const LcdColor kLcdColorGrid(0, 128, 128);
+const LcdColor kLcdColorGrid(0, 48, 128);
 const LcdColor kLcdColorStreamInfo(128, 255, 255);
 const LcdColor kLcdColorPlayState(0, 200, 0);
 const LcdColor kLcdColorNetSpeed_Normal = kLcdColorCaption;
@@ -141,6 +143,7 @@ void AudioPlayer::lcdInit()
     mTitleTextFrameBuf.setFgColor(kLcdColorCaption);
     mTitleTextFrameBuf.setFont(kTrackTitleFont);
     mVuDisplay.init(mNvsHandle);
+    mVuTopLine = mLcd.height() - kStreamInfoFont.height - 3 - mVuDisplay.height();
 }
 
 void AudioPlayer::initTimedDrawTask()
@@ -218,12 +221,13 @@ void AudioPlayer::lcdDrawGui()
     mLcd.setBgColor(0, 0, 128);
     mLcd.clear();
     mLcd.setFgColor(kLcdColorGrid);
-    mLcd.setFont(font_Camingo22);
-    mLcd.hLine(0, mLcd.width()-1, mLcd.fontHeight() + 3);
-    auto vuTop = mLcd.height() - mVuDisplay.height();
-    mLcd.hLine(0, mLcd.width()-1, vuTop - kStreamInfoFont.height - 4);
-    mLcd.hLine(0, mLcd.width()-1, vuTop - 2);
+    mLcd.hLine(0, mLcd.width() - 1, kTopLineFont.height + 1); // top line
+    mLcd.hLine(0, mLcd.width() - 1, audioFormatTextY() - 3); // bottom line with stream info
+    mLcd.setFgColor(LcdColor(0, 14, 128));
+    mLcd.hLine(0, mLcd.width() - 1, audioFormatTextY() - 3 - mVuDisplay.height() - 3); // vu meter top
+    vTaskDelay(100);
 }
+
 void AudioPlayer::setPlayerMode(PlayerMode mode)
 {
     if (mPlayerMode == mode) {
@@ -232,11 +236,11 @@ void AudioPlayer::setPlayerMode(PlayerMode mode)
     mPlayerMode = mode;
     mTrackInfo.reset();
     lcdUpdateTrackDisplay();
-    mLcd.setFont(font_Camingo22);
+    mLcd.setFont(kTopLineFont);
     mLcd.setBgColor(0, 0, 128);
-    mLcd.clear(0, 0, mLcd.width(), mLcd.fontHeight() + 2);
+    mLcd.clear(0, 0, mLcd.width(), mLcd.fontHeight() + 1);
     mLcd.setFgColor(kLcdColorCaption);
-    mLcd.gotoXY(1, 1);
+    mLcd.gotoXY(1, kLcdTopLineTextY);
     mLcd.puts(playerModeToStr(mPlayerMode));
 }
 void AudioPlayer::lcdUpdateTrackDisplay()
@@ -270,13 +274,14 @@ void AudioPlayer::lcdUpdateStationInfo()
     lcdUpdateArtistName(station.name());
     lcdUpdateTrackTitle(nullptr);
 // station flags
+    mLcd.cursorY = kLcdTopLineTextY;
     mLcd.setFont(kPictoFont);
-    mLcd.cursorY = 0;
     mLcd.cursorX = (mLcd.width() - mLcd.charWidth(kSymFavorite)) / 2;
     if (station.flags() & Station::kFlagFavorite) {
         mLcd.setFgColor(255, 0, 0);
         mLcd.putc(kSymFavorite);
-    } else {
+    }
+    else {
         mLcd.putc(kSymBlank);
     }
 }
@@ -323,30 +328,37 @@ void AudioPlayer::lcdUpdateTitleAndArtist(const char* title, const char* artist)
 }
 void AudioPlayer::lcdUpdatePlayState(const char* text, bool isRecording)
 {
-    mLcd.setFont(font_Camingo22);
+    mLcd.setFont(kPlayStateFont);
     mLcd.clear(0, kLcdPlayStateLineY, mLcd.width(), mLcd.fontHeight());
     if (text) {
         mLcd.setFgColor(kLcdColorPlayState);
         mLcd.gotoXY(0, kLcdPlayStateLineY);
         mLcd.putsCentered(text);
-        return;
     }
-    // playing, maybe display REC indicator
+    lcdUpdateRecordingState(isRecording);
+}
+void AudioPlayer::lcdUpdateRecordingState(bool isRecording)
+{
+    auto x = mLcd.textWidth(playerModeToStr(mPlayerMode)) + 20;
+    mLcd.setBgColor(kLcdColorBackground);
     if (isRecording) {
         mLcd.setFgColor(255, 0, 0);
     }
     else { // maybe display a REC-enabled-but-not-active indicator
-        if ((mPlayerMode != kModeRadio) || !mStreamIn.get() || !stationList) {
-            return;
+        if ((mPlayerMode == kModeRadio) && mStreamIn.get() && stationList) {
+            auto& station = stationList->currStation;
+            if (station.isValid() && (station.flags() & Station::kFlagRecord)) {
+                mLcd.setFgColor(LcdColor(0, 255, 0)); // orange
+            }
+            else {
+                mLcd.clear(x, kLcdTopLineTextY, mLcd.textWidth(kTopLineFont, 3), kTopLineFont.height);
+                return;
+            }
         }
-        auto& station = stationList->currStation;
-        if (!station.isValid() || !(station.flags() & Station::kFlagRecord)) {
-            return;
-        }
-        mLcd.setFgColor(0xF68E); // orange
     }
-    mLcd.gotoXY(0, kLcdPlayStateLineY);
-    mLcd.putsCentered("rec");
+    mLcd.setFont(kTopLineFont);
+    mLcd.gotoXY(x, 0);
+    mLcd.puts("rec");
 }
 
 std::string AudioPlayer::printPipeline()
@@ -1146,7 +1158,7 @@ void AudioPlayer::lcdTimedDrawTask()
                 mVolumeInterface->clearAudioLevelsNoEvent();
             }
             mVuDisplay.update(mVuLevels);
-            mLcd.dmaBlit(0, mLcd.height() - mVuDisplay.height(), mLcd.width(), mVuDisplay.height());
+            mLcd.dmaBlit(0, mVuTopLine, mLcd.width(), mVuDisplay.height());
         }
         else {
             if (mTitleScrollEnabled == 1) {
@@ -1298,7 +1310,7 @@ void AudioPlayer::lcdUpdateAudioFormat()
 }
 int16_t AudioPlayer::audioFormatTextY() const
 {
-    return mLcd.height() - mVuDisplay.height() - kStreamInfoFont.height - 2;
+    return mLcd.height() - kStreamInfoFont.height;
 }
 void AudioPlayer::lcdClearAudioFormat()
 {

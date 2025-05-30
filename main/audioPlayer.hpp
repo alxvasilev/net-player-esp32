@@ -66,7 +66,8 @@ protected:
         kMaxTrackTitleLen = 100
     };
     enum {
-        kLcdArtistNameLineY = 38, kLcdPlayStateLineY = 76, kLcdTrackTitleY = 106,
+        kLcdTopLineTextY = 1,
+        kLcdArtistNameLineY = 36, kLcdTrackTitleY = 74, kLcdPlayStateLineY = kLcdTrackTitleY,
         kBufLowMinGreen = 32 // minimum green component of low (but not underrun) buf netspeed color
     };
     enum {
@@ -103,6 +104,7 @@ protected:
     Color565 mFontColor = Color565(255, 255, 128);
     VuDisplay mVuDisplay;
     IAudioVolume::StereoLevels mVuLevels = {0,0};
+    int16_t mVuTopLine = -1;
 // track name scroll stuff
     DynBuffer mLcdTrackTitle;
     int16_t mTitleTextWidth = -1;
@@ -138,6 +140,7 @@ protected:
     void lcdDrawGui();
     void initTimedDrawTask();
     void lcdUpdatePlayState(const char* text, bool isRecording = false);
+    void lcdUpdateRecordingState(bool isRecording);
     void lcdBlitTrackTitle();
     void lcdUpdateTrackTitle(const char* buf, int len = -1);
     void lcdScrollTrackTitle();
