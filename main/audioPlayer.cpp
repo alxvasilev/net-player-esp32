@@ -234,7 +234,8 @@ void AudioPlayer::setPlayerMode(PlayerMode mode)
     }
     mPlayerMode = mode;
     mTrackInfo.reset();
-    lcdUpdateTrackDisplay();
+    lcdClearTrackAndArtist();
+    lcdClearAudioFormat();
     mLcd.setFont(kTopLineFont);
     mLcd.setBgColor(kLcdColorBackground);
     mLcd.clear(0, 0, mLcd.width(), mLcd.fontHeight() + 1);
@@ -249,19 +250,26 @@ void AudioPlayer::lcdUpdateTrackDisplay()
             lcdUpdateStationInfo();
         }
     }
-    else if (mTrackInfo) {
-        lcdUpdateTitleAndArtist(mTrackInfo->trackName, mTrackInfo->artistName);
-    }
-    else if (mStreamIn && mStreamIn->type() == AudioNode::kTypeHttpIn) {
-        lcdUpdateArtistName("Playing URL");
-        auto& http = *static_cast<HttpNode*>(mStreamIn.get());
-        MutexLocker locker(http.mMutex);
-        lcdUpdateTrackTitle(http.url());
+    else if (!mTrackInfo || !(mTrackInfo->trackName || mTrackInfo->artistName)) {
+        if (mStreamIn && mStreamIn->type() == AudioNode::kTypeHttpIn) { // get URL from http node (prefer over mTrackInfo->url)
+            auto& http = *static_cast<HttpNode*>(mStreamIn.get());
+            MutexLocker locker(http.mMutex);
+            lcdUpdateArtistName("Playing URL"); // TODO: Show URL host
+            const auto url = http.url();
+            lcdUpdateTrackTitle(url ? getUrlFile(url) : nullptr);
+        }
+        else {
+            lcdClearTrackAndArtist();
+        }
     }
     else {
-        lcdUpdateArtistName(nullptr);
-        lcdUpdateTrackTitle(nullptr);
+        lcdUpdateTitleAndArtist(mTrackInfo->trackName, mTrackInfo->artistName);
     }
+}
+void AudioPlayer::lcdClearTrackAndArtist()
+{
+    lcdUpdateArtistName(nullptr);
+    lcdUpdateTrackTitle(nullptr);
 }
 void AudioPlayer::lcdUpdateStationInfo()
 {
@@ -325,41 +333,47 @@ void AudioPlayer::lcdUpdateTitleAndArtist(const char* title, const char* artist)
         lcdUpdateTrackTitle(marquee.c_str(), marquee.size());
     }
 }
-void AudioPlayer::lcdUpdatePlayState(const char* text, bool isRecording)
+void AudioPlayer::lcdUpdatePlayState(const char* text, bool isError)
 {
-    mLcd.setFont(kPlayStateFont);
-    mLcd.clear(0, kLcdPlayStateLineY, mLcd.width(), mLcd.fontHeight());
     if (text) {
-        mLcd.setFgColor(kLcdColorPlayState);
+        if (mPlayStateDisplayed) {
+            mLcd.clear(0, kLcdTrackTitleY, mLcd.width(), kTrackTitleFont.height);
+        }
+        else {
+            lcdUpdateTrackTitle(nullptr);
+            mPlayStateDisplayed = true;
+        }
+        mLcd.setFgColor(isError ? LcdColor::RED : kLcdColorPlayState);
         mLcd.gotoXY(0, kLcdPlayStateLineY);
+        mLcd.setFont(kPlayStateFont);
         mLcd.putsCentered(text);
     }
-    lcdUpdateRecordingState(isRecording);
-}
-void AudioPlayer::lcdUpdateRecordingState(bool isRecording)
-{
-    auto x = mLcd.textWidth(playerModeToStr(mPlayerMode)) + 20;
-    mLcd.setBgColor(kLcdColorBackground);
-    if (isRecording) {
-        mLcd.setFgColor(255, 0, 0);
+    else { // playing
+        mPlayStateDisplayed = false;
+        lcdUpdateTrackDisplay();
     }
-    else { // maybe display a REC-enabled-but-not-active indicator
-        if ((mPlayerMode == kModeRadio) && mStreamIn.get() && stationList) {
-            auto& station = stationList->currStation;
-            if (station.isValid() && (station.flags() & Station::kFlagRecord)) {
-                mLcd.setFgColor(LcdColor(0, 255, 0)); // orange
-            }
-            else {
-                mLcd.clear(x, kLcdTopLineTextY, mLcd.textWidth(kTopLineFont, 3), kTopLineFont.height);
-                return;
+    lcdUpdateRecordingState();
+}
+void AudioPlayer::lcdUpdateRecordingState()
+{
+    mLcd.setFont(kTopLineFont);
+    mLcd.setBgColor(kLcdColorBackground);
+    if (mPlayerMode == kModeRadio) {
+        if (mStreamIn) {
+            // maybe display a REC-enabled-but-not-active indicator
+            auto& http = *static_cast<HttpNode*>(mStreamIn.get());
+            if (http.recordingIsEnabled()) {
+                mLcd.setFgColor(http.recordingIsActive() ? LcdColor::RED : LcdColor(0, 64, 255));
+                goto drawInd;
             }
         }
+        mLcd.clear(kLcdRecIndicatorX, kLcdTopLineTextY, mLcd.textWidth(kTopLineFont, 3), kTopLineFont.height);
     }
-    mLcd.setFont(kTopLineFont);
-    mLcd.gotoXY(x, 0);
+    return;
+drawInd:
+    mLcd.gotoXY(kLcdRecIndicatorX, 0);
     mLcd.puts("rec");
 }
-
 std::string AudioPlayer::printPipeline()
 {
     std::string result;
@@ -428,14 +442,16 @@ void AudioPlayer::destroyPipeline()
 
 bool AudioPlayer::doPlayUrl(TrackInfo* trackInfo, PlayerMode playerMode, const char* record)
 {
+    myassert(trackInfo);
     myassert(playerMode & (int)AudioNode::kTypeHttpIn);
     switchMode(playerMode, false);
     mTrackInfo.reset(trackInfo);
+    lcdClearAudioFormat();
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
     // setUrl will start the http node, if it's stopped. However, this may take a while.
     // If we meanwhile start the i2s out node, it will start to pull data from the not-yet-started http node,
     // whose state may not be set up correctly for the new stream (i.e. waitingPrefill not set)
-    stop(nullptr);
+    stop("");
     lcdUpdateTrackDisplay();
     lcdResetNetSpeedIndication();
     http.setUrlAndStart(HttpNode::UrlInfo::Create(trackInfo->url, getNewStreamId(), record));
@@ -549,13 +565,13 @@ void AudioPlayer::stop()
 {
     stop("Stopped");
 }
-void AudioPlayer::stop(const char* caption)
+void AudioPlayer::stop(const char* caption, bool isError)
 {
     pipelineStop();
     if (mVuLevelInterface) {
         mVuLevelInterface->clearAudioLevels();
     }
-    lcdUpdatePlayState(caption);
+    lcdUpdatePlayState(caption, isError);
     if (mDlna) {
         mDlna->notifyPlayStop();
     }
@@ -1073,7 +1089,7 @@ void AudioPlayer::onNodeError(AudioNode& node, int error, uintptr_t arg)
         const char* errName = streamEventToStr((StreamEvent)error);
         ESP_LOGW(TAG, "Error %s from node '%s', stopping pipeline", errName, nodeName.c_str());
         LOCK_PLAYER();
-        stop(errName);
+        stop(errName, true);
     });
 }
 
@@ -1170,6 +1186,9 @@ void AudioPlayer::lcdTimedDrawTask()
 
 void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int len)
 {
+    if (mPlayStateDisplayed) {
+        return;
+    }
     if (!buf || !buf[0] || !len) {
         mTitleScrollEnabled = false;
         mLcdTrackTitle.clear();

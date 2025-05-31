@@ -66,7 +66,7 @@ protected:
         kMaxTrackTitleLen = 100
     };
     enum {
-        kLcdTopLineTextY = 1,
+        kLcdTopLineTextY = 1, kLcdRecIndicatorX = 90,
         kLcdArtistNameLineY = 36, kLcdTrackTitleY = 74, kLcdPlayStateLineY = kLcdTrackTitleY,
         kBufLowMinGreen = 32 // minimum green component of low (but not underrun) buf netspeed color
     };
@@ -85,7 +85,6 @@ protected:
     IAudioVolume* mVolumeInterface = nullptr;
     IAudioVolume* mVuLevelInterface = nullptr;
     int64_t mTsLastVuLevel = 0;
-    bool mStopping = false; // set while stopping the pipeline, to ignore error signalled by nodes during the process
     NvsHandle mNvsHandle;
     ST7735Display& mLcd;
     LcdFrameBuf mDmaFrameBuf;
@@ -100,7 +99,9 @@ protected:
     uint16_t mBufLowDisplayGradient = 0;
     int16_t mMuteVolume = -1;
     uint8_t mVolumeCap;
-// general display stuff
+    bool mStopping = false; // set while stopping the pipeline, to ignore error signalled by nodes during the process
+    // general display stuff
+    bool mPlayStateDisplayed = true; // Prevents display of artist while we have "Connecting...", "Buffering..." etc displayed
     Color565 mFontColor = Color565(255, 255, 128);
     VuDisplay mVuDisplay;
     IAudioVolume::StereoLevels mVuLevels = {0,0};
@@ -139,12 +140,13 @@ protected:
     void lcdInit();
     void lcdDrawGui();
     void initTimedDrawTask();
-    void lcdUpdatePlayState(const char* text, bool isRecording = false);
-    void lcdUpdateRecordingState(bool isRecording);
+    void lcdUpdatePlayState(const char* text, bool isError = false);
+    void lcdUpdateRecordingState();
     void lcdBlitTrackTitle();
     void lcdUpdateTrackTitle(const char* buf, int len = -1);
     void lcdScrollTrackTitle();
     void lcdUpdateArtistName(const char* name);
+    void lcdClearTrackAndArtist();
     void lcdUpdateTitleAndArtist(const char* title, const char* artist);
     void lcdUpdateStationInfo();
     void lcdUpdateTrackDisplay();
@@ -197,7 +199,7 @@ public:
     void pause();
     void resume();
     void stop();
-    void stop(const char* caption);
+    void stop(const char* caption, bool isError=false);
     uint32_t positionTenthSec() const;
     static bool playerModeIsValid(PlayerMode mode);
     int volumeGet();
