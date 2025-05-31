@@ -1,7 +1,7 @@
 # Name,   Type, SubType,  Offset,   Size,  Flags
-nvs,      data, nvs,      ,         16K
+nvs,      data, nvs,      0x9000,   16K
 otadata,  data, ota,      ,         8K
 phy_init, data, phy,      ,         4K
-storage,  data, spiffs,	  0x10000,  320K
-factory,  app,  factory,  0x60000,  704K
-ota_0,    app,  ota_0,    0x110000, 3008K
+storage,  data, spiffs,	  ,         320K
+recovery, app,  factory,  ,         768K
+app,      app,  ota_0,    0x120000, 2944K

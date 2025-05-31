@@ -21,6 +21,7 @@
 #include <nvsSimple.hpp>
 #include <nvs_flash.h>
 #include <mdns.hpp>
+#include <asyncCall.hpp>
 #include "rtcSharedMem.hpp"
 
 static constexpr ST7735Display::PinCfg lcdPins = {
@@ -39,21 +40,29 @@ const int kRxChunkBufSize = 8192;
 const char kPercentCompleteSuffix[] = "% complete";
 esp_ota_handle_t gOtaPreparedHandle; // 0 is an invalid value in the current implementation, but not documented
 bool gOtaPreparedHandleValid = false;
+ST7735Display lcd(VSPI_HOST, St7735Driver::k1_9inch320x170);
 
-enum {
-    kLcdLogFirstLine = 30,
-    kLcdOperationTxtY = 186, kLcdProgressPercentTxtY = kLcdOperationTxtY + 31,
-    kLcdProgressPercentBarY = kLcdOperationTxtY + 26, kLcdProgressPercentBarHeight = 2
-};
+typedef St7735Driver::Coord Coord;
+const Coord kLcdLogFirstLine = 30;
+const Coord kLcdOperationTxtY = lcd.height() - 54;
+const Coord kLcdProgressPercentTxtY = kLcdOperationTxtY + 31;
+const Coord kLcdProgressPercentBarY = kLcdOperationTxtY + 26;
+const Coord kLcdProgressPercentBarHeight = 2;
+int lastDisplayedPercent = 0;
 
 extern Font font_Camingo22;
-ST7735Display lcd(VSPI_HOST);
 NvsSimple nvs;
 std::unique_ptr<WifiBase> wifi;
 http::Server server;
 MDns mdns;
 
-void lcdDrawFlashWriteScreen(const char* msg, bool displayProgress)
+void gotoPercentPos()
+{
+    static Coord x = (lcd.width() - lcd.textWidth(5 + sizeof(kPercentCompleteSuffix) - 1)) / 2;
+    lcd.gotoXY(x, kLcdProgressPercentTxtY);
+}
+
+void lcdDrawProgressScreen(const char* msg, bool displayProgress)
 {
     ESP_LOGW(TAG, "%s", msg);
     lcd.setFont(font_Camingo22);
@@ -61,24 +70,28 @@ void lcdDrawFlashWriteScreen(const char* msg, bool displayProgress)
     lcd.clear(0, kLcdProgressPercentTxtY, lcd.width(), lcd.fontHeight());
     lcd.clear(0, kLcdProgressPercentBarY, lcd.width(), kLcdProgressPercentBarHeight);
     lcd.gotoXY(0, kLcdOperationTxtY);
+    lcd.setFgColor(Color565::WHITE);
     lcd.putsCentered(msg);
     if (!displayProgress) {
         return;
     }
-    auto txtWidth = lcd.textWidth(3 + sizeof(kPercentCompleteSuffix) - 1);
-    auto txtStart = (lcd.width() - txtWidth) / 2;
-    lcd.gotoXY(txtStart, kLcdProgressPercentTxtY);
+    gotoPercentPos();
     lcd.puts("  0");
     lcd.puts(kPercentCompleteSuffix);
+    lastDisplayedPercent = 0;
 }
 
 void lcdUpdateProgress(int pct)
 {
+    if (pct == lastDisplayedPercent) {
+        return;
+    }
     char num[5];
     toString(num, sizeof(num), fmtInt(pct, 0, 3));
-    auto txtWidth = lcd.textWidth(3 + sizeof(kPercentCompleteSuffix) - 1);
-    lcd.gotoXY((lcd.width() - txtWidth) / 2, kLcdProgressPercentTxtY);
+    gotoPercentPos();
+    lcd.setFgColor(Color565::WHITE);
     lcd.puts(num);
+    lcd.setFgColor(Color565::GREEN);
     lcd.fillRect(0, kLcdProgressPercentBarY, lcd.width() * pct / 100, kLcdProgressPercentBarHeight);
 }
 const char* setBootPartition(const esp_partition_t* appPartition)
@@ -105,7 +118,7 @@ esp_err_t openAndEraseOtaPartition(esp_ota_handle_t& otaHandle, size_t imgSize)
 {
     ElapsedTimer timer;
     auto partition = esp_ota_get_next_update_partition(NULL);
-    lcdDrawFlashWriteScreen("Erasing partition...", false);
+    lcdDrawProgressScreen("Erasing partition...", false);
     esp_err_t err = esp_ota_begin(partition, imgSize, &otaHandle);
     if (err == ESP_ERR_OTA_ROLLBACK_INVALID_STATE) {
         ESP_LOGW(TAG, "Invalid OTA state of running app, trying to set it");
@@ -144,7 +157,7 @@ esp_err_t httpOta(httpd_req_t *req)
             return ESP_FAIL;
         }
     }
-    lcdDrawFlashWriteScreen("Flashing firmware...", true);
+    lcdDrawProgressScreen("Flashing firmware...", true);
     char otaBuf[kRxChunkBufSize];
     int totalRx = 0;
     ESP_LOGI(TAG, "Receiving and flashing image...");
@@ -181,7 +194,7 @@ esp_err_t httpOta(httpd_req_t *req)
         asyncCall([]() {
             ESP_LOGI(TAG, "Restarting system...");
             esp_restart();
-        }, 500000);
+        }, 10);
     }
     httpd_resp_sendstr(req, "OTA update successful");
     return ESP_OK;
@@ -290,18 +303,18 @@ bool checkHandleRebootFlags()
     if (flags & kRecoveryFlagEraseImmediately) {
         auto err = openAndEraseOtaPartition(gOtaPreparedHandle, OTA_SIZE_UNKNOWN);
         gOtaPreparedHandleValid = (err == ESP_OK);
-        lcdDrawFlashWriteScreen("Waiting for image...", false);
+        lcdDrawProgressScreen("Waiting for image...", false);
     }
     return true;
 }
 extern "C" void app_main(void)
 {
-    lcd.init(320, 240, lcdPins);
+    lcd.init(lcdPins);
     lcd.setFont(Font_7x11, 2);
     lcd.gotoXY(0, 0);
-    lcd.setFgColor(255, 255, 0);
-    lcd.putsCentered("Recovery mode\n");
-    lcd.setFgColor(255, 255, 255);
+    lcd.setFgColor(Color565::YELLOW);
+    lcd.putsCentered("Recovery mode");
+    lcd.setFgColor(Color565::WHITE);
     setBootPartition(nullptr);
 
     checkHandleRebootFlags();
@@ -310,10 +323,10 @@ extern "C" void app_main(void)
     lcd.gotoXY(0, kLcdLogFirstLine);
     auto err = connectToWiFi();
     if (err) {
-        lcd.setFgColor(255, 0, 0);
+        lcd.setFgColor(Color565::RED);
         lcd.puts("WiFi error: ");
         lcd.puts(err);
-        lcd.setFgColor(255, 255, 255);
+        lcd.setFgColor(Color565::WHITE);
         lcd.newLine();
         lcd.cursorY += 2;
         lcd.puts("Starting AP\n");

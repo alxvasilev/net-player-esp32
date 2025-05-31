@@ -25,7 +25,7 @@
 #define kArtistNameFont font_Camingo32
 
 const LcdColor kLcdColorBackground(0, 0, 128);
-const LcdColor kLcdColorCaption(255, 255, 128);
+const LcdColor kLcdColorCaption(255, 255, 0);
 const LcdColor kLcdColorGrid(0, 48, 128);
 const LcdColor kLcdColorStreamInfo(128, 255, 255);
 const LcdColor kLcdColorPlayState(0, 200, 0);
@@ -223,9 +223,8 @@ void AudioPlayer::lcdDrawGui()
     mLcd.setFgColor(kLcdColorGrid);
     mLcd.hLine(0, mLcd.width() - 1, kTopLineFont.height + 1); // top line
     mLcd.hLine(0, mLcd.width() - 1, audioFormatTextY() - 3); // bottom line with stream info
-    mLcd.setFgColor(LcdColor(0, 14, 128));
+    mLcd.setFgColor(LcdColor(0, 14, 128)); // line between song name and VU display - very subtle
     mLcd.hLine(0, mLcd.width() - 1, audioFormatTextY() - 3 - mVuDisplay.height() - 3); // vu meter top
-    vTaskDelay(100);
 }
 
 void AudioPlayer::setPlayerMode(PlayerMode mode)
@@ -237,7 +236,7 @@ void AudioPlayer::setPlayerMode(PlayerMode mode)
     mTrackInfo.reset();
     lcdUpdateTrackDisplay();
     mLcd.setFont(kTopLineFont);
-    mLcd.setBgColor(0, 0, 128);
+    mLcd.setBgColor(kLcdColorBackground);
     mLcd.clear(0, 0, mLcd.width(), mLcd.fontHeight() + 1);
     mLcd.setFgColor(kLcdColorCaption);
     mLcd.gotoXY(1, kLcdTopLineTextY);
