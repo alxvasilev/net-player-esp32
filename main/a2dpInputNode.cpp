@@ -392,10 +392,6 @@ A2dpInputNode::A2dpInputNode(AudioPlayer& player, bool manageDiscoverable)
 }
 void A2dpInputNode::onStopped()
 {
-    auto err = esp_a2d_sink_disconnect(mPeerAddr); // FIXME: Maybe move this to the destructor
-    if (err) {
-        ESP_LOGW(mTag, "Error %s disconnecting bluetooth source", esp_err_to_name(err));
-    }
 }
 void A2dpInputNode::onVolumeChange(int vol)
 {
@@ -408,6 +404,10 @@ void A2dpInputNode::onVolumeChange(int vol)
 }
 A2dpInputNode::~A2dpInputNode()
 {
+    auto err = esp_a2d_sink_disconnect(mPeerAddr);
+    if (err) {
+        ESP_LOGW(mTag, "Error %s disconnecting bluetooth source", esp_err_to_name(err));
+    }
     esp_a2d_sink_register_data_callback(nullptr);
     esp_avrc_ct_register_callback(nullptr);
     esp_avrc_tg_register_callback(nullptr);
