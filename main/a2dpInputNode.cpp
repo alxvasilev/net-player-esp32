@@ -317,6 +317,7 @@ void A2dpInputNode::avrcTargetHandleEvent(esp_avrc_tg_cb_event_t event, esp_avrc
 }
 void A2dpInputNode::sDataCallback(const uint8_t* data, uint32_t len)
 {
+    // typically len is 4096
     if (!gSelf || gSelf->state() != AudioNode::kStateRunning) {
         return;
     }
@@ -374,7 +375,8 @@ void A2dpInputNode::uninstall()
     esp_a2d_sink_deinit();
 }
 A2dpInputNode::A2dpInputNode(AudioPlayer& player, bool manageDiscoverable)
-: AudioNodeWithState(player, TAG), mPlayer(player), mManageDiscoverable(manageDiscoverable)
+    : AudioNodeWithState(player, TAG), mPlayer(player),
+      mRingBuf(StreamFormat(Codec::KCodecSbc).prefillAmount() + 1), mManageDiscoverable(manageDiscoverable)
 {
     if (gSelf) {
         ESP_LOGE(TAG, "Only a single instance is allowed, and one already exists");
@@ -414,14 +416,7 @@ A2dpInputNode::~A2dpInputNode()
 StreamEvent A2dpInputNode::pullData(PacketResult& dpr)
 {
     if (!mRingBuf.dataSize()) {
-        if (!mWaitingPrefill) {
-            mWaitingPrefill = true;
-            mRingBuf.pushBack(new PrefillEvent(mStreamId, ""));
-            ESP_LOGW(mTag, "Underrun");
-        }
-        else {
-            ESP_LOGW(mTag, "Data requested while waiting prefill");
-        }
+        ESP_LOGW(mTag, "Underrun");
     }
     auto pkt = mRingBuf.popFront();
     if (pkt) {

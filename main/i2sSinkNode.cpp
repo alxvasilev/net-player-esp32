@@ -93,7 +93,6 @@ bool I2sOutputNode::dispatchCommand(Command &cmd)
 }
 void I2sOutputNode::onStopped()
 {
-    printf("onStopped\n");
     muteDac();
 }
 void I2sOutputNode::nodeThreadFunc()
@@ -106,6 +105,7 @@ void I2sOutputNode::nodeThreadFunc()
             return;
         }
         if (mWaitingPrefill) {
+            ESP_LOGI(mTag, "Prefill wait: stopping and waiting for command...");
             continue;
         }
         myassert(mState == kStateRunning);

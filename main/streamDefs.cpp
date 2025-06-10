@@ -29,7 +29,7 @@ int StreamFormat::prefillAmount() const
             return val ? val : (16 * 2 * 2 * 44100 * kHalfSecs) >> 4;
         }
         case Codec::KCodecSbc:
-            return 2048; // Bluetooth sink should do minimum buffering
+            return 8192; // Bluetooth sink should do minimum buffering
         default:
             return (256 * 1024 * kHalfSecs) >> 4;
     }

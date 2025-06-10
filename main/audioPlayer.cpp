@@ -1100,11 +1100,10 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t arg1, u
     if (event == AudioNode::kEventTitleChanged) {
         asyncCall([this, arg1, arg2]() {
             LOCK_PLAYER();
-            ElapsedTimer t;
-            lcdUpdateTitleAndArtist((const char*)arg1, (const char*)arg2);
+            mTrackInfo.reset(TrackInfo::Create("", (const char*) arg1, (const char*) arg2, 0));
             free((void*)arg1);
             free((void*)arg2);
-            printf("set title: %d\n", t.msElapsed());
+            lcdUpdateTrackDisplay();
         });
     }
     else if (event == AudioNode::kEventNewStream) {

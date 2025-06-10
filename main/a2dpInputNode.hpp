@@ -27,7 +27,7 @@ protected:
     static ConnectCb gConnectCb;
     static A2dpInputNode* gSelf; // bluetooth callbacks don't have a user pointer
     AudioPlayer& mPlayer;
-    StreamRingQueue<100> mRingBuf;
+    StreamRingQueue<10> mRingBuf;
     StreamFormat mSourceFormat;
     LinkSpeedProbe mSpeedProbe;
     uint32_t mWaitingPrefill = 0;

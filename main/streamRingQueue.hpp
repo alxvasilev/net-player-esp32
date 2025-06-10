@@ -12,17 +12,23 @@ protected:
     typedef RingQueue<StreamPacket*, N> Base;
     enum { kFlagHasData = kFlagLast << 1 };
     int mDataSize = 0;
+    int mMaxDataSize;
+    bool full_nolock() const {
+        return (mDataSize >= mMaxDataSize) || Base::full();
+    }
 public:
     mutable Mutex mMutex;
     using Base::capacity;
     using Base::empty; // doesn't need locking - is a single primtive member read
+    StreamRingQueue(int maxDataSize = std::numeric_limits<int>::max())
+        : mMaxDataSize(maxDataSize) {}
     int size() const {
         MutexLocker locker(mMutex);
         return Base::size();
     }
     bool full() const {
         MutexLocker locker(mMutex);
-        return Base::full();
+        return (mDataSize >= mMaxDataSize) || Base::full();
     }
     template <class CB>
     void iterate(CB&& cb) {
@@ -99,10 +105,20 @@ public:
         return front();
     }
     int dataSize() const { return mDataSize; }
-    /** Must not be locked */
+    int maxDataSize() const { return mMaxDataSize; }
+    /**
+     * If there is no space in the queue, or dataSize() is equal or greater than the max data size,
+     * the function blocks, waiting for space to become available after a read. The queue is unlocked
+     * during the wait, allowing a read from another thread.
+     * NOTES:
+     * - Queue must not be locked when calling this method, to allow its unlocking in case of wait
+     * - The queue dataSize() may exceed the specified maximum after the packet is added.
+     *   Only the dataSize() before the operation is checked against the maximum, and no check is made
+     *   whether the resulting size after the addition would exceed the maximum.
+     */
     bool pushBack(StreamPacket* item) {
         MutexLocker locker(mMutex);
-        while (Base::full()) {
+        while (full_nolock()) {
             MutexUnlocker unlocker(mMutex);
             auto ret = waitForReadOp(-1);
             if (ret <= 0) {
@@ -122,7 +138,7 @@ public:
             }
         }
         EventBits_t bitsToClear = kFlagIsEmpty;
-        if (Base::full()) {
+        if (full_nolock()) {
             bitsToClear |= kFlagHasSpace;
         }
         mEvents.clearBits(bitsToClear);
