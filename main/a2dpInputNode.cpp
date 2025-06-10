@@ -175,9 +175,7 @@ void A2dpInputNode::postStreamStart(StreamFormat fmt)
     mStreamId = mPipeline.getNewStreamId();
     mRingBuf.pushBack(new NewStreamEvent(mStreamId, fmt, 16));
     if (!mRingBuf.dataSize()) {
-        StreamFormat actualFmt = mSourceFormat;
-        actualFmt.setCodec(Codec::kCodecWav);
-        mWaitingPrefill = actualFmt.prefillAmount();
+        mWaitingPrefill = mSourceFormat.prefillAmount();
         mRingBuf.pushBack(new PrefillEvent(mStreamId, ""));
     }
 }
@@ -416,7 +414,14 @@ A2dpInputNode::~A2dpInputNode()
 StreamEvent A2dpInputNode::pullData(PacketResult& dpr)
 {
     if (!mRingBuf.dataSize()) {
-        ESP_LOGW(mTag, "Underrun");
+        if (!mWaitingPrefill) {
+            mWaitingPrefill = true;
+            mRingBuf.pushBack(new PrefillEvent(mStreamId, ""));
+            ESP_LOGW(mTag, "Underrun");
+        }
+        else {
+            ESP_LOGW(mTag, "Data requested while waiting prefill");
+        }
     }
     auto pkt = mRingBuf.popFront();
     if (pkt) {
