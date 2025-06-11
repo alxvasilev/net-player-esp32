@@ -470,9 +470,11 @@ void HttpNode::notifyFormatDetails(StreamFormat fmt)
         mRxChunkSize = rxSize;
         ESP_LOGI(TAG, "Updated network recv size for codec %s to %d", fmt.codec().toString(), mRxChunkSize);
     }
+    auto prefillAmount = fmt.prefillAmount();
     if (mWaitingPrefill) {
-        mWaitingPrefill = fmt.prefillAmount();
+        mWaitingPrefill = prefillAmount;
     }
+    mRingBuf.setMaxDataSize(prefillAmount * 4);
 }
 bool HttpNode::recordingMaybeEnable() {
     auto staName = recStaName();

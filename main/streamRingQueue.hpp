@@ -106,6 +106,7 @@ public:
     }
     int dataSize() const { return mDataSize; }
     int maxDataSize() const { return mMaxDataSize; }
+    void setMaxDataSize(int val) { mMaxDataSize = val; }
     /**
      * If there is no space in the queue, or dataSize() is equal or greater than the max data size,
      * the function blocks, waiting for space to become available after a read. The queue is unlocked
