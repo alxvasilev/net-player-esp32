@@ -285,12 +285,12 @@ bool DlnaHandler::handleAvTransportCommand(httpd_req_t* req, const char* cmd, co
             if (!item) {
                 break;
             }
-            auto trkInfo = TrackInfo::Create(url, xmlGetChildText(*item, "dc:title"),
+            auto trkInfo = TrackInfo::create(url, xmlGetChildText(*item, "dc:title"),
                 xmlGetChildText(*item, "upnp:artist"), parseHmsTime(xmlGetChildAttr(*item, "res", "duration")));
             mQueuedTrack.reset(trkInfo);
             return true;
         } while(false);
-        mQueuedTrack.reset(TrackInfo::Create(url, nullptr, nullptr, 0));
+        mQueuedTrack.reset(TrackInfo::create(url, nullptr, nullptr, 0));
         return true;
     }
     else if (strcasecmp(cmd, "Play") == 0) {
@@ -306,7 +306,7 @@ bool DlnaHandler::handleAvTransportCommand(httpd_req_t* req, const char* cmd, co
         if (trkInfo) {
             auto posHms = msToHmsString(mPlayer.positionTenthSec() * 100);
             result.append(msToHmsString(trkInfo->durationMs))
-                  .append("</TrackDuration><TrackURI>").append(trkInfo->url)
+                  .append("</TrackDuration><TrackURI>").append(trkInfo->url())
                   .append("</TrackURI><RelTime>").append(posHms)
                   .append("</RelTime><AbsTime>").append(posHms);
         } else {
@@ -436,7 +436,7 @@ bool DlnaHandler::EventSubscription::notifySubscribed(AudioPlayer& player)
             xml += "STOPPED";
         }
         xml += "&quot;/&gt;&lt;AVTransportURI val=&quot;";
-        xml += trkInfo ? trkInfo->url : "";
+        xml += trkInfo ? trkInfo->url() : "";
         xml += "&quot;/&gt;&lt;CurrentTrackDuration val=&quot;";
         xml += trkInfo ? msToHmsString(trkInfo->durationMs) : kHmsZeroTime;
         xml += "&quot;/&gt;&lt;CurrentTransportActions val=&quot;Play&quot;/&gt;";

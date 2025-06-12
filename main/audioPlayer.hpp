@@ -15,6 +15,7 @@
 #include <gfx.hpp>
 #include <nvsSimple.hpp>
 #include <task.hpp>
+#include <cStringTuple.hpp>
 
 class DecoderNode;
 class EqualizerNode;
@@ -31,6 +32,19 @@ extern Font font_CamingoBold43;
 extern Font font_Camingo22;
 extern Font font_Camingo32;
 extern Font font_Icons22;
+
+struct TrackInfo: public CStringTuple<3, TrackInfo> {
+    uint32_t durationMs;
+    const char* url() const { return mStrings[0]; }
+    const char* trackName() const { return mStrings[1]; }
+    const char* artistName() const { return mStrings[2]; }
+    static TrackInfo* create(const char *aUrl, const char *trkName, const char *artName, uint32_t durMs)
+    {
+        auto inst = Base::create(aUrl, trkName, artName);
+        inst->durationMs = durMs;
+        return inst;
+    }
+};
 
 class AudioPlayer: public IAudioPipeline
 {
@@ -93,7 +107,7 @@ protected:
     EventGroup mEvents;
     http::Server& mHttpServer;
     std::unique_ptr<DlnaHandler> mDlna;
-    unique_ptr_mfree<TrackInfo> mTrackInfo;
+    TrackInfo::unique_ptr mTrackInfo;
     PlayerMode mPlayerMode;
     int mBufLowThreshold = 0;
     uint16_t mBufLowDisplayGradient = 0;
@@ -216,43 +230,6 @@ public:
     virtual bool onNodeEvent(AudioNode& node, uint32_t type, uintptr_t arg1, uintptr_t arg2) override;
     virtual void onNodeError(AudioNode& node, int error, uintptr_t arg) override;
     virtual void onNeedLargeMemory(int32_t amountHint) override {}
-};
-
-struct TrackInfo {
-    const char* url;
-    const char* trackName;
-    const char* artistName;
-    uint32_t durationMs;
-    static TrackInfo* Create(const char* aUrl, const char* trkName, int tnLen, const char* artName, int anLen, uint32_t durMs)
-    {
-        auto urlLen = strlen(aUrl) + 1;
-        auto inst = (TrackInfo*)malloc(sizeof(TrackInfo) + urlLen + tnLen + anLen + 3);
-        inst->durationMs = durMs;
-        inst->url = (char*)inst + sizeof(TrackInfo);
-        memcpy((char*)inst->url, aUrl, urlLen);
-        auto next = inst->url + urlLen;
-        if (trkName) {
-            inst->trackName = next;
-            next += tnLen + 1;
-            memcpy((char*)inst->trackName, trkName, tnLen);
-            (char&)inst->trackName[tnLen] = 0;
-        } else {
-            inst->trackName = nullptr;
-        }
-        if (artName) {
-            inst->artistName = next;
-            //next += anLen + 1;
-            memcpy((char*)inst->artistName, artName, anLen);
-            (char&)inst->artistName[anLen] = 0;
-        } else {
-            inst->artistName = nullptr;
-        }
-        return inst;
-    }
-    static TrackInfo* Create(const char *aUrl, const char *trkName, const char *artName, uint32_t durMs)
-    {
-        return Create(aUrl, trkName, trkName ? strlen(trkName) : 0, artName, artName ? strlen(artName) : 0, durMs);
-    }
 };
 
 #endif

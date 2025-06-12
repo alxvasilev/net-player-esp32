@@ -250,7 +250,7 @@ void AudioPlayer::lcdUpdateTrackDisplay()
             lcdUpdateStationInfo();
         }
     }
-    else if (!mTrackInfo || !(mTrackInfo->trackName || mTrackInfo->artistName)) {
+    else if (!mTrackInfo || !(mTrackInfo->trackName() || mTrackInfo->artistName())) {
         if (mStreamIn && mStreamIn->type() == AudioNode::kTypeHttpIn) { // get URL from http node (prefer over mTrackInfo->url)
             auto& http = *static_cast<HttpNode*>(mStreamIn.get());
             MutexLocker locker(http.mMutex);
@@ -263,7 +263,7 @@ void AudioPlayer::lcdUpdateTrackDisplay()
         }
     }
     else {
-        lcdUpdateTitleAndArtist(mTrackInfo->trackName, mTrackInfo->artistName);
+        lcdUpdateTitleAndArtist(mTrackInfo->trackName(), mTrackInfo->artistName());
     }
 }
 void AudioPlayer::lcdClearTrackAndArtist()
@@ -454,7 +454,7 @@ bool AudioPlayer::doPlayUrl(TrackInfo* trackInfo, PlayerMode playerMode, const c
     stop("");
     lcdUpdateTrackDisplay();
     lcdResetNetSpeedIndication();
-    http.setUrlAndStart(HttpNode::UrlInfo::Create(trackInfo->url, getNewStreamId(), record));
+    http.setUrlAndStart(HttpNode::UrlInfo::Create(trackInfo->url(), getNewStreamId(), record));
     if (http.waitForState(AudioNode::kStateRunning, 10000) != AudioNode::kStateRunning) {
         return false;
     }
@@ -463,7 +463,7 @@ bool AudioPlayer::doPlayUrl(TrackInfo* trackInfo, PlayerMode playerMode, const c
 }
 bool AudioPlayer::playUrl(const char* url, PlayerMode playerMode, const char* record)
 {
-    return doPlayUrl(TrackInfo::Create(url, nullptr, nullptr, 0), playerMode, record);
+    return doPlayUrl(TrackInfo::create(url, nullptr, nullptr, 0), playerMode, record);
 }
 bool AudioPlayer::playUrl(TrackInfo* trackInfo, PlayerMode playerMode, const char* record)
 {
@@ -475,7 +475,7 @@ const char* AudioPlayer::url() const // needed by DLNA
         return nullptr;
     }
     if (mTrackInfo) {
-        return mTrackInfo->url;
+        return mTrackInfo->url();
     }
     auto& http = *static_cast<HttpNode*>(mStreamIn.get());
     return http.url();
@@ -1100,7 +1100,7 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t arg1, u
     if (event == AudioNode::kEventTitleChanged) {
         asyncCall([this, arg1, arg2]() {
             LOCK_PLAYER();
-            mTrackInfo.reset(TrackInfo::Create("", (const char*) arg1, (const char*) arg2, 0));
+            mTrackInfo.reset(TrackInfo::create("", (const char*) arg1, (const char*) arg2, 0));
             free((void*)arg1);
             free((void*)arg2);
             lcdUpdateTrackDisplay();
