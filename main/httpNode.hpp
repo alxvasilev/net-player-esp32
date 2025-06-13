@@ -20,11 +20,23 @@
 #include "speedProbe.hpp"
 #include "recorder.hpp"
 #include "streamRingQueue.hpp"
+#include <cStringTuple.hpp>
 
 class HttpNode: public AudioNodeWithTask, public IInputAudioNode
 {
 public:
-    class UrlInfo;
+    struct UrlInfo: public CStringTuple<2, UrlInfo> {
+        uint32_t streamId;
+        const char* url() const { return mStrings[0]; }
+        const char* recStaName() const { return mStrings[1]; }
+        void clearRecStaName() { mStrings[1] = nullptr; }
+        static UrlInfo* create(const char* aUrl, uint32_t streamId, const char* aRecStaName) noexcept
+        {
+            auto inst = Base::create(aUrl, aRecStaName);
+            inst->streamId = streamId;
+            return inst;
+        }
+    };
     mutable Mutex mMutex;
 protected:
     enum {
@@ -35,7 +47,7 @@ protected:
     // Read mode dictates how the pullData() caller behaves. Since it may
     // need to wait for the read mode to change to a specific value, the enum values
     // are flags
-    std::unique_ptr<UrlInfo> mUrlInfo;
+    UrlInfo::unique_ptr mUrlInfo;
     esp_http_client_handle_t mClient = nullptr;
     StreamFormat mInFormat; // is not Codec, because PCM needs sample format info as well
     StreamId mOutStreamId = 0;
@@ -94,32 +106,11 @@ public:
     virtual uint32_t pollSpeed() override;
     virtual uint32_t bufferedDataSize() const override { return mRingBuf.dataSize(); }
     void logStartOfRingBuf(const char* msg);
-    struct UrlInfo {
-        uint32_t streamId;
-        const char* url;
-        const char* recStaName;
-        static UrlInfo* Create(const char* aUrl, uint32_t streamId, const char* aRecStaName) noexcept
-        {
-            auto urlLen = strlen(aUrl) + 1;
-            auto staLen = aRecStaName ? strlen(aRecStaName) + 1 : 0;
-            auto inst = (UrlInfo*)malloc(sizeof(UrlInfo) + urlLen + staLen);
-            inst->streamId = streamId;
-            inst->url = (char*)inst + sizeof(UrlInfo);
-            memcpy((char*)inst->url, aUrl, urlLen);
-            if (aRecStaName) {
-                inst->recStaName = inst->url + urlLen;
-                memcpy((char*)inst->recStaName, aRecStaName, staLen);
-            } else {
-                inst->recStaName = nullptr;
-            }
-            return inst;
-        }
-    };
 protected:
     mutable LinkSpeedProbe mSpeedProbe;
     bool mIsBufUnderrun = false;
     void setUnderrunState(bool isUnderrun);
 public:
-    const char* url() const { return mUrlInfo ? mUrlInfo->url : nullptr; }
-    const char* recStaName() const { return mUrlInfo ? mUrlInfo->recStaName : nullptr; }
+    const char* url() const { return mUrlInfo ? mUrlInfo->url() : nullptr; }
+    const char* recStaName() const { return mUrlInfo ? mUrlInfo->recStaName() : nullptr; }
 };

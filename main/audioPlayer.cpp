@@ -279,7 +279,7 @@ void AudioPlayer::lcdUpdateStationInfo()
         return;
     }
     lcdUpdateArtistName(station.name());
-    lcdUpdateTrackTitle(nullptr);
+    lcdUpdateTrackTitle(mTrackInfo ? mTrackInfo->trackName() : nullptr);
 // station flags
     mLcd.cursorY = kLcdTopLineTextY;
     mLcd.setFont(kPictoFont);
@@ -454,7 +454,7 @@ bool AudioPlayer::doPlayUrl(TrackInfo* trackInfo, PlayerMode playerMode, const c
     stop("");
     lcdUpdateTrackDisplay();
     lcdResetNetSpeedIndication();
-    http.setUrlAndStart(HttpNode::UrlInfo::Create(trackInfo->url(), getNewStreamId(), record));
+    http.setUrlAndStart(HttpNode::UrlInfo::create(trackInfo->url(), getNewStreamId(), record));
     if (http.waitForState(AudioNode::kStateRunning, 10000) != AudioNode::kStateRunning) {
         return false;
     }

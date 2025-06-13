@@ -30,21 +30,21 @@ bool HttpNode::isPlaylist()
 
 void HttpNode::doSetUrl(UrlInfo* urlInfo)
 {
-    ESP_LOGI(mTag, "Setting url to %s", urlInfo->url);
+    ESP_LOGI(mTag, "Setting url to %s", urlInfo->url());
     if (mRecorder) {
         mRecorder.reset();
         plSendEvent(kEventRecording, false);
     }
     if (mClient) {
-        esp_http_client_set_url(mClient, urlInfo->url); // do it here to avoid keeping reference to the old, freed one
+        esp_http_client_set_url(mClient, urlInfo->url()); // do it here to avoid keeping reference to the old, freed one
     }
     mUrlInfo.reset(urlInfo);
 }
 void HttpNode::updateUrl(const char* url)
 {
     auto urlInfo = mUrlInfo.get()
-        ? UrlInfo::Create(url, mUrlInfo->streamId, mUrlInfo->recStaName)
-        : UrlInfo::Create(url, 0, nullptr);
+        ? UrlInfo::create(url, mUrlInfo->streamId, mUrlInfo->recStaName())
+        : UrlInfo::create(url, 0, nullptr);
     doSetUrl(urlInfo);
 }
 bool HttpNode::createClient()
@@ -502,7 +502,7 @@ void HttpNode::recordingStop() {
     LOCK();
     mRecorder.reset();
     if (recStaName()) {
-        mUrlInfo->recStaName = nullptr;
+        mUrlInfo->clearRecStaName();
     }
     plSendEvent(kEventRecording, false);
 }
