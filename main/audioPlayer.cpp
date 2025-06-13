@@ -253,8 +253,8 @@ void AudioPlayer::lcdUpdateTrackDisplay()
             lcdUpdateTitleAndArtist(mTrackInfo->trackName(), mTrackInfo->artistName());
         }
         else if (mTrackInfo->url()) {
-            lcdUpdateArtistName(urlGetHost(mTrackInfo->url()).c_str());
-            lcdUpdateTrackTitle(urlGetFile(mTrackInfo->url()));
+            lcdUpdateArtistName(urlGetHost(mTrackInfo->url()).toStdString().c_str());
+            lcdUpdateTrackTitle(urlGetFile(mTrackInfo->url()).toStdString().c_str());
         }
         else {
             lcdClearTrackAndArtist();
