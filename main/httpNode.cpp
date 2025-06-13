@@ -126,6 +126,7 @@ bool HttpNode::connect(bool isReconnect)
             clearRingBuffer(); // clear in case of hard reconnect
             mStreamByteCtr = 0;
             mStationNameHdr.reset();
+            mLastTitle.clear();
             prefillStart();
         }
         recordingMaybeEnable();

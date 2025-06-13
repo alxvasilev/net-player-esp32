@@ -81,7 +81,7 @@ protected:
     };
     enum {
         kLcdTopLineTextY = 1, kLcdRecIndicatorX = 90,
-        kLcdArtistNameLineY = 36, kLcdTrackTitleY = 74, kLcdPlayStateLineY = kLcdTrackTitleY,
+        kLcdArtistNameLineY = 36, kLcdTrackTitleY = 74,
         kBufLowMinGreen = 32 // minimum green component of low (but not underrun) buf netspeed color
     };
     enum {
@@ -115,7 +115,7 @@ protected:
     uint8_t mVolumeCap;
     bool mStopping = false; // set while stopping the pipeline, to ignore error signalled by nodes during the process
     // general display stuff
-    bool mPlayStateDisplayed = true; // Prevents display of artist while we have "Connecting...", "Buffering..." etc displayed
+    volatile bool mVuDisplayDisabled = true; // Set when a message is displayed in the VU display area
     Color565 mFontColor = Color565(255, 255, 128);
     VuDisplay mVuDisplay;
     IAudioVolume::StereoLevels mVuLevels = {0,0};

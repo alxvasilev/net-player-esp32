@@ -145,5 +145,6 @@ enum StreamEvent: int8_t {
     kInvalidStreamEvent = -128 // used for optional params
 };
 const char* streamEventToStr(StreamEvent evt);
+const char* streamErrDesc(StreamEvent evt);
 
 #endif

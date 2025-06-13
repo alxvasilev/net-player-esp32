@@ -245,25 +245,23 @@ void AudioPlayer::setPlayerMode(PlayerMode mode)
 }
 void AudioPlayer::lcdUpdateTrackDisplay()
 {
-    if (mPlayerMode == kModeRadio) {
-        if (stationList) {
-            lcdUpdateStationInfo();
-        }
+    if (mPlayerMode == kModeRadio && stationList) {
+        lcdUpdateStationInfo();
     }
-    else if (!mTrackInfo || !(mTrackInfo->trackName() || mTrackInfo->artistName())) {
-        if (mStreamIn && mStreamIn->type() == AudioNode::kTypeHttpIn) { // get URL from http node (prefer over mTrackInfo->url)
-            auto& http = *static_cast<HttpNode*>(mStreamIn.get());
-            MutexLocker locker(http.mMutex);
-            lcdUpdateArtistName("Playing URL"); // TODO: Show URL host
-            const auto url = http.url();
-            lcdUpdateTrackTitle(url ? getUrlFile(url) : nullptr);
+    else if (mTrackInfo) {
+        if (mTrackInfo->trackName() || mTrackInfo->artistName()) {
+            lcdUpdateTitleAndArtist(mTrackInfo->trackName(), mTrackInfo->artistName());
+        }
+        else if (mTrackInfo->url()) {
+            lcdUpdateArtistName(urlGetHost(mTrackInfo->url()).c_str());
+            lcdUpdateTrackTitle(urlGetFile(mTrackInfo->url()));
         }
         else {
             lcdClearTrackAndArtist();
         }
     }
     else {
-        lcdUpdateTitleAndArtist(mTrackInfo->trackName(), mTrackInfo->artistName());
+        lcdClearTrackAndArtist();
     }
 }
 void AudioPlayer::lcdClearTrackAndArtist()
@@ -335,22 +333,19 @@ void AudioPlayer::lcdUpdateTitleAndArtist(const char* title, const char* artist)
 }
 void AudioPlayer::lcdUpdatePlayState(const char* text, bool isError)
 {
+    mLcd.waitDone();
     if (text) {
-        if (mPlayStateDisplayed) {
-            mLcd.clear(0, kLcdTrackTitleY, mLcd.width(), kTrackTitleFont.height);
-        }
-        else {
-            lcdUpdateTrackTitle(nullptr);
-            mPlayStateDisplayed = true;
-        }
+        mVuDisplayDisabled = true;
+        vTaskDelay(1);
+        mLcd.clear(0, mVuTopLine, mLcd.width(), mVuDisplay.height());
         mLcd.setFgColor(isError ? LcdColor::RED : kLcdColorPlayState);
-        mLcd.gotoXY(0, kLcdPlayStateLineY);
+        mLcd.gotoXY(0, mVuTopLine);
         mLcd.setFont(kPlayStateFont);
         mLcd.putsCentered(text);
     }
     else { // playing
-        mPlayStateDisplayed = false;
-        lcdUpdateTrackDisplay();
+        mLcd.clear(0, mVuTopLine, mLcd.width(), mVuDisplay.height());
+        mVuDisplayDisabled = false;
     }
     lcdUpdateRecordingState();
 }
@@ -1089,7 +1084,7 @@ void AudioPlayer::onNodeError(AudioNode& node, int error, uintptr_t arg)
         const char* errName = streamEventToStr((StreamEvent)error);
         ESP_LOGW(TAG, "Error %s from node '%s', stopping pipeline", errName, nodeName.c_str());
         LOCK_PLAYER();
-        stop(errName, true);
+        stop(streamErrDesc((StreamEvent)error), true);
     });
 }
 
@@ -1100,7 +1095,7 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t arg1, u
     if (event == AudioNode::kEventTitleChanged) {
         asyncCall([this, arg1, arg2]() {
             LOCK_PLAYER();
-            mTrackInfo.reset(TrackInfo::create("", (const char*) arg1, (const char*) arg2, 0));
+            mTrackInfo.reset(TrackInfo::create(nullptr, (const char*) arg1, (const char*) arg2, 0));
             free((void*)arg1);
             free((void*)arg2);
             lcdUpdateTrackDisplay();
@@ -1129,17 +1124,20 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t arg1, u
     else {
         asyncCall([this, event, arg1, arg2]() {
             LOCK_PLAYER();
+            if (mStopping) { // prevent late events from overwriting stop/error play state messsages
+                return;
+            }
             switch(event) {
                 case AudioNode::kEventConnected:
-                    return lcdUpdatePlayState(arg1 ? nullptr : "Buffering..."); break;
+                    return lcdUpdatePlayState(arg1 ? nullptr : "Buffering...");
                 case AudioNode::kEventConnecting:
-                    return lcdUpdatePlayState(arg1 ? "Reconnecting..." : "Connecting..."); break;
+                    return lcdUpdatePlayState(arg1 ? "Reconnecting..." : "Connecting...");
                 case AudioNode::kEventPlaying:
-                    return lcdUpdatePlayState(nullptr); break;
+                    return lcdUpdatePlayState(nullptr);
                 case HttpNode::kEventRecording:
-                    return lcdUpdatePlayState(nullptr, arg1); break;
+                    return lcdUpdatePlayState(nullptr, arg1);
                 case AudioNode::kEventBufUnderrun:
-                    return lcdShowBufUnderrunImmediate(); break;
+                    return lcdShowBufUnderrunImmediate();
                 default: break;
             }
         });
@@ -1167,12 +1165,14 @@ void AudioPlayer::lcdTimedDrawTask()
         }
         mLcd.waitDone(); // wait while player locked, so that someone else doesn't start another operation
         if ((vuOrScroll = !vuOrScroll)) {
-            if (now - mTsLastVuLevel > 100000 && mVolumeInterface->audioLevels().data) { // 100ms no volume event, set level to zero
-                ESP_LOGI(TAG, "No sound output, clearing VU levels");
-                mVolumeInterface->clearAudioLevelsNoEvent();
+            if (!mVuDisplayDisabled) {
+                if (now - mTsLastVuLevel > 100000 && mVolumeInterface->audioLevels().data) { // 100ms no volume event, set level to zero
+                    ESP_LOGI(TAG, "No sound output, clearing VU levels");
+                    mVolumeInterface->clearAudioLevelsNoEvent();
+                }
+                mVuDisplay.update(mVuLevels);
+                mLcd.dmaBlit(0, mVuTopLine, mLcd.width(), mVuDisplay.height());
             }
-            mVuDisplay.update(mVuLevels);
-            mLcd.dmaBlit(0, mVuTopLine, mLcd.width(), mVuDisplay.height());
         }
         else {
             if (mTitleScrollEnabled == 1) {
@@ -1185,9 +1185,6 @@ void AudioPlayer::lcdTimedDrawTask()
 
 void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int len)
 {
-    if (mPlayStateDisplayed) {
-        return;
-    }
     if (!buf || !buf[0] || !len) {
         mTitleScrollEnabled = false;
         mLcdTrackTitle.clear();

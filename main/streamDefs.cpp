@@ -2,6 +2,7 @@
 #include <string.h>
 #include "streamDefs.hpp"
 #include "utils-parse.hpp"
+#include <magic_enum.hpp>
 #include <esp_log.h>
 #define logErr(fmt,...) ESP_LOGI("mime-parse", fmt, ##__VA_ARGS__)
 
@@ -82,21 +83,23 @@ const char* Codec::fileExt() const {
         default: return "unk";
     }
 }
-#define STRMEVT_CASE(name) case name: return #name
-const char* streamEventToStr(StreamEvent evt) {
+const char* streamEventToStr(StreamEvent evt)
+{
+    auto name = magic_enum::enum_name(evt).data();
+    return name ? name : "(inval)";
+}
+const char* streamErrDesc(StreamEvent evt)
+{
     switch (evt) {
-        STRMEVT_CASE(kEvtStreamEnd);
-        STRMEVT_CASE(kEvtStreamChanged);
-        STRMEVT_CASE(kEvtTitleChanged);
-        STRMEVT_CASE(kErrStreamStopped);
-        STRMEVT_CASE(kErrNoCodec);
-        STRMEVT_CASE(kErrDecode);
-        STRMEVT_CASE(kErrNotFound);
-        STRMEVT_CASE(kErrStreamFmt);
-        STRMEVT_CASE(kEvtData);
-        default: return "(invalid)";
+        case kErrTimeout: return "Timeout";
+        case kErrNoCodec: return "No codec";
+        case kErrDecode: return "Decode error";
+        case kErrStreamFmt: return "Stream format error";
+        case kErrNotFound: return "Not found";
+        default: return streamEventToStr(evt);
     }
 }
+
 StreamFormat StreamFormat::fromMimeType(const char* content_type)
 {
     if (strcasecmp(content_type, "audio/mp3") == 0 ||
