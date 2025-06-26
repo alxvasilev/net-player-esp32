@@ -60,15 +60,6 @@ public:
     static uint32_t instSize(uint8_t nBands) {
         return sizeof(Equalizer<IsStereo>) + nBands * (sizeof(BiquadType) + sizeof(EqBandConfig) + sizeof(Gain));
     }
-    static Equalizer* create(uint8_t nBands, uint16_t sampleRate) {
-        return new Equalizer(nBands, sampleRate);
-    }
-/*    static Equalizer* create(uint8_t nBands, uint32_t sampleRate, void* placementMem) {
-        bqassert(((uintptr_t)placementMem & 0x3) == 0); // must be 4-byte aligned
-        return new(placementMem) Equalizer(nBands, sampleRate);
-    }
-*/
-    static void operator delete(void* p) { free(p); }
     void resetState()
     {
         for (int i = 0; i < mBandCount; i++) {
