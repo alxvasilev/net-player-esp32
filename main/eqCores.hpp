@@ -24,12 +24,10 @@ template<bool IsStereo>
 class MyEqualizerCore: public IEqualizerCore
 {
 protected:
-    Equalizer<IsStereo>& mEqualizer;
+    mutable Equalizer<IsStereo> mEqualizer;
     static void processFloat(DataPacket& pkt, void* arg);
-    MyEqualizerCore(Equalizer<IsStereo>& eq): mEqualizer(eq) {}
 public:
-    static MyEqualizerCore<IsStereo>* create(uint8_t numBands, uint32_t sampleRate);
-    void operator delete(void* ptr) noexcept { free(ptr); }
+    MyEqualizerCore(uint8_t numBands, uint32_t sampleRate);
     Type type() const override { return kTypeCustom; }
     virtual uint8_t numBands() const override { return mEqualizer.numBands(); }
     virtual ProcessFunc getProcessFunc() const override { return processFloat; }

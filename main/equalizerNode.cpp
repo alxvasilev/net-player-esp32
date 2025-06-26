@@ -59,10 +59,10 @@ void EqualizerNode::createCustomCore(StreamFormat fmt)
 {
     auto nBands = eqNumBands();
     if (fmt.numChannels() >= 2) {
-        mCore.reset(MyEqualizerCore<true>::create(nBands, fmt.sampleRate()));
+        mCore.reset(new MyEqualizerCore<true>(nBands, fmt.sampleRate()));
     }
     else {
-        mCore.reset(MyEqualizerCore<false>::create(nBands, fmt.sampleRate()));
+        mCore.reset(new MyEqualizerCore<false>(nBands, fmt.sampleRate()));
     }
     int expectedLen = nBands * sizeof(EqBandConfig);
     auto len = expectedLen;

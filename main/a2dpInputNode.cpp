@@ -388,7 +388,8 @@ A2dpInputNode::A2dpInputNode(AudioPlayer& player, bool manageDiscoverable)
     gSelf = this;
     esp_avrc_rn_evt_cap_mask_t evt_set = {0};
     esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_SET, &evt_set, ESP_AVRC_RN_VOLUME_CHANGE);
-    assert(esp_avrc_tg_set_rn_evt_cap(&evt_set) == ESP_OK);
+    auto ret = esp_avrc_tg_set_rn_evt_cap(&evt_set);
+    assert(ret == ESP_OK);
 }
 void A2dpInputNode::onStopped()
 {

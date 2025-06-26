@@ -2,10 +2,11 @@
 #define EQUALIZER_AV_HPP
 #include "biquad.hpp"
 #include <string.h>
+#include <memory>
 
 struct EqBandConfig {
-    uint16_t freq;
-    uint16_t Q; // Q multiplied by 1000
+    uint16_t freq = 0;
+    uint16_t Q = 0; // Q multiplied by 1000
     static const EqBandConfig kPreset10Band[10];
     static const EqBandConfig kPreset9Band[9];
     static const EqBandConfig kPreset8Band[8];
@@ -33,30 +34,25 @@ public:
 protected:
     uint8_t mBandCount;
     uint32_t mSampleRate;
-    BiquadType* mFilters;
+    std::unique_ptr<BiquadType[]> mFilters;
     // Need to have filter configs and gains in continguous arrays instead of members of each filter,
     // because it's simpler and more efficient to load and store them in NVS
-    EqBandConfig* mBandConfigs;
-    Gain* mGains;
-    alignas (BiquadType) uint8_t mMem[];
+    std::unique_ptr<EqBandConfig[]> mBandConfigs;
+    std::unique_ptr<Gain[]> mGains;
+public:
     Equalizer(uint8_t nBands, uint32_t sampleRate):
         mBandCount(nBands), mSampleRate(sampleRate),
-        mFilters((BiquadType*)mMem),
-        mBandConfigs((EqBandConfig*)(mMem + sizeof(BiquadType) * nBands)),
-        mGains((int8_t*)mBandConfigs + sizeof(EqBandConfig) * nBands)
+        mFilters(new BiquadType[nBands]),
+        mBandConfigs(new EqBandConfig[nBands]),
+        mGains(new Gain[nBands])
     {
-        memset(mGains, 0, nBands);
-        memset(mBandConfigs, 0, nBands * sizeof(EqBandConfig));
-        for (int i = 0; i < nBands; i++) {
-            new (mFilters + i) BiquadType;
-        }
+        memset(mGains.get(), 0, nBands);
     }
-public:
     uint32_t numBands() const { return mBandCount; }
     uint32_t sampleRate() const { return mSampleRate; }
-    EqBandConfig* bandConfigs() { return mBandConfigs; }
+    EqBandConfig* bandConfigs() { return mBandConfigs.get(); }
     EqBandConfig& bandConfig(uint8_t band) { return mBandConfigs[band]; }
-    Gain* gains() { return mGains; }
+    Gain* gains() { return mGains.get(); }
     void setSampleRate(uint32_t sampleRate) { mSampleRate = sampleRate; updateAllFilters(); }
     // This class is not constructed directly via the ctor, but instead with a ::create factory function,
     // since additional runtime-determined amount of memory needs to be allocated at the end,
@@ -65,16 +61,13 @@ public:
         return sizeof(Equalizer<IsStereo>) + nBands * (sizeof(BiquadType) + sizeof(EqBandConfig) + sizeof(Gain));
     }
     static Equalizer* create(uint8_t nBands, uint16_t sampleRate) {
-        void* mem = malloc(instSize(nBands));
-        if (!mem) {
-            return nullptr;
-        }
-        return new(mem) Equalizer(nBands, sampleRate);
+        return new Equalizer(nBands, sampleRate);
     }
-    static Equalizer* create(uint8_t nBands, uint32_t sampleRate, void* placementMem) {
+/*    static Equalizer* create(uint8_t nBands, uint32_t sampleRate, void* placementMem) {
         bqassert(((uintptr_t)placementMem & 0x3) == 0); // must be 4-byte aligned
         return new(placementMem) Equalizer(nBands, sampleRate);
     }
+*/
     static void operator delete(void* p) { free(p); }
     void resetState()
     {
@@ -113,7 +106,7 @@ public:
         updateFilter(band, false);
     }
     void zeroAllGains(bool clearState=true) {
-        memset(mGains, 0, mBandCount * sizeof(Gain));
+        memset(mGains.get(), 0, mBandCount * sizeof(Gain));
         updateAllFilters(clearState);
     }
 };
