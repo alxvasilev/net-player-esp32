@@ -48,8 +48,8 @@ public:
     int streamSerialNo() const { return ogg_page_serialno(&mOg); }
     int64_t lastSamplePos() const { return ogg_page_granulepos(&mOg); }
     VorbisDecoder()
+    : mOy{}, mOs{}, mOg{}, mOp{}, mVi{}, mVc{}, mVd{}, mVb{} // zero-initialize all
     {
-        memset(this, 0, sizeof(VorbisDecoder));
         ogg_sync_init(&mOy); /* Now we can read pages */
     }
     ~VorbisDecoder()
