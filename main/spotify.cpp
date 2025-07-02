@@ -327,7 +327,7 @@ bool SpotifyNode::recv()
     if (mWaitingPrefill >= mRingBuf.dataSize()) {
         mWaitingPrefill = 0;
         ESP_LOGI(TAG, "Prefill complete, sending event");
-        plSendEvent(kEventPrefillComplete, mInStreamId);
+        plSendEvent(kEventPrefillComplete, PrefillEvent::lastPrefillId());
     }
     return true;
 }

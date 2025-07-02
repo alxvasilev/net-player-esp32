@@ -448,7 +448,7 @@ bool AudioPlayer::doPlayUrl(TrackInfo* trackInfo, PlayerMode playerMode, const c
     // whose state may not be set up correctly for the new stream (i.e. waitingPrefill not set)
     stop("");
     lcdUpdateTrackDisplay();
-    lcdResetNetSpeedIndication();
+    lcdUpdateNetSpeed();
     http.setUrlAndStart(HttpNode::UrlInfo::create(trackInfo->url(), getNewStreamId(), record));
     if (http.waitForState(AudioNode::kStateRunning, 10000) != AudioNode::kStateRunning) {
         return false;
@@ -1136,8 +1136,8 @@ bool AudioPlayer::onNodeEvent(AudioNode& node, uint32_t event, uintptr_t arg1, u
                     return lcdUpdatePlayState(nullptr);
                 case HttpNode::kEventRecording:
                     return lcdUpdatePlayState(nullptr, arg1);
-                case AudioNode::kEventBufUnderrun:
-                    return lcdShowBufUnderrunImmediate();
+                case AudioNode::kEventBuffering:
+                    return lcdShowBuffering();
                 default: break;
             }
         });
@@ -1339,15 +1339,10 @@ void AudioPlayer::lcdUpdateNetSpeed()
     auto speed = input->pollSpeed();
     uint32_t bufDataSize;
 
-    if (!mDisplayedBufUnderrunTimer) {
-        if (speed == mLastShownNetSpeed) {
-            return;
-        }
-        bufDataSize = input->bufferedDataSize();
+    if (speed == mLastShownNetSpeed) {
+        return;
     }
-    else {
-        bufDataSize = (--mDisplayedBufUnderrunTimer) ? 0 : input->bufferedDataSize();
-    }
+    bufDataSize = input->bufferedDataSize();
     mLastShownNetSpeed = speed;
     lcdRenderNetSpeed(speed, bufDataSize);
 }
@@ -1380,15 +1375,10 @@ void AudioPlayer::lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize)
     mLcd.gotoXY(mLcd.width() - mLcd.textWidth(end - buf), 0);
     mLcd.puts(buf);
 }
-void AudioPlayer::lcdShowBufUnderrunImmediate()
+void AudioPlayer::lcdShowBuffering()
 {
-    mDisplayedBufUnderrunTimer = 1;
-    lcdRenderNetSpeed(mLastShownNetSpeed < 0 ? 0 : mLastShownNetSpeed, 0);
-}
-void AudioPlayer::lcdResetNetSpeedIndication()
-{
-    mDisplayedBufUnderrunTimer = 0;
-    lcdRenderNetSpeed(0, 0xff);
+    lcdUpdatePlayState("Buffering...");
+    lcdUpdateNetSpeed();
 }
 void AudioPlayer::audioLevelCb(void* ctx)
 {

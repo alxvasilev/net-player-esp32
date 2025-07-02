@@ -127,8 +127,6 @@ protected:
     bool mTitleScrollEnabled = false;
     int8_t mTitleScrollStep = 1;
     int32_t mLastShownNetSpeed = -1;
-    uint8_t mLatchedBufUnderrunState = 0xff;
-    uint8_t mDisplayedBufUnderrunTimer = 0;
     StreamFormat mStreamFormat;
     static void audioLevelCb(void* ctx);
 //====
@@ -172,8 +170,7 @@ protected:
     // net speed stuff
     void lcdUpdateNetSpeed();
     void lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize);
-    void lcdResetNetSpeedIndication();
-    void lcdShowBufUnderrunImmediate();
+    void lcdShowBuffering();
     // web URL handlers
     static esp_err_t playUrlHandler(httpd_req_t *req);
     static esp_err_t pauseUrlHandler(httpd_req_t *req);

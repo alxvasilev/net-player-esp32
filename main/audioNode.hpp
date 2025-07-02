@@ -56,8 +56,8 @@ public:
     enum { kEventAudioFormatChange,
            kEventNewStream, kEventStreamEnd, kEventTitleChanged,
            kEventConnecting, kEventConnected, kEventDisconnected,
-           kEventPlaying, kEventRecording, kEventPrefillComplete, kEventBufUnderrun,
-           kEventLast = kEventBufUnderrun };
+           kEventPlaying, kEventRecording, kEventPrefillComplete, kEventBuffering,
+           kEventLast = kEventBuffering };
     // we put here the state definitions only because the class name is shorter than AudioNodeWithTask
     enum State: uint8_t {
         kStateTerminated = 1, kStateStopped = 2,

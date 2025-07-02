@@ -62,7 +62,6 @@ protected:
     int16_t mRxChunkSize = 0;
     bool mAcceptsRangeRequests = false;
     volatile int mWaitingPrefill = 0;
-    volatile bool mPrefillSentFirstData = false;
     static esp_err_t httpHeaderHandler(esp_http_client_event_t *evt);
     void onHttpHeader(const char* key, const char* val);
     bool canResume() const { return (mContentLen != 0) && mAcceptsRangeRequests; }
@@ -108,7 +107,6 @@ public:
     void logStartOfRingBuf(const char* msg);
 protected:
     mutable LinkSpeedProbe mSpeedProbe;
-    bool mIsInBufUnderrun = false;
 public:
     const char* url() const { return mUrlInfo ? mUrlInfo->url() : nullptr; }
     const char* recStaName() const { return mUrlInfo ? mUrlInfo->recStaName() : nullptr; }

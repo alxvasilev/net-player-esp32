@@ -59,7 +59,11 @@ FLAC__StreamDecoderReadStatus DecoderFlac::readCb(const FLAC__StreamDecoder *dec
     }
     auto pktLen = self.mInputPacket->dataLen;
     size_t readAmount = std::min((size_t)pktLen - self.mInputPos, *bytes);
-    myassert(readAmount > 0);
+    if (readAmount <= 0) {
+        ESP_LOGE(TAG, "Assertion(readAmount <= 0) failed, readAmount = %zu, pktLen = %d, mInputPos = %d, *bytes = %zu\n",
+               readAmount, pktLen, self.mInputPos, *bytes);
+        abort();
+    }
     *bytes = readAmount;
     memcpy(buffer, self.mInputPacket->data + self.mInputPos, readAmount);
     self.mInputPos += readAmount;

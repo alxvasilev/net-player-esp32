@@ -3,6 +3,7 @@
 
 #include "streamDefs.hpp"
 #include <memory>
+#include <atomic>
 #include "utils.hpp"
 #include <utils-parse.hpp>
 
@@ -111,9 +112,13 @@ struct NewStreamEvent: public GenericEvent {
 struct StreamEndEvent: public GenericEvent {
     StreamEndEvent(StreamId streamId): GenericEvent(kEvtStreamEnd, streamId, 0) {}
 };
-struct PrefillEvent: public GenericEvent {
-    PrefillEvent(StreamId aStreamId, uint8_t flags=0)
-    : GenericEvent(kEvtPrefill, aStreamId, flags)
-    {}
+struct PrefillEvent: public StreamPacket {
+public:
+    typedef int16_t IdType;
+    static IdType lastPrefillId() { return sLastPrefillId; }
+    IdType prefillId;
+    PrefillEvent(uint8_t flags=0): StreamPacket(kEvtPrefill, flags), prefillId(++sLastPrefillId) {}
+protected:
+    inline static std::atomic<IdType> sLastPrefillId {0};
 };
 #endif

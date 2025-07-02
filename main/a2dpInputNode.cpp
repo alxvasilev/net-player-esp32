@@ -333,7 +333,7 @@ void A2dpInputNode::onData(DataPacket* pkt)
     if (mWaitingPrefill && mRingBuf.dataSize() > mWaitingPrefill) {
         ESP_LOGI(mTag, "Prefill %lu complete", mWaitingPrefill);
         mWaitingPrefill = 0;
-        plSendEvent(kEventPrefillComplete, mStreamId);
+        plSendEvent(kEventPrefillComplete, PrefillEvent::lastPrefillId());
     }
 }
 uint32_t A2dpInputNode::pollSpeed()

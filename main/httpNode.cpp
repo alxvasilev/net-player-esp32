@@ -259,7 +259,9 @@ int8_t HttpNode::recv()
         DataPacket::unique_ptr dataPacket(DataPacket::create(rxSize));
         int rlen = esp_http_client_read(mClient, dataPacket->data, rxSize);
         if (rlen <= 0) {
-            prefillComplete();
+            if (mWaitingPrefill) {
+                prefillComplete();
+            }
             if (rlen == 0) {
                 if (mContentLen && esp_http_client_is_complete_data_received(mClient)) {
                     // transfer complete, post end of stream
@@ -422,20 +424,15 @@ void HttpNode::prefillComplete()
 {
     mWaitingPrefill = 0;
     ESP_LOGW(TAG, "Prefill complete, notifying pipeline...");
-    plSendEvent(kEventPrefillComplete, mUrlInfo->streamId);
+    plSendEvent(kEventPrefillComplete, PrefillEvent::lastPrefillId());
 }
 StreamEvent HttpNode::pullData(PacketResult& pr)
 {
-    bool isUnderrun = !mRingBuf.dataSize();
-    if (isUnderrun != mIsInBufUnderrun) {
+    if (!mRingBuf.dataSize() && !mWaitingPrefill && mStreamByteCtr) {
         LOCK();
-        mIsInBufUnderrun = isUnderrun;
-        plSendEvent(kEventBufUnderrun, isUnderrun);
-        if (isUnderrun && !mWaitingPrefill) {
-            mWaitingPrefill = mInFormat.prefillAmount();
-            ESP_LOGW(TAG, "Underrun: prefilling with %d bytes", mWaitingPrefill);
-            return pr.set(new PrefillEvent(mOutStreamId));
-        }
+        mWaitingPrefill = mInFormat.prefillAmount();
+        ESP_LOGW(TAG, "Underrun: prefilling with %d bytes", mWaitingPrefill);
+        return pr.set(new PrefillEvent(mOutStreamId));
     }
     StreamPacket::unique_ptr pkt(mRingBuf.popFront());
     if (!pkt) {

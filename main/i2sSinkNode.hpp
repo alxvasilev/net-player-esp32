@@ -19,7 +19,6 @@ public:
     };
     Mutex mutex;
     StreamId mStreamId = 0;
-    StreamId mLastUncorkStreamId = 0;
 protected:
     enum {
         kTaskPriority = 22, kDefaultBps = 16, kDefaultSamplerate = 44100,
@@ -40,8 +39,9 @@ protected:
     uint8_t mDmaBufMillisec;
     bool mChanStarted = false;
     bool mDacMuted = false;
-    const gpio_num_t kDacMutePin = GPIO_NUM_32;
+    PrefillEvent::IdType mLastPrefillId = 0;
     bool mWaitingPrefill = false;
+    const gpio_num_t kDacMutePin = GPIO_NUM_32;
     virtual bool dispatchCommand(Command &cmd) override;
     virtual void nodeThreadFunc() override;
     virtual void onStopped() override;
@@ -62,7 +62,7 @@ public:
     ~I2sOutputNode();
     virtual Type type() const { return kTypeI2sOut; }
     virtual StreamEvent pullData(PacketResult& dpr) { return kErrStreamStopped; }
-    void notifyPrefillComplete(StreamId streamId) { mCmdQueue.post(kCommandPrefillComplete, streamId); }
+    void notifyPrefillComplete(PrefillEvent::IdType id) { mCmdQueue.post(kCommandPrefillComplete, id); }
     uint32_t positionTenthSec() const;
     void mute() { muteDac(); }
     void unmute() { unMuteDac(); }

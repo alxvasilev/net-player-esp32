@@ -80,13 +80,17 @@ bool I2sOutputNode::dispatchCommand(Command &cmd)
         return true;
     }
     if (cmd.opcode == kCommandPrefillComplete) {
-        mLastUncorkStreamId = (StreamId)cmd.arg;
-        if (mWaitingPrefill) {
-            mWaitingPrefill = false;
-            ESP_LOGI(mTag, "Got prefill complete command, starting playback");
+        auto id = (PrefillEvent::IdType)cmd.arg;
+        if (mWaitingPrefill && (id >= mLastPrefillId)) {
+            mWaitingPrefill = 0;
+            mLastPrefillId = id;
+            ESP_LOGI(mTag, "Got prefill %d complete command, starting playback", id);
             plSendEvent(kEventPlaying);
+            setState(kStateRunning);
         }
-        setState(kStateRunning);
+        else {
+            ESP_LOGW(mTag, "Ignoring PrefillComplete (id=%d) command that doesn't match our state (prefillId=%d, waitingPrefill=%d)", id, mLastPrefillId, mWaitingPrefill);
+        }
         return true;
     }
     return false;
@@ -161,12 +165,14 @@ void I2sOutputNode::nodeThreadFunc()
                     }
                     else if (evt == kEvtPrefill) {
                         auto& prefillEvent = dpr.prefillEvent();
-                        int diff = (int)prefillEvent.streamId - (int)mLastUncorkStreamId;
-                        // take streamId wrap into account
-                        if ((diff > 0 || diff < - 128)) {
+                        auto diff = prefillEvent.prefillId - mLastPrefillId;
+                        // take prefillId wrap into account
+                        if (diff > 0) {
+                            mLastPrefillId = prefillEvent.prefillId;
                             mWaitingPrefill = true;
-                            ESP_LOGI(mTag, "Got wait-prefill event for stream %u, halting till uncorked...",
-                                prefillEvent.streamId);
+                            plSendEvent(kEventBuffering);
+                            ESP_LOGI(mTag, "Got wait-prefill event for prefill %d, halting till uncorked...",
+                                prefillEvent.prefillId);
                             break;
                         }
                     }
