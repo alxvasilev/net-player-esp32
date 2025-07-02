@@ -18,11 +18,10 @@ int StreamFormat::prefillAmount() const
         case Codec::kCodecAac:
             return (100 * 1024 * kHalfSecs) >> 4;
         case Codec::kCodecFlac: {
-            auto kbps = (sampleRate() > 48000) ? 1400 : 1000;
-            if(bitsPerSample() > 16) {
-                kbps = (kbps * 3) >> 1;
-            }
-            return (kHalfSecs * 1024 * kbps) >> 4;
+            int kbps = (sampleRate() <= 48000)
+                ? (bitsPerSample() <= 16 ? 1000 : 1500)
+                : (bitsPerSample() <= 16 ? 1700 : 3000);
+            return (kbps * 1024 * kHalfSecs) >> 4;
         }
         case Codec::kCodecWav:
         case Codec::kCodecPcm: {
@@ -40,6 +39,8 @@ int16_t StreamFormat::rxChunkSize() const
     switch (codec().type) {
         case Codec::kCodecWav:
             return (sampleRate() > 48000 || bitsPerSample() > 16) ? 8192 : 4096;
+        case Codec::kCodecFlac:
+            return 4096;
         default:
             return (codec().transport == Codec::kTransportOgg) ? 4096 : 2048;
     }

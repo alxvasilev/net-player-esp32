@@ -108,8 +108,7 @@ public:
     void logStartOfRingBuf(const char* msg);
 protected:
     mutable LinkSpeedProbe mSpeedProbe;
-    bool mIsBufUnderrun = false;
-    void setUnderrunState(bool isUnderrun);
+    bool mIsInBufUnderrun = false;
 public:
     const char* url() const { return mUrlInfo ? mUrlInfo->url() : nullptr; }
     const char* recStaName() const { return mUrlInfo ? mUrlInfo->recStaName() : nullptr; }

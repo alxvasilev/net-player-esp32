@@ -320,7 +320,7 @@ bool SpotifyNode::recv()
         mRingBuf.pushBack(new TitleChangeEvent(strdup(mCurrentTrack->name.c_str()),
             strdup(mCurrentTrack->artist.c_str())));
         if (mWaitingPrefill) {
-            mRingBuf.pushBack(new PrefillEvent(mInStreamId, ""));
+            mRingBuf.pushBack(new PrefillEvent(mInStreamId));
         }
     }
     mRingBuf.pushBack(pkt.release());

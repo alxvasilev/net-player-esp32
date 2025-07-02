@@ -112,10 +112,9 @@ struct StreamEndEvent: public GenericEvent {
     StreamEndEvent(StreamId streamId): GenericEvent(kEvtStreamEnd, streamId, 0) {}
 };
 struct PrefillEvent: public GenericEvent {
-    typedef std::unique_ptr<PrefillEvent, Deleter> unque_ptr;
-    unique_ptr_mfree<const char> displayText;
-    PrefillEvent(StreamId aStreamId, const char* display, uint8_t flags=0)
-    : GenericEvent(kEvtPrefill, aStreamId, flags), displayText(display)
+    typedef std::unique_ptr<PrefillEvent, Deleter> unique_ptr;
+    PrefillEvent(StreamId aStreamId, uint8_t flags=0)
+    : GenericEvent(kEvtPrefill, aStreamId, flags)
     {}
 };
 #endif

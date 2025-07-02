@@ -198,7 +198,7 @@ bool HttpNode::connect(bool isReconnect)
             ESP_LOGD(TAG, "Posting kStreamChange with codec %s and streamId %ld\n", mInFormat.codec().toString(), mUrlInfo->streamId);
             mRingBuf.pushBack(new NewStreamEvent(mUrlInfo->streamId, mInFormat));
             if (mWaitingPrefill) {
-                mRingBuf.pushBack(new PrefillEvent(mUrlInfo->streamId, mStationNameHdr.release()));
+                mRingBuf.pushBack(new PrefillEvent(mUrlInfo->streamId));
             }
         }
         return true;
@@ -414,22 +414,6 @@ HttpNode::HttpNode(IAudioPipeline& parent)
     : AudioNodeWithTask(parent, "node-http", true, kStackSize, 15, kCpuCore), mIcyParser(mMutex)
 {
 }
-
-void HttpNode::setUnderrunState(bool isUnderrun)
-{
-    if (isUnderrun == mIsBufUnderrun) {
-        return;
-    }
-    mIsBufUnderrun = isUnderrun;
-    if (isUnderrun) {
-        if (mWaitingPrefill) {
-            ESP_LOGI(TAG, "Underrun (prefill)");
-        } else {
-            ESP_LOGW(TAG, "Underrun");
-        }
-    }
-    plSendEvent(kEventBufUnderrun, isUnderrun);
-}
 void HttpNode::prefillStart()
 {
     mWaitingPrefill = 1;
@@ -442,7 +426,17 @@ void HttpNode::prefillComplete()
 }
 StreamEvent HttpNode::pullData(PacketResult& pr)
 {
-    setUnderrunState(!mRingBuf.dataSize());
+    bool isUnderrun = !mRingBuf.dataSize();
+    if (isUnderrun != mIsInBufUnderrun) {
+        LOCK();
+        mIsInBufUnderrun = isUnderrun;
+        plSendEvent(kEventBufUnderrun, isUnderrun);
+        if (isUnderrun && !mWaitingPrefill) {
+            mWaitingPrefill = mInFormat.prefillAmount();
+            ESP_LOGW(TAG, "Underrun: prefilling with %d bytes", mWaitingPrefill);
+            return pr.set(new PrefillEvent(mOutStreamId));
+        }
+    }
     StreamPacket::unique_ptr pkt(mRingBuf.popFront());
     if (!pkt) {
         pr.streamId = mOutStreamId;
@@ -466,13 +460,15 @@ StreamPacket* HttpNode::peek()
 void HttpNode::notifyFormatDetails(StreamFormat fmt)
 {
     auto rxSize = fmt.rxChunkSize();
+    auto prefillAmount = fmt.prefillAmount();
     LOCK();
+    mInFormat = fmt;
     if (mRxChunkSize != rxSize) {
         mRxChunkSize = rxSize;
         ESP_LOGI(TAG, "Updated network recv size for codec %s to %d", fmt.codec().toString(), mRxChunkSize);
     }
-    auto prefillAmount = fmt.prefillAmount();
     if (mWaitingPrefill) {
+        ESP_LOGI(TAG, "Updated prefill size from %d to %d", mWaitingPrefill, prefillAmount);
         mWaitingPrefill = prefillAmount;
     }
     mRingBuf.setMaxDataSize(prefillAmount * 4);

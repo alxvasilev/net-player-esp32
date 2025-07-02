@@ -176,7 +176,7 @@ void A2dpInputNode::postStreamStart(StreamFormat fmt)
     mRingBuf.pushBack(new NewStreamEvent(mStreamId, fmt, 16));
     if (!mRingBuf.dataSize()) {
         mWaitingPrefill = mSourceFormat.prefillAmount();
-        mRingBuf.pushBack(new PrefillEvent(mStreamId, ""));
+        mRingBuf.pushBack(new PrefillEvent(mStreamId));
     }
 }
 void A2dpInputNode::avrcCtrlHandleEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_param_t& param)
