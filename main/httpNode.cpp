@@ -266,6 +266,7 @@ int8_t HttpNode::recv()
                 if (mContentLen && esp_http_client_is_complete_data_received(mClient)) {
                     // transfer complete, post end of stream
                     ESP_LOGI(TAG, "Transfer complete, posting kStreamEnd event (streamId=%ld)", mUrlInfo->streamId);
+                    mStreamByteCtr = 0;
                     mRingBuf.pushBack(new GenericEvent(kEvtStreamEnd, mUrlInfo->streamId, 0));
                     return 1; // don't stop the node, just wait for new commands
                 }

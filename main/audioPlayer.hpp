@@ -81,7 +81,7 @@ protected:
     };
     enum {
         kLcdTopLineTextY = 1, kLcdRecIndicatorX = 90,
-        kLcdArtistNameLineY = 36, kLcdTrackTitleY = 74,
+        kLcdArtistNameLineY = 32, kLcdTrackTitleY = 72,
         kBufLowMinGreen = 32 // minimum green component of low (but not underrun) buf netspeed color
     };
     enum {
