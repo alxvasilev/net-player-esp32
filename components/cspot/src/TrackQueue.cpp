@@ -410,7 +410,7 @@ void TrackQueue::taskFunc()
             ESP_LOGI(TAGQ, "Preloading track info around current index %d", mCurrentTrackIdx);
             loadTrack(mCurrentTrackIdx);
             vTaskDelay(pdMS_TO_TICKS(100)); // give a chance to currentTrack() to return here
-            ESP_LOGI(TAGQ, "Loading curr+1 info...");
+            ESP_LOGI(TAGQ, "Loading track+1 info...");
             loadTrack(mCurrentTrackIdx + 1);
             ESP_LOGI(TAGQ, "Loading track+2 info...");
             loadTrack(mCurrentTrackIdx + 2);
@@ -573,7 +573,7 @@ bool TrackQueue::nextTrack(bool nextPrev)
               mSpirc.mCtx.mTimeProvider.getSyncedTimestamp() -
               pbState.innerFrame.state.position_measured_at;
 
-      if (mCurrentTrackIdx < 1 || position > 3000) {
+      if (mCurrentTrackIdx < 1) {
           return false;
       }
       mCurrentTrackIdx--;

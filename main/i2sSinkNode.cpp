@@ -82,15 +82,20 @@ bool I2sOutputNode::dispatchCommand(Command &cmd)
     }
     if (cmd.opcode == kCommandPrefillComplete) {
         auto id = (PrefillEvent::IdType)cmd.arg;
-        if (mWaitingPrefill && (id >= mLastPrefillId)) {
-            mWaitingPrefill = 0;
+        if (id >= mLastPrefillId) {
             mLastPrefillId = id;
-            ESP_LOGI(mTag, "Got prefill %d complete command, starting playback", id);
+            if (mWaitingPrefill) {
+                mWaitingPrefill = 0;
+                ESP_LOGI(mTag, "Got prefill %d complete command, starting playback", id);
+            }
+            else {
+                ESP_LOGW(mTag, "Ignoring prefill %d complete cmd: id is ok, but we are not prefilling", id);
+            }
             plSendEvent(kEventPlaying);
             setState(kStateRunning);
         }
         else {
-            ESP_LOGW(mTag, "Ignoring PrefillComplete (id=%d) command that doesn't match our state (prefillId=%d, waitingPrefill=%d)", id, mLastPrefillId, mWaitingPrefill);
+            ESP_LOGW(mTag, "Ignoring prefill %d complete cmd: id is lower than the last (%d)", id, mLastPrefillId);
         }
         return true;
     }

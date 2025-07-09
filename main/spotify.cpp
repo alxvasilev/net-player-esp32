@@ -242,6 +242,7 @@ void SpotifyNode::nodeThreadFunc()
             myassert(mState == kStateRunning);
             mRingBuf.clearStopSignal();
             if (!mHttp.connected()) {
+                ESP_LOGI(TAG, "Connecting...");
                 connect();
                 ESP_LOGI(TAG, "Starting download...");
             }
