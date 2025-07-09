@@ -6,7 +6,7 @@ idf_component_register(
 #   ADDITIONAL_CLEAN_FILES ${CMAKE_CURRENT_BINARY_DIR}/protobuf/*.o
     REQUIRES mbedtls pthread json httpLib
 )
-target_compile_options(${COMPONENT_LIB} PRIVATE -fexceptions)
+target_compile_options(${COMPONENT_LIB} PRIVATE -fexceptions -fno-strict-aliasing -Wcast-align -Wstrict-aliasing=2)
 target_compile_definitions(${COMPONENT_LIB} PUBLIC -D BELL_ONLY_CJSON=1 -DPB_ENABLE_MALLOC=1)
 
 file(GLOB PROTO_FILES protobuf/*.proto)

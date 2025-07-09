@@ -147,6 +147,7 @@ bool SpotifyNode::startCurrentTrack(bool flush, uint32_t tsSeek)
 }
 void SpotifyNode::clearRingQueue()
 {
+    ESP_LOGI(mTag, "Clearing ring buffer");
     mRingBuf.clear();
     if (mOutStreamId) { // properly terminate current stream, if its end packet was not read yet
         mRingBuf.pushBack(new StreamEndEvent(mOutStreamId));
@@ -160,7 +161,7 @@ void SpotifyNode::prefillStart()
 void SpotifyNode::prefillComplete()
 {
     mWaitingPrefill = 0;
-    plSendEvent(kEventPrefillComplete);
+    plSendEvent(kEventPrefillComplete, PrefillEvent::lastPrefillId());
 }
 bool SpotifyNode::startNextTrack(bool flush, bool nextPrev)
 {
@@ -324,7 +325,7 @@ bool SpotifyNode::recv()
         }
     }
     mRingBuf.pushBack(pkt.release());
-    if (mWaitingPrefill >= mRingBuf.dataSize()) {
+    if (mWaitingPrefill && mRingBuf.dataSize() >= mWaitingPrefill) {
         mWaitingPrefill = 0;
         ESP_LOGI(TAG, "Prefill complete, sending event");
         plSendEvent(kEventPrefillComplete, PrefillEvent::lastPrefillId());

@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "i2sSinkNode.hpp"
+#include <magic_enum.hpp>
 #include <limits>
 #define DEBUG_TIMING 1
 
@@ -131,6 +132,7 @@ void I2sOutputNode::nodeThreadFunc()
 #endif
             if (evt) {
                 if (evt < 0) {
+                    ESP_LOGI(mTag, "Got stream error %s", magic_enum::enum_name(evt).data());
                     plSendError(evt, dpr.streamId);
                     // flush DMA buffers - ramp / fade out
                     vTaskDelay(20);
