@@ -287,6 +287,9 @@ bool I2sOutputNode::createChannel()
         millis = (1000 * dmaSize + byteRate / 2) / byteRate;
     }
     int dmaNbufs = (dmaSize + 4091) / 4092;
+    if (dmaNbufs < 2) {
+        dmaNbufs = 2;
+    }
     int dmaBufSamples = (dmaSize / dmaNbufs) / sampleSize;
     ESP_LOGW(mTag, "Allocating %d ms of DMA buffer: %d bytes (%d units x %d bytes(%d samples))",
         millis, dmaSize, dmaNbufs, dmaBufSamples * sampleSize, dmaBufSamples);
