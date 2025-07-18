@@ -165,7 +165,7 @@ void SpotifyNode::prefillComplete()
 }
 bool SpotifyNode::startNextTrack(bool flush, bool nextPrev)
 {
-    ESP_LOGI(TAG, "Starting next track...");
+    ESP_LOGI(TAG, "Starting %s track...", nextPrev ? "next" : "prev");
     if (!mSpirc.mTrackQueue.nextTrack(nextPrev)) {
         ESP_LOGI(TAG, "nextTrack: No more tracks");
         return false;
