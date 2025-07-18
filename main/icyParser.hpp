@@ -1,8 +1,14 @@
-#include <utils.hpp>
+#include <buffer.hpp>
 #include <mutex.hpp>
 class IcyInfo
 {
 protected:
+    struct MallocFreeDeleter {
+        void operator()(const void* ptr) const { ::free((void*)ptr); }
+    };
+    template <typename T>
+    using unique_ptr_mfree = std::unique_ptr<T, MallocFreeDeleter>;
+
     unique_ptr_mfree<char> mTrackName;
     unique_ptr_mfree<char> mStaName;
     unique_ptr_mfree<char> mStaDesc;
