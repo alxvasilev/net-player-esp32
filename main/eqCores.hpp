@@ -1,5 +1,6 @@
 #ifndef EQ_CORES_HPP
 #define EQ_CORES_HPP
+#define BQ_DEBUG
 #include "equalizer.hpp"
 #include "streamDefs.hpp"
 

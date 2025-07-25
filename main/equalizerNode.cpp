@@ -20,58 +20,161 @@ EqualizerNode::EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs)
     }
     mUseEspEq = mNvsHandle.readDefault("eq.useEsp", (uint8_t)1);
     mOut24bit = mNvsHandle.readDefault("eq.out24bit", (uint8_t)1);
-    int len = sizeof(mEqName);
-    if (mNvsHandle.readString("eq.default", mEqName, len) == ESP_OK) {
-        mEqName[len] = 0;
-    }
-    else {
-        mEqName[0] = 0;
-    }
+    eqLoadName();
     equalizerReinit(StreamFormat(44100, 16, 2));
 }
-std::string EqualizerNode::eqName() const
+void EqualizerNode::eqLoadName()
 {
-    if (mEqName[0]) {
-        return mEqName;
+    char name[16];
+    int len = sizeof(name) - 1;
+    if (mNvsHandle.readString("eq.default", name, len) == ESP_OK) {
+        name[len] = 0;
+        mEqId = " :";
+        mEqId.append(name);
     }
     else {
-        std::string ret = "default";
-        return appendAny(ret, mDefaultNumBands);
+        updateDefaultEqName(false);
+    }
+}
+void EqualizerNode::updateDefaultEqName(bool check)
+{
+    if (check && !isDefaultPreset()) {
+        return;
+    }
+    mEqId = " :";
+    mEqId += kDefaultPresetPrefix;
+    if (mUseEspEq) {
+        mEqId += '0';
+    }
+    else {
+        appendAny(mEqId, mDefaultNumBands);
+        if (mEqMaxFreqCappedTo) {
+            mEqId += '!';
+            appendAny(mEqId, mEqMaxFreqCappedTo / 1000);
+        }
     }
 }
 uint8_t EqualizerNode::eqNumBands()
 {
-    if (!mEqName[0]) {
-        return mDefaultNumBands;
-    }
-    std::string key = mEqName;
-    key += ".cfg";
-    int len = mNvsHandle.getBlobSize(key.c_str());
+    int len = mNvsHandle.getBlobSize(eqConfigKey());
     uint8_t nBands;
-    if ((len >= 0) && (len % sizeof(EqBandConfig) == 0) && (nBands = len / sizeof(EqBandConfig) >= kMyEqMinBands)) {
-        return nBands;
+    if ((len > 0) && (len % sizeof(EqBandConfig) == 0)) {
+        nBands = len / sizeof(EqBandConfig);
+        if (nBands >= kMyEqMinBands && nBands <= kMyEqMaxBands) {
+            return nBands;
+        }
     }
-    key[key.size() - 4] = 0; // remove .cfg
-    len = mNvsHandle.getBlobSize(key.c_str());
-    return (len < kMyEqMinBands || len > kMyEqMaxBands) ? mDefaultNumBands : len;
+    len = mNvsHandle.getBlobSize(eqGainsKey());
+    if (len >= kMyEqMinBands && len <= kMyEqMaxBands) {
+        return len;
+    }
+    return mUseEspEq ? 10 : mDefaultNumBands;
 }
 void EqualizerNode::createCustomCore(StreamFormat fmt)
 {
-    auto nBands = eqNumBands();
-    if (fmt.numChannels() >= 2) {
-        mCore.reset(new MyEqualizerCore<true>(nBands, fmt.sampleRate()));
+    int sr = fmt.sampleRate();
+    // If we have a frequency-capped preset, and have increased the samplerate, try the original preset
+    if (mEqMaxFreqCappedTo && (sr >> 1) > mEqMaxFreqCappedTo) {
+        ESP_LOGI(TAG, "We are using a freq-capped preset, samplerate increased, trying original");
+        auto pos = mEqId.find_last_of('!');
+        assert(pos != std::string::npos);
+        mEqId = mEqId.substr(0, pos);
+        mEqMaxFreqCappedTo = 0;
     }
-    else {
-        mCore.reset(new MyEqualizerCore<false>(nBands, fmt.sampleRate()));
-    }
+    int nBands = eqNumBands();
     int expectedLen = nBands * sizeof(EqBandConfig);
+    auto config = (EqBandConfig*)alloca(expectedLen);
+    assert(config);
     auto len = expectedLen;
-    if (mNvsHandle.readBlob(eqConfigKey().c_str(), mCore->bandConfigs(), len) != ESP_OK || len != expectedLen) {
-        memcpy(mCore->bandConfigs(), EqBandConfig::defaultCfg(nBands), expectedLen);
+    auto ret = mNvsHandle.readBlob(eqConfigKey(), config, len);
+    if (ret != ESP_OK || len != expectedLen) {
+        auto defaultCfg = EqBandConfig::defaultCfg(nBands);
+        assert(defaultCfg);
+        memcpy(config, defaultCfg, expectedLen);
+        ESP_LOGW(TAG, "Couldn't load config for %d-band '%s', using default", nBands, eqConfigKey());
+    }
+    fitBandFreqsToSampleRate(config, &nBands, sr);
+    if (fmt.numChannels() >= 2) {
+        mCore.reset(new MyEqualizerCore<true>(nBands, sr));
     }
     else {
-        ESP_LOGW(TAG, "Loaded custom config for %d-band equalizer '%s'", nBands, eqName().c_str());
+        mCore.reset(new MyEqualizerCore<false>(nBands, sr));
     }
+    memcpy(mCore->bandConfigs(), config, nBands * sizeof(EqBandConfig));
+}
+bool EqualizerNode::fitBandFreqsToSampleRate(EqBandConfig* config, int* nBands, int sampleRate)
+{
+    auto oriNbands = *nBands;
+    auto oriEqId = mEqId;
+    int nyquistFreq = sampleRate >> 1;
+    EqBandConfig* topBand = config + *nBands - 1;
+    if (topBand->freq < nyquistFreq) {
+        return false;
+    }
+    ESP_LOGW(TAG, "Eq bands span outside the Nyquist frequency for samplerate %d, adjusting", sampleRate);
+    mEqMaxFreqCappedTo = nyquistFreq;
+    /*
+       Default presets get renamed to: deflt:<nbands>!<maxBandFreq>
+       (nbands is the original number, even if bands are removed)
+       User presets get renamed to:      <presetName>!<maxBandFreq>
+     */
+    if (isDefaultPreset()) {
+        updateDefaultEqName(false);
+    }
+    else { // append !xx suffix with the cap freq
+        auto pos = mEqId.find_last_of('!');
+        if (pos != std::string::npos) {
+            mEqId.resize(pos + 1);
+        }
+        else {
+            mEqId += '!';
+        }
+        appendAny(mEqId, mEqMaxFreqCappedTo / 1000);
+    }
+    // first, try to load a capped version from NVS
+    int maxLen = *nBands * sizeof(EqBandConfig);
+    int len = maxLen;
+    bool have = (mNvsHandle.readBlob(eqConfigKey(), config, len) == ESP_OK) && (len <= maxLen) && (len % sizeof(EqBandConfig) == 0);
+    if (have) { // use the saved config
+        int nb = len / sizeof(EqBandConfig);
+        if (nb >= kMyEqMinBands) {
+            *nBands = nb;
+            ESP_LOGI(TAG, "Loaded band config for Nyquist-capped eq '%s'", presetName());
+        }
+    }
+    else { // adjust current config
+        // delete peaking bands that are above Nyquist
+        auto band = topBand;
+        while(--band >= config) {
+            if (band->freq < nyquistFreq) {
+                break;
+            }
+            --(*nBands);
+        }
+        band++; // now points to new top (high-shelf) band
+        band->freq = ((nyquistFreq * 90 / 50000)) * 500; // adjust high-shelf band to Nyquist freq, round at 500
+        band->Q = 60; // 0.06: as the band's freq is now close to the Nyquist freq, need to widen it at the low end
+        ESP_LOGI(TAG, "Modified config for '%s' to fit Nyquist limit", presetName());
+    }
+    if (*nBands == oriNbands) {
+        return true;
+    }
+    // bands were removed, remove from gains as well, if we are going to use gains saved for original preset
+    auto gains = (int8_t*)alloca(oriNbands);
+    len = oriNbands;
+    have = (mNvsHandle.readBlob(eqGainsKey(), gains, len) == ESP_OK) && (len == *nBands);
+    if (have) {
+        return true;
+    }
+    // we don't have gains for capped config, check for original preset, modify and save them
+    oriEqId[0] = 'e';
+    len = oriNbands;
+    have = (mNvsHandle.readBlob(oriEqId.c_str(), gains, len) == ESP_OK) && (len == oriNbands);
+    if (have) {
+        gains[*nBands-1] = gains[oriNbands-1];
+        mNvsHandle.writeBlob(eqGainsKey(), gains, *nBands);
+    }
+    return true;
 }
 void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
 {
@@ -80,11 +183,11 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
     if (fmtChanged) {
         mOutFormat = mInFormat = fmt;
     }
-    bool justCreated = false;
     if (mUseEspEq && mInFormat.sampleRate() <= 48000) {
         mOutFormat.setBitsPerSample(16);
         if (fmtChanged || !mCore || mCore->type() != IEqualizerCore::kTypeEsp) {
             mCore.reset(new EspEqualizerCore(mOutFormat));
+            forceLoadGains = true;
             auto bps = mInFormat.bitsPerSample();
             if (bps <= 16) {
                 mPreConvertFunc = nullptr; // no conversion and use DefaultVolumeImpl for volume
@@ -99,14 +202,13 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
             else {
                 myassert(false);
             }
-            justCreated = true;
         }
     }
     else { // need custom eq
         mOutFormat.setBitsPerSample(mOut24bit ? 24 : 16);
-        if (fmtChanged || !mCore || mCore->type() != IEqualizerCore::kTypeCustom ||
-                (eqIsDefault() && (mCore->numBands() != mDefaultNumBands))) {
+        if (fmtChanged || !mCore || mCore->type() != IEqualizerCore::kTypeCustom) {
             createCustomCore(mInFormat);
+            forceLoadGains = true;
             auto bps = mInFormat.bitsPerSample();
             if (bps == 16) {
                 mPreConvertFunc = &EqualizerNode::samples16or8ToFloatAndApplyVolume<int16_t>;
@@ -127,19 +229,17 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
             mPostConvertFunc = mOut24bit
                 ? &EqualizerNode::floatSamplesTo24bitAndGetLevelsStereo
                 : &EqualizerNode::floatSamplesTo16bitAndGetLevelsStereo;
-            justCreated = true;
         }
     }
     // load gains
-    if (justCreated || forceLoadGains) {
+    if (forceLoadGains) {
         auto nBands = mCore->numBands();
         int len = nBands;
-        auto key = eqGainsKey();
-        if ((mNvsHandle.readBlob(key.c_str(), mCore->gains(), len) == ESP_OK) && (len == nBands)) {
-            ESP_LOGI(TAG, "Loaded equalizer gains from NVS for '%s'", key.c_str());
+        if ((mNvsHandle.readBlob(eqGainsKey(), mCore->gains(), len) == ESP_OK) && (len == nBands)) {
+            ESP_LOGI(TAG, "Loaded equalizer gains from NVS for '%s'", presetName());
         }
         else {
-            ESP_LOGI(TAG, "Error loading or no gains for '%s', len=%d, nbands=%d", eqGainsKey().c_str(), len, nBands);
+            ESP_LOGI(TAG, "Error loading or no gains for '%s', len=%d, expected=%d", presetName(), len, nBands);
             memset(mCore->gains(), 0, nBands);
         }
         mCore->updateAllFilters();
@@ -153,7 +253,11 @@ bool EqualizerNode::setDefaultNumBands(uint8_t n)
     }
     LOCK_EQ();
     mDefaultNumBands = n;
-    equalizerReinit();
+    if (isDefaultPreset()) {
+        deleteCore();
+        updateDefaultEqName(false);
+        equalizerReinit();
+    }
     mNvsHandle.write("eq.nbands", (uint8_t)n);
     return true;
 }
@@ -212,7 +316,7 @@ bool EqualizerNode::reconfigEqBand(uint8_t band, uint16_t freq, uint16_t Q)
     }
     ESP_LOGI(TAG, "Reconfiguring band %d: freq=%d, Q=%f", band, cfg.freq, (float)cfg.Q / 1000);
     mCore->updateFilter(band, true);
-    MY_ESP_ERRCHECK(mNvsHandle.writeBlob(eqConfigKey().c_str(), allCfg, nBands * sizeof(EqBandConfig)),
+    MY_ESP_ERRCHECK(mNvsHandle.writeBlob(eqConfigKey(), allCfg, nBands * sizeof(EqBandConfig)),
         TAG, "writing band config", return false);
     return true;
 }
@@ -237,13 +341,25 @@ bool EqualizerNode::setAllPeakingQ(int Q, bool clearState)
 }
 bool EqualizerNode::switchPreset(const char *name)
 {
-    auto len = strlen(name);
-    LOCK_EQ();
-    if (len >= sizeof(mEqName)) {
-        ESP_LOGW(TAG, "switchPreset: Name is too long");
+    if (!name || !name[0]) {
         return false;
     }
-    memcpy(mEqName, name, len + 1);
+    int len = 0;
+    for (const char* ch = name; *ch; ch++) {
+        if (*ch == '!') {
+            ESP_LOGW(TAG, "%s: Invalid char in preset name '%s'", __FUNCTION__, name);
+            return false;
+        }
+        len++;
+    }
+    if (len > 10) {
+        ESP_LOGW(TAG, "%s: Preset name is too long", __FUNCTION__);
+        return false;
+    }
+    LOCK_EQ();
+    mEqId = " :";
+    mEqId += name;
+    deleteCore();
     equalizerReinit(0, true);
     return true;
 }
@@ -254,9 +370,10 @@ void EqualizerNode::useEspEqualizer(bool use)
         return;
     }
     mUseEspEq = use;
+    mCoreTypeChanged = true;
     mNvsHandle.write("eq.useEsp", (uint8_t)mUseEspEq);
+    updateDefaultEqName();
     equalizerReinit(0, true);
-    mCoreChanged = true;
 }
 
 template <int Bps>
@@ -370,10 +487,10 @@ StreamEvent EqualizerNode::pullData(PacketResult& dpr)
     auto event = mPrev->pullData(dpr);
     if (!event) {
         MutexLocker locker(mMutex);
-        if (mCoreChanged) {
-            mCoreChanged = false;
-            // we have a race condition if we handle mCoreChanged before pullData, because we are unlocked
-            // during pullData and someone may set mCoreChanged. In that case we can't return both the
+        if (mCoreTypeChanged) {
+            mCoreTypeChanged = false;
+            // we have a race condition if we handle mCoreTypeChanged before pullData, because we are unlocked
+            // during pullData and someone may set mCoreTypeChanged. In that case we can't return both the
             // kEvtStreamChanged and the data packet
             return dpr.set(new NewStreamEvent(mStreamId, mOutFormat, mSourceBps));
         }

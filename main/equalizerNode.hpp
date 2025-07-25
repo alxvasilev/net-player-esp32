@@ -1,6 +1,5 @@
 #ifndef EQUALIZERNODE_HPP
 #define EQUALIZERNODE_HPP
-//#define BQ_DEBUG
 #include "eqCores.hpp"
 #include "audioNode.hpp"
 #include "volume.hpp"
@@ -12,6 +11,7 @@ protected:
     enum { kMyEqMinBands = 3, kMyEqMaxBands = 20, kDefaultNumBands = 10 };
     typedef void(EqualizerNode::*PreConvertFunc)(PacketResult& pr);
     typedef void(EqualizerNode::*PostConvertFunc)(DataPacket& pkt);
+    static constexpr const char kDefaultPresetPrefix[] = "deflt:";
     NvsHandle& mNvsHandle;
     StreamFormat mInFormat;
     StreamFormat mOutFormat;
@@ -21,20 +21,24 @@ protected:
     bool mOut24bit;
     uint8_t mDefaultNumBands;
     bool mBypass = false;
-    bool mCoreChanged = false;
-    StreamId mStreamId = 0;
+    bool mCoreTypeChanged = false;
     uint8_t mSourceBps = 0;
-    char mEqName[10] = {};
+    StreamId mStreamId = 0;
+    uint16_t mEqMaxFreqCappedTo = 0;
+    std::string mEqId; // format is [e|f]:<name>[!xx] Prefix 'e' is for gains, 'f' is for config (frequnecies). !xx is for frequency-capped version
     float mFloatVolumeMul = 1.0;
     PreConvertFunc mPreConvertFunc = nullptr;
     PostConvertFunc mPostConvertFunc = nullptr;
     IEqualizerCore::ProcessFunc mProcessFunc = nullptr;
     uint8_t eqNumBands();
-    bool eqIsDefault() const { return mEqName[0] == 0; }
-    std::string eqName() const;
-    std::string eqGainsKey() const { return eqName(); }
-    std::string eqConfigKey() const { return eqName() + ".cfg"; }
+    bool isDefaultPreset() const { return mEqId.size() < 2 ? false : strncmp(mEqId.c_str() + 2, kDefaultPresetPrefix, sizeof(kDefaultPresetPrefix)-1) == 0; }
+    const char* eqGainsKey() { mEqId[0] = 'e'; return mEqId.c_str(); }
+    const char* eqConfigKey() { mEqId[0] = 'f'; return mEqId.c_str(); }
+    void eqLoadName();
     void loadEqConfig(uint8_t nBands);
+    void deleteCore() { mCore.reset(); }
+    void updateDefaultEqName(bool check=true);
+    bool fitBandFreqsToSampleRate(EqBandConfig* config, int* nBands, int sampleRate);
     void equalizerReinit(StreamFormat fmt=0, bool forceLoadGains=false);
     void updateBandGain(uint8_t band);
     void createCustomCore(StreamFormat fmt);
@@ -54,7 +58,7 @@ public:
     int numBands() const { return mCore->numBands(); }
     bool setDefaultNumBands(uint8_t n);
     IEqualizerCore::Type eqType() const { return mCore->type(); }
-    const char* presetName() const { return mEqName[0] ? mEqName : "default"; }
+    const char* presetName() const { return mEqId.size() > 2 ? mEqId.c_str() + 2 : nullptr; }
     bool switchPreset(const char* name);
     void useEspEqualizer(bool use);
     void disable(bool disabled) { mBypass = disabled; }
