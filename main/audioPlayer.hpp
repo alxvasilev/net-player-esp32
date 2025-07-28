@@ -12,7 +12,7 @@
 #include "vuDisplay.hpp"
 #include "dlna.hpp"
 #include <framebuf.hpp>
-#include <gfx.hpp>
+#include <lcd.hpp>
 #include <nvsSimple.hpp>
 #include <task.hpp>
 #include <cStringTuple.hpp>

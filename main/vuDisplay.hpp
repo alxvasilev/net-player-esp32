@@ -6,10 +6,10 @@
 #include <lcdColor.hpp>
 
 template <class C>
-class FrameBuffer;
+class FrameBufferColor;
 template <class Fb>
-class Gfx;
-typedef Gfx<FrameBuffer<Color565>> LcdFrameBuf;
+class Lcd;
+typedef Lcd<FrameBufferColor<Color565>> LcdFrameBuf;
 
 class NvsHandle;
 
