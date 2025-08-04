@@ -74,9 +74,9 @@ AudioNode::Type AudioPlayer::playerModeToInNodeType(PlayerMode mode)
 
 AudioPlayer::AudioPlayer(ST7735Display& lcd, http::Server& httpServer, PlayerMode mode, AudioNode::Type outType)
 : mNvsHandle("aplayer", true, kNvsCommitDelay), mLcd(lcd),
-  mDmaFrameBuf(320, kTrackTitleFont.height + kTrackTitleFont.lineSpacing, MALLOC_CAP_DMA),
+  mDmaFrameBuf(320, kTrackTitleFont.height + kTrackTitleFont.lineSpacing, HeapCapsAlloc(MALLOC_CAP_DMA)),
   mTitleTextFrameBuf(kMaxTrackTitleLen * (kTrackTitleFont.width + kTrackTitleFont.charSpacing),
-                     kTrackTitleFont.height + kTrackTitleFont.lineSpacing, MALLOC_CAP_SPIRAM),
+                     kTrackTitleFont.height + kTrackTitleFont.lineSpacing, HeapCapsAlloc(MALLOC_CAP_SPIRAM)),
   mHttpServer(httpServer), mVuDisplay(mDmaFrameBuf)
 {
     lcdInit();
@@ -1228,9 +1228,9 @@ void AudioPlayer::lcdBlitTrackTitle()
 #ifdef PERF_TITLESCROLL
     ElapsedTimer t;
 #endif
-    auto wptr = mDmaFrameBuf.data();
+    auto wptr = mDmaFrameBuf.frameBuf();
     for (int line = 0; line < mTitleTextFrameBuf.height(); line++) {
-        auto rLineStart = mTitleTextFrameBuf.data() + line * mTitleTextFrameBuf.width();
+        auto rLineStart = mTitleTextFrameBuf.frameBuf() + line * mTitleTextFrameBuf.width();
         auto rptr =  rLineStart + mTitleScrollPixOffset;
         auto rend = rLineStart + mTitleTextWidth;
         auto wend = wptr + mDmaFrameBuf.width();

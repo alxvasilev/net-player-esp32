@@ -33,8 +33,8 @@ void VuDisplay::init(NvsHandle& nvs)
 void VuDisplay::update(const IAudioVolume::StereoLevels& levels)
 {
     uint32_t word = mLcd.bgColor().val << 16 | mLcd.bgColor().val;
-    uint32_t* end = (uint32_t*)mLcd.data() + ((mLcd.width() * mHeight) >> 1);
-    for (auto ptr = (uint32_t*)mLcd.data(); ptr < end; ) {
+    uint32_t* end = (uint32_t*)mLcd.frameBuf() + ((mLcd.width() * mHeight) >> 1);
+    for (auto ptr = (uint32_t*)mLcd.frameBuf(); ptr < end; ) {
         *(ptr++) = word;
     }
     drawChannel(mLeftCtx, levels.left);

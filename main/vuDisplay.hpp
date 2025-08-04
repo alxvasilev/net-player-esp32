@@ -9,6 +9,12 @@ template <class C>
 class FrameBufferColor;
 template <class Fb>
 class Lcd;
+struct HeapCapsAlloc {
+    int caps;
+    HeapCapsAlloc(int aCaps): caps(aCaps) {}
+    void* malloc(size_t size) const { return heap_caps_malloc(size, caps); }
+    static void free(void * ptr) { printf("HeapCapsAlloc::free(%p)\n", ptr); heap_caps_free(ptr); }
+};
 typedef Lcd<FrameBufferColor<Color565>> LcdFrameBuf;
 
 class NvsHandle;
