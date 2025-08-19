@@ -121,25 +121,24 @@ bool DecoderFlac::outputSamples(int nSamples, const FLAC__int32* const channels[
 {
     auto ch0 = channels[0];
     auto ch1 = channels[isMono ? 0 : 1]; // in mono mode, output the same channel on both left and right
-    int nPackets, defltPktSamples;
-    if ((nSamples & 0x3ff) == 0) {
-        nPackets = nSamples >> 10;
-        defltPktSamples = 1024;
+    int maxPktSamples;
+    if ((nSamples & 0x3ff) == 0) { // multiple of 1024
+        maxPktSamples = 1024;
     }
     else {
-        nPackets = (nSamples + 512) / 1024;
-        defltPktSamples = nSamples / nPackets;
+        int nPackets = (nSamples + 1023) >> 10; // divide by 1024
+        maxPktSamples = nSamples / nPackets;
     }
-    int defltPktAlloc = defltPktSamples * 8;
-    int defltPktLen = defltPktSamples * 2 * sizeof(T);
+    int maxPktAlloc = maxPktSamples * 8; // we always allocate for 32bit samples
+    int maxPktLen = maxPktSamples * 2 * sizeof(T);
     int remainSamples = nSamples;
     int sidx = 0;
     while(remainSamples > 0) {
         int pktSamples, pktAlloc, pktLen;
-        if (remainSamples >= defltPktSamples) {
-            pktSamples = defltPktSamples;
-            pktAlloc = defltPktAlloc;
-            pktLen = defltPktLen;
+        if (remainSamples >= maxPktSamples) {
+            pktSamples = maxPktSamples;
+            pktAlloc = maxPktAlloc;
+            pktLen = maxPktLen;
         }
         else {
             pktSamples = remainSamples;
