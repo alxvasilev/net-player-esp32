@@ -305,7 +305,7 @@ void AudioPlayer::lcdUpdateTitleAndArtist(const char* title, const char* artist)
     bool merge = true;
     int artistLen = artist ? strlen(artist) : 0;
     if (mPlayerMode != kModeRadio) {
-        if (!artistLen || mLcd.textWidth(kArtistNameFont, artistLen) <= mLcd.width()) {
+        if (!artistLen || mLcd.textMonoWidth(kArtistNameFont, artistLen) <= mLcd.width()) {
             lcdUpdateArtistName(artist);
             lcdUpdateTrackTitle(title);
             merge = false;
@@ -362,7 +362,7 @@ void AudioPlayer::lcdUpdateRecordingState()
                 goto drawInd;
             }
         }
-        mLcd.clear(kLcdRecIndicatorX, kLcdTopLineTextY, mLcd.textWidth(kTopLineFont, 3), kTopLineFont.height);
+        mLcd.clear(kLcdRecIndicatorX, kLcdTopLineTextY, mLcd.textMonoWidth(kTopLineFont, 3), kTopLineFont.height);
     }
     return;
 drawInd:
@@ -1183,40 +1183,45 @@ void AudioPlayer::lcdTimedDrawTask()
     }
 }
 
-void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int len)
+void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int bufLen)
 {
-    if (!buf || !buf[0] || !len) {
+    if (!buf || !buf[0] || !bufLen) {
         mTitleScrollEnabled = false;
         mLcdTrackTitle.clear();
         mLcd.clear(0, kLcdTrackTitleY, mLcd.width(), kTrackTitleFont.height);
         return;
     }
-    if (len < 0) {
-        len = strlen(buf);
+    if (bufLen < 0) {
+        bufLen = strlen(buf);
     }
-    if (mTitleTextFrameBuf.textWidth(len) <= mLcd.width()) {
+    int numChars = 0;
+    const char* ptr = buf;
+    wchar_t wc;
+    int titleWidth = 0;
+    mLcd.setFont(kTrackTitleFont);
+    while (mLcd.utf8ToWchar(wc, ptr) == 0) {
+        numChars++;
+        titleWidth += mLcd.charWidth(wc);
+        if (numChars >= kMaxTrackTitleLen - 3) {
+            break;
+        }
+    }
+    if (mTitleTextFrameBuf.textMonoWidth(numChars) <= mLcd.width()) {
         mTitleScrollEnabled = false;
         mLcdTrackTitle.clear();
         mLcd.clear(0, kLcdTrackTitleY, mLcd.width(), kTrackTitleFont.height);
-        mLcd.setFont(kTrackTitleFont);
         mLcd.gotoXY(0, kLcdTrackTitleY);
-        mLcd.putsCentered(buf);
+        mLcd.putsCentered(buf); // FIXME: This re-scans the utf8 string to get the width
         return;
     }
-    if (len > kMaxTrackTitleLen - 3) {
-        mLcdTrackTitle.reserve(kMaxTrackTitleLen + 1);
-        mLcdTrackTitle.assign(buf, kMaxTrackTitleLen - 3);
-        mLcdTrackTitle.append("...", 4);
-        mTitleTextWidth = mTitleTextFrameBuf.width();
-    }
-    else {
-        mLcdTrackTitle.reserve(len + 4);
-        mLcdTrackTitle.assign(buf, len);
-        mLcdTrackTitle.append(" * ", 4);
-        mTitleTextWidth = mTitleTextFrameBuf.textWidth(len + 3);
-    }
+    int byteSize = ptr - buf;
+    mLcdTrackTitle.reserve(byteSize + 4);
+    mLcdTrackTitle.assign(buf, byteSize);
+    auto appendStr = (numChars >= kMaxTrackTitleLen - 3) ? "..." : " * ";
+    mLcdTrackTitle.append(appendStr, 4);
+    mTitleTextWidth = std::min<int16_t>(titleWidth + mLcd.textWidth(appendStr), mTitleTextFrameBuf.width());
     mTitleScrollPixOffset = 0;
-    mTitleScrollStep = 2;
+    mTitleScrollStep = 3;
     mTitleTextFrameBuf.clear();
     mTitleTextFrameBuf.gotoXY(0, 0);
     mTitleTextFrameBuf.puts(mLcdTrackTitle.buf(), mLcd.kFlagNoAutoNewline | mLcd.kFlagAllowPartial);
@@ -1274,7 +1279,7 @@ void AudioPlayer::lcdWriteStreamInfo(int8_t charOfs, const char* str)
 {
     mLcd.setFont(kStreamInfoFont);
     mLcd.setFgColor(kLcdColorStreamInfo);
-    uint16_t x = (charOfs >= 0) ? mLcd.textWidth(charOfs) : mLcd.width() - mLcd.textWidth(-charOfs);
+    uint16_t x = (charOfs >= 0) ? mLcd.textMonoWidth(charOfs) : mLcd.width() - mLcd.textMonoWidth(-charOfs);
     mLcd.gotoXY(x, audioFormatTextY());
     mLcd.puts(str);
 }
@@ -1372,7 +1377,7 @@ void AudioPlayer::lcdRenderNetSpeed(uint32_t speed, uint32_t bufDataSize)
     }
     mLcd.setFont(kStreamInfoFont);
     mLcd.setFgColor(color);
-    mLcd.gotoXY(mLcd.width() - mLcd.textWidth(end - buf), 0);
+    mLcd.gotoXY(mLcd.width() - mLcd.textMonoWidth(end - buf), 0);
     mLcd.puts(buf);
 }
 void AudioPlayer::lcdShowBuffering()

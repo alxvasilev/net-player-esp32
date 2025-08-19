@@ -28,10 +28,10 @@ struct TrackInfo;
 
 extern NvsSimple nvsSimple;
 extern MDns mdns;
-extern Font font_CamingoBold43;
-extern Font font_Camingo22;
-extern Font font_Camingo32;
-extern Font font_Icons22;
+extern const Font font_CamingoBold43;
+extern const Font font_Camingo22;
+extern const Font font_Camingo32;
+extern const Font font_Icons22;
 
 struct TrackInfo: public CStringTuple<3, TrackInfo> {
     uint32_t durationMs;
@@ -85,9 +85,9 @@ protected:
         kBufLowMinGreen = 32 // minimum green component of low (but not underrun) buf netspeed color
     };
     enum {
-        kSymBlank = 32,
-        kSymFavorite = 33,
-        kSymRecording = 34
+        kSymBlank = 0,
+        kSymFavorite = 1,
+        kSymRecording = 2
     };
     static constexpr const Font& kPictoFont = font_Icons22;
     enum { kDefaultVolume = 15 };
