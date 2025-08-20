@@ -79,6 +79,7 @@ public:
     operator bool() const { return mNumCode != 0; }
     static uint8_t encodeBps(uint8_t bits) { return (bits >> 3) - 1; }
     static uint8_t decodeBps(uint8_t bits) { return (bits + 1) << 3; }
+    static uint8_t decodeBytesPerSample(uint8_t val) { return val + 1; }
     void clear() { mNumCode = 0; }
     StreamFormat(uint32_t code): mNumCode(code) {}
     StreamFormat(uint32_t sr, uint8_t bps, uint8_t channels): mNumCode(0)
@@ -113,6 +114,7 @@ public:
     uint32_t sampleRate() const { return members.sampleRate; }
     void setSampleRate(uint32_t sr) { members.sampleRate = sr; }
     uint8_t bitsPerSample() const { return decodeBps(members.bitsPerSample); }
+    uint8_t bytesPerSample() const { return decodeBytesPerSample(members.bitsPerSample); }
     void setBitsPerSample(uint8_t bps) { members.bitsPerSample = encodeBps(bps); }
     uint8_t numChannels() const { return members.numChannels + 1; }
     bool isStereo() const { return members.numChannels != 0; }

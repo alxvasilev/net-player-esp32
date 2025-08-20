@@ -55,7 +55,7 @@ public:
         kHttpBufSizeInternal = 35 * 1024,
         kHttpBufSizeSpiRam = 800 * 1024,
         kHttpBufPrefillSpiRam = 65536,
-        kDefTitleScrollFps = 25,
+        kDefTitleScrollFps = 50,
         kLcdNetSpeedUpdateIntervalUs = 1 * 1000000,
         kNvsCommitDelay = 20
     };

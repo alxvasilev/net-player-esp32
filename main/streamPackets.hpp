@@ -43,8 +43,8 @@ public:
         }
     }
     template<class T>
-    static T* allocWithDataSize(StreamEvent type, size_t dataSize) {
-        auto inst = (T*)heap_caps_malloc(sizeof(T) + dataSize, MALLOC_CAP_SPIRAM);
+    static T* allocWithBufSize(StreamEvent type, size_t aBufSize) {
+        auto inst = (T*)heap_caps_malloc(sizeof(T) + aBufSize, MALLOC_CAP_SPIRAM);
         inst->type = type;
         inst->flags = kFlagCustomAlloc;
         return inst;
@@ -60,12 +60,13 @@ struct TitleChangeEvent: public StreamPacket {
 };
 struct DataPacket: public StreamPacket {
     typedef std::unique_ptr<DataPacket, Deleter> unique_ptr;
+    int16_t bufSize;
     int16_t dataLen;
     alignas(uint32_t) char data[];
     template <bool Empty=false>
-    static DataPacket* create(int bufSize) {
-        auto inst = allocWithDataSize<DataPacket>(kEvtData, bufSize);
-        inst->dataLen = Empty ? 0 : bufSize;
+    static DataPacket* create(int aBufSize) {
+        auto inst = allocWithBufSize<DataPacket>(kEvtData, aBufSize);
+        inst->dataLen = Empty ? 0 : aBufSize;
         return inst;
     }
     void logData(int16_t maxLen, const char* msg, int lineLen=20)

@@ -1221,7 +1221,7 @@ void AudioPlayer::lcdUpdateTrackTitle(const char* buf, int bufLen)
     mLcdTrackTitle.append(appendStr, 4);
     mTitleTextWidth = std::min<int16_t>(titleWidth + mLcd.textWidth(appendStr), mTitleTextFrameBuf.width());
     mTitleScrollPixOffset = 0;
-    mTitleScrollStep = 3;
+    mTitleScrollStep = 2;
     mTitleTextFrameBuf.clear();
     mTitleTextFrameBuf.gotoXY(0, 0);
     mTitleTextFrameBuf.puts(mLcdTrackTitle.buf(), mLcd.kFlagNoAutoNewline | mLcd.kFlagAllowPartial);

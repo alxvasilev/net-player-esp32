@@ -12,18 +12,17 @@ MyEqualizerCore<IsStereo>::MyEqualizerCore(uint8_t numBands, uint32_t sampleRate
 }
 
 template<bool IsStereo>
-void MyEqualizerCore<IsStereo>::processFloat(DataPacket& pkt, void* arg)
+void MyEqualizerCore<IsStereo>::process(void* data, int dataLen)
 {
-    auto& self = *static_cast<MyEqualizerCore<IsStereo>*>(arg);
 #ifdef EQ_PERF
     static float msAvg = 0;
     ElapsedTimer timer;
 #endif
-    self.mEqualizer.process((float*)pkt.data, pkt.dataLen / ((IsStereo ? 2 : 1) * sizeof(float)));
+    mEqualizer.process((float*)data, dataLen / ((IsStereo ? 2 : 1) * sizeof(float)));
 #ifdef EQ_PERF
     auto ms = timer.msElapsed();
     msAvg = (msAvg * 99 + ms) / 100;
-    ESP_LOGI(TAG, "eq process(my) %d: %d (%.2f) ms", pkt.dataLen / 8, ms, msAvg);
+    ESP_LOGI(TAG, "eq process(my) %d: %d (%.2f) ms", dataLen / 8, ms, msAvg);
 #endif
 }
 
@@ -55,19 +54,17 @@ EqBandConfig EspEqualizerCore::bandConfig(uint8_t n) const
     };
     return {.freq = bandFreqs[n], .Q = 707};
 }
-void EspEqualizerCore::process16bitStereo(DataPacket& pkt, void *arg)
+void EspEqualizerCore::process(void* data, int dataLen)
 {
-    auto& self = *static_cast<EspEqualizerCore*>(arg);
 #ifdef EQ_PERF
     static float avgTime = 0.0;
     ElapsedTimer timer;
 #endif
-    esp_equalizer_process(self.mEqualizer, (unsigned char*)pkt.data, pkt.dataLen,
-                          self.mSampleRate, self.mChanCount);
+    esp_equalizer_process(mEqualizer, (unsigned char*)data, dataLen, mSampleRate, mChanCount);
 #ifdef EQ_PERF
     auto msTime = timer.msElapsed();
     avgTime = (avgTime * 99 + msTime) / 100;
-    ESP_LOGI(TAG, "eq process %d (esp): %dms (%.2f)", pkt.dataLen / 4, msTime, avgTime);
+    ESP_LOGI(TAG, "eq process %d (esp): %dms (%.2f)", dataLen / 4, msTime, avgTime);
 #endif
 }
 EspEqualizerCore::~EspEqualizerCore()

@@ -20,6 +20,7 @@ EqualizerNode::EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs)
     }
     mUseEspEq = mNvsHandle.readDefault("eq.useEsp", (uint8_t)1);
     mOut24bit = mNvsHandle.readDefault("eq.out24bit", (uint8_t)1);
+    mDspBufUseInternalRam = mNvsHandle.readDefault("eq.useIntRam", (uint8_t)1);
     eqLoadName();
     equalizerReinit(StreamFormat(44100, 16, 2));
 }
@@ -176,32 +177,63 @@ bool EqualizerNode::fitBandFreqsToSampleRate(EqBandConfig* config, int* nBands, 
     }
     return true;
 }
+const EqualizerNode::PreConvertFunc EqualizerNode::sPreConvertFuncsFloat[] = {
+    &EqualizerNode::preConvert16or8ToFloatAndApplyVolume<int8_t, false>,
+    &EqualizerNode::preConvert16or8ToFloatAndApplyVolume<int16_t, false>,
+    &EqualizerNode::preConvert24or32ToFloatAndApplyVolume<24, false>,
+    &EqualizerNode::preConvert24or32ToFloatAndApplyVolume<32, false>,
+    &EqualizerNode::preConvert16or8ToFloatAndApplyVolume<int8_t, true>,
+    &EqualizerNode::preConvert16or8ToFloatAndApplyVolume<int16_t, true>,
+    &EqualizerNode::preConvert24or32ToFloatAndApplyVolume<24, true>,
+    &EqualizerNode::preConvert24or32ToFloatAndApplyVolume<32, true>
+};
+const EqualizerNode::PreConvertFunc EqualizerNode::sPreConvertFuncs16[] = {
+    &EqualizerNode::preConvert8or16to16AndApplyVolume<int8_t, false>,
+    &EqualizerNode::preConvert8or16to16AndApplyVolume<int16_t, false>,
+    &EqualizerNode::preConvert24or32To16AndApplyVolume<24, false>,
+    &EqualizerNode::preConvert24or32To16AndApplyVolume<32, false>,
+    &EqualizerNode::preConvert8or16to16AndApplyVolume<int8_t, true>,
+    &EqualizerNode::preConvert8or16to16AndApplyVolume<int16_t, true>,
+    &EqualizerNode::preConvert24or32To16AndApplyVolume<24, true>,
+    &EqualizerNode::preConvert24or32To16AndApplyVolume<32, true>
+};
+int EqualizerNode::preConvertFuncIndex() const
+{
+    int idx = (mInFormat.bitsPerSample() >> 3) - 1;
+    if (mVolProbeBeforeDsp) {
+        idx |= 0x04;
+    }
+    if (idx > 7) {
+        ESP_LOGE(TAG, "Unsupported bits per sample: %d", mInFormat.bitsPerSample());
+        assert(false);
+    }
+    return idx;
+}
+void EqualizerNode::dspBufRelease()
+{
+    mDspBuffer.release();
+    mDspBufSize = mDspDataSize = 0;
+}
 void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
 {
     ESP_LOGI(TAG, "Equalizer reinit");
     bool fmtChanged = fmt.asNumCode() && (fmt != mInFormat);
     if (fmtChanged) {
         mOutFormat = mInFormat = fmt;
+        // The FLAC decoder, which has more DMA memory-demanding bitrates, produces smaller
+        // packets (1024 samples) than the less demanding MP3 (max 1152 samples)
+        // This gives us a chance to release some internal RAM when we need it most (for 96kHz i2s DMA)
+        dspBufRelease();
     }
     if (mUseEspEq && mInFormat.sampleRate() <= 48000) {
         mOutFormat.setBitsPerSample(16);
         if (fmtChanged || !mCore || mCore->type() != IEqualizerCore::kTypeEsp) {
             mCore.reset(new EspEqualizerCore(mOutFormat));
             forceLoadGains = true;
-            auto bps = mInFormat.bitsPerSample();
-            if (bps <= 16) {
-                mPreConvertFunc = nullptr; // no conversion and use DefaultVolumeImpl for volume
-                volumeUpdateFormat(mOutFormat);
-            }
-            else if (bps == 24) {
-                mPreConvertFunc = &EqualizerNode::samplesTo16bitAndApplyVolume<24>;
-            }
-            else if (bps == 32) {
-                mPreConvertFunc = &EqualizerNode::samplesTo16bitAndApplyVolume<32>;
-            }
-            else {
-                myassert(false);
-            }
+            mPreConvertFunc = sPreConvertFuncs16[preConvertFuncIndex()];
+            mPostConvertFunc = mOut24bit
+                ? &EqualizerNode::postConvert16To24<true>
+                : &EqualizerNode::postConvert16To16<true>;
         }
     }
     else { // need custom eq
@@ -209,26 +241,10 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
         if (fmtChanged || !mCore || mCore->type() != IEqualizerCore::kTypeCustom) {
             createCustomCore(mInFormat);
             forceLoadGains = true;
-            auto bps = mInFormat.bitsPerSample();
-            if (bps == 16) {
-                mPreConvertFunc = &EqualizerNode::samples16or8ToFloatAndApplyVolume<int16_t>;
-            }
-            else if (bps == 24) {
-                mPreConvertFunc = &EqualizerNode::samples24or32ToFloatAndApplyVolume<24>;
-            }
-            else if (bps == 8) {
-                mPreConvertFunc = &EqualizerNode::samples16or8ToFloatAndApplyVolume<int8_t>;
-            }
-            else if (bps == 32) {
-                mPreConvertFunc = &EqualizerNode::samples24or32ToFloatAndApplyVolume<32>;
-            }
-            else {
-                ESP_LOGE(TAG, "Unsupported bits per sample: %d", bps);
-                assert(false);
-            }
+            mPreConvertFunc = sPreConvertFuncsFloat[preConvertFuncIndex()];
             mPostConvertFunc = mOut24bit
-                ? &EqualizerNode::floatSamplesTo24bitAndGetLevelsStereo
-                : &EqualizerNode::floatSamplesTo16bitAndGetLevelsStereo;
+                ? &EqualizerNode::postConvertFloatTo24<true>
+                : &EqualizerNode::postConvertFloatTo16<true>;
         }
     }
     // load gains
@@ -244,7 +260,6 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
         }
         mCore->updateAllFilters();
     }
-    mProcessFunc = mCore->getProcessFunc();
 }
 bool EqualizerNode::setDefaultNumBands(uint8_t n)
 {
@@ -376,112 +391,253 @@ void EqualizerNode::useEspEqualizer(bool use)
     equalizerReinit(0, true);
 }
 
+template<bool Enable, typename T, int Shift>
+struct VolumeProbe;
+
+template<typename T, int Shift>
+struct VolumeProbe<false, T, Shift> {
+    void leftSample(T val) {}
+    void rightSample(T val) {}
+    void getPeakLevels(IAudioVolume::StereoLevels& output) {}
+};
+template<typename T, int Shift>
+struct VolumeProbe<true, T, Shift> {
+    T leftPeak = 0;
+    T rightPeak = 0;
+    void leftSample(T val) {
+        if (val > leftPeak) {
+            leftPeak = val;
+        }
+    }
+    void rightSample(T val) {
+        if (val > rightPeak) {
+            rightPeak = val;
+        }
+    }
+    template<bool W=(sizeof(T) > 2)>
+    std::enable_if_t<W, void> getPeakLevels(IAudioVolume::StereoLevels& output) {
+        output.left = leftPeak >> Shift;
+        output.right = rightPeak >> Shift;
+    }
+    template<bool W=(sizeof(T) <= 2), int Sh=Shift>
+    std::enable_if_t<W && Sh == 0, void> getPeakLevels(IAudioVolume::StereoLevels& output) {
+        output.left = leftPeak;
+        output.right = rightPeak;
+    }
+    template<bool W=(sizeof(T) <= 2), int Sh=Shift>
+    std::enable_if_t<W && Sh != 0, void> getPeakLevels(IAudioVolume::StereoLevels& output) {
+        output.left = leftPeak << Shift;
+        output.right = rightPeak << Shift;
+    }
+};
+
 template <int Bps>
 float toFloat24(int32_t in) { return in; }
 
 template<>
 float toFloat24<32>(int32_t in) { return (in >= 0 ? (in + 128) : (in - 128)) >> 8; }
 
-template <int Bps>
-void EqualizerNode::samples24or32ToFloatAndApplyVolume(PacketResult& pr)
+template <int Bps, bool VolProbeEnable>
+void EqualizerNode::preConvert24or32ToFloatAndApplyVolume(DataPacket& pkt)
 {
     static_assert(Bps == 24 || Bps == 32, "Invalid bps parameter");
-    auto& pkt = pr.dataPacket();
     myassert(mInFormat.bitsPerSample() >= 24);
-    int32_t* end = (int32_t*)(pkt.data + pkt.dataLen);
-    for (int32_t* sptr = (int32_t*)pkt.data; sptr < end; sptr++) {
-        *((float*)sptr) = toFloat24<Bps>(*sptr) * mFloatVolumeMul;
+    VolumeProbe<VolProbeEnable, int32_t, Bps - 16> volProbe;
+    auto rptr = (int32_t*)pkt.data;
+    auto rend = (int32_t*)(pkt.data + pkt.dataLen);
+    auto wptr = (float*)dspBufGetWritable(pkt.dataLen);
+    while(rptr < rend) {
+        int32_t val = *rptr++;
+        *(wptr++) = toFloat24<Bps>(val) * mFloatVolumeMul;
+        volProbe.leftSample(val);
+        val = *rptr++;
+        *(wptr++) = toFloat24<Bps>(val) * mFloatVolumeMul;
+        volProbe.rightSample(val);
     }
+    volProbe.getPeakLevels(mAudioLevels);
 }
-template<typename S>
-void EqualizerNode::samples16or8ToFloatAndApplyVolume(PacketResult& pr)
+template<typename S, bool VolProbeEnable>
+void EqualizerNode::preConvert16or8ToFloatAndApplyVolume(DataPacket& pkt)
 {
     enum { kSampleSizeMul = 4 / sizeof(S), kShift = 24 - sizeof(S) * 8 };
     myassert(mInFormat.bitsPerSample() == sizeof(S) * 8);
-
-    if (!(pr.packet->flags & StreamPacket::kFlagHasSpaceFor32Bit)) {
-        // no space in input packet, create new packet to fit the float samples
-        DataPacket::unique_ptr inPkt((DataPacket*)pr.packet.release());
-        pr.packet.reset(DataPacket::create(inPkt->dataLen * kSampleSizeMul));
-        auto& pkt = pr.dataPacket();
-        float* wptr = (float*)pkt.data;
-        const S* rptr = (S*)inPkt->data;
-        S* end = (S*)(inPkt->data + inPkt->dataLen);
-        while(rptr < end) {
-            *(wptr++) = ((float)(*(rptr++) << kShift)) * mFloatVolumeMul;
-        }
-    }
-    else { // in-place conversion
-        auto& pkt = pr.dataPacket();
-        float* wptr = (float*)(pkt.data + pkt.dataLen * kSampleSizeMul);
-        const S* rptr = (S*)(pkt.data + pkt.dataLen);
-        S* start = (S*)pkt.data;
-        while(rptr > start) {
-            *(--wptr) = ((float)(*(--rptr) << kShift)) * mFloatVolumeMul;
-        }
-        myassert(rptr == start);
-        myassert(wptr == (float*)start);
-        pkt.dataLen *= kSampleSizeMul;
-    }
-}
-void EqualizerNode::floatSamplesTo24bitAndGetLevelsStereo(DataPacket& pkt) {
-    float* end = (float*)(pkt.data + pkt.dataLen);
-    int32_t leftPeak = 0;
-    int32_t rightPeak = 0;
-    for (float* sptr = (float*)pkt.data; sptr < end;) {
-        int32_t ival = *((int32_t*)sptr) = lroundf(*sptr) << 8; // I2S requires samples to be left-aligned
-        if (ival > leftPeak) {
-            leftPeak = ival;
-        }
-        sptr++;
-        ival = *((int32_t*)sptr) = lroundf(*sptr) << 8;
-        if (ival > rightPeak) {
-            rightPeak = ival;
-        }
-        sptr++;
-    }
-    mAudioLevels.left = leftPeak >> 16;
-    mAudioLevels.right = rightPeak >> 16;
-}
-void EqualizerNode::floatSamplesTo16bitAndGetLevelsStereo(DataPacket& pkt)
-{
-    float* rend = (float*)(pkt.data + pkt.dataLen);
-    int16_t leftPeak = 0;
-    int16_t rightPeak = 0;
-    float* rptr = (float*)pkt.data;
-    int16_t* wptr = (int16_t*)pkt.data;
+    auto wptr = (float*)dspBufGetWritable(pkt.dataLen * kSampleSizeMul);
+    auto rptr = (const S*)pkt.data;
+    auto rend = (const S*)(pkt.data + pkt.dataLen);
+    VolumeProbe<VolProbeEnable, S, 2 - sizeof(S)> volProbe;
     while(rptr < rend) {
-        int16_t ival = *wptr++ = ((int32_t)(*rptr++ + 128.5555f)) >> 8;
-        if (ival > leftPeak) {
-            leftPeak = ival;
-        }
-        ival = *wptr++ = ((int32_t)(*rptr++ + 128.5555f)) >> 8;
-        if (ival > rightPeak) {
-            rightPeak = ival;
-        }
+        S val = *(rptr++);
+        *(wptr++) = ((float)(val << kShift)) * mFloatVolumeMul;
+        volProbe.leftSample(val);
+        val = *(rptr++);
+        *(wptr++) = ((float)(val << kShift)) * mFloatVolumeMul;
+        volProbe.rightSample(val);
     }
-    pkt.dataLen >>= 1;
-    mAudioLevels.left = leftPeak;
-    mAudioLevels.right = rightPeak;
+    volProbe.getPeakLevels(mAudioLevels);
 }
-
-template<int Bps>
-void EqualizerNode::samplesTo16bitAndApplyVolume(PacketResult& pr)
+template<int Bits>
+static inline int32_t floatToInt(float f)
 {
+    // 24-bit signed integer limits
+    constexpr int32_t kMin = -(1 << (Bits-1));
+    constexpr int32_t kMax =  (1 << (Bits-1)) - 1;
+    int32_t i = static_cast<int32_t>(lroundf(f));
+    if (i > kMax) {
+        return kMax;
+    }
+    else if (i < kMin) {
+        return kMin;
+    }
+    else {
+        return i;
+    }
+}
+template<bool VolProbeEnabled>
+void EqualizerNode::postConvertFloatTo24(PacketResult& pr)
+{
+    auto rptr = (const float*)mDspBuffer.get();
+    auto rend = (const float*)(mDspBuffer.get() + mDspDataSize);
+    if (!(pr.packet && (pr.packet->flags & StreamPacket::kFlagHasSpaceFor32Bit))) {
+        pr.packet.reset(DataPacket::create(mDspDataSize));
+        pr.packet->flags |= DataPacket::kFlagHasSpaceFor32Bit;
+    }
     auto& pkt = pr.dataPacket();
+    pkt.dataLen = mDspDataSize;
+    auto wptr = (int32_t*)pkt.data;
+    VolumeProbe<VolProbeEnabled, int32_t, 16> volProbe;
+    while (rptr < rend) {
+        int32_t ival = *(wptr++) = floatToInt<24>(*(rptr++)) << 8; // I2S requires samples to be left-aligned
+        volProbe.leftSample(ival);
+        ival = *(wptr++) = floatToInt<24>(*(rptr++)) << 8;
+        volProbe.rightSample(ival);
+    }
+    volProbe.getPeakLevels(mAudioLevels);
+}
+template<bool VolProbeEnabled>
+void EqualizerNode::postConvertFloatTo16(PacketResult& pr)
+{
+    auto rptr = (float*)mDspBuffer.get();
+    auto rend = (float*)(mDspBuffer.get() + mDspDataSize);
+    int outSize = mDspDataSize >> 1;
+    auto pkt = (DataPacket*)pr.packet.get();
+    if (!(pkt && pkt->bufSize >= outSize)) {
+        pkt = DataPacket::create(outSize);
+        pr.packet.reset(pkt);
+    }
+    else {
+        pkt->dataLen = outSize;
+    }
+    auto wptr = (int16_t*)pkt->data;
+    VolumeProbe<VolProbeEnabled, int16_t, 0> volProbe;
+    while(rptr < rend) {
+        int16_t ival = *wptr++ = floatToInt<24>(*(rptr++) + 128.5555f) >> 8;
+        volProbe.leftSample(ival);
+        ival = *wptr++ = floatToInt<24>(*(rptr++) + 128.5555f) >> 8;
+        volProbe.rightSample(ival);
+    }
+    volProbe.getPeakLevels(mAudioLevels);
+}
+template<int Bps, bool VolProbeEnabled>
+void EqualizerNode::preConvert24or32To16AndApplyVolume(DataPacket& pkt)
+{
     // samples are in 32bit words
     static_assert(Bps > 16, "");
     // shift right to both decrease bps and volume-divide
     enum { kShift = Bps - 16 + kVolumeDivShift, kHalfDiv = 1 << (kShift-1) };
-    int32_t* end = (int32_t*)(pkt.data + pkt.dataLen);
-    int16_t* wptr = (int16_t*)pkt.data;
-    for(int32_t* rptr = (int32_t*)pkt.data; rptr < end; rptr++) {
-        auto val = *rptr;
+    int32_t* rptr = (int32_t*)pkt.data;
+    int32_t* rend = (int32_t*)(pkt.data + pkt.dataLen);
+    auto wptr = (int16_t*)dspBufGetWritable(pkt.dataLen >> 1);
+    VolumeProbe<VolProbeEnabled, int32_t, 32-Bps> volProbe;
+    while(rptr < rend) {
+        auto val = *(rptr++);
+        volProbe.leftSample(val);
+        *wptr++ = (val * mVolume + ((val >= 0) ? kHalfDiv : -kHalfDiv)) >> kShift;
+        val = *(rptr++);
+        volProbe.rightSample(val);
         *wptr++ = (val * mVolume + ((val >= 0) ? kHalfDiv : -kHalfDiv)) >> kShift;
     }
-    pkt.dataLen >>= 1;
+    volProbe.getPeakLevels(mAudioLevels);
 }
-
+template <typename T, bool VolProbeEnable>
+void EqualizerNode::preConvert8or16to16AndApplyVolume(DataPacket& pkt)
+{
+    // we do two shifts at once - one is for the volume multiply/divide, and the other one
+    // is to left-align the sample, as is required by i2s
+    static_assert(sizeof(T) <= 2);
+    enum { kShift = (sizeof(T) == 1) ? 0 : 8 };
+    enum { kSizeMult = 2 / sizeof(T) };
+    auto rptr = (T*)pkt.data;
+    auto rend = (T*)(pkt.data + pkt.dataLen);
+    auto wptr = (int16_t*)dspBufGetWritable(pkt.dataLen * kSizeMult);
+    VolumeProbe<VolProbeEnable, T, 16 - sizeof(T) * 8> volProbe;
+    while(rptr < rend) {
+        T val = *rptr++;
+        int32_t unaligned = (static_cast<int32_t>(val) * mVolume + kVolumeDiv / 2);
+        *wptr++ = (kShift != 0) ? (unaligned >> kShift) : unaligned;
+        volProbe.leftSample(val);
+        val = *rptr++;
+        unaligned = (static_cast<int32_t>(val) * mVolume + kVolumeDiv / 2);
+        *wptr++ = (kShift != 0) ? (unaligned >> kShift) : unaligned;
+        volProbe.rightSample(val);
+    }
+    pkt.flags |= StreamPacket::kFlagLeftAlignedSamples;
+    volProbe.getPeakLevels(mAudioLevels);
+}
+template <bool VolProbeEnabled>
+void EqualizerNode::postConvert16To24(PacketResult& pr)
+{
+    DataPacket* pkt = (DataPacket*)pr.packet.get();
+    if (!(pkt && (pkt->flags & StreamPacket::kFlagHasSpaceFor32Bit))) {
+        pkt = DataPacket::create(mDspDataSize * 2);
+        pr.packet.reset(pkt);
+    }
+    else {
+        pkt->dataLen = mDspDataSize * 2;
+    }
+    auto rptr = (int16_t*)mDspBuffer.get();
+    auto rend = (int16_t*)(mDspBuffer.get() + mDspDataSize);
+    auto wptr = (int32_t*)pkt->data;
+    VolumeProbe<VolProbeEnabled, int16_t, 0> volProbe;
+    while(rptr < rend) {
+        int16_t val = *rptr++;
+        *wptr++ = val << 16; // i2s requires samples to be left-aligned
+        volProbe.leftSample(val);
+        val = *rptr++;
+        *wptr++ = val << 16;
+        volProbe.rightSample(val);
+    }
+    volProbe.getPeakLevels(mAudioLevels);
+}
+template <bool VolProbeEnabled>
+void EqualizerNode::postConvert16To16(PacketResult& pr)
+{
+    auto pkt = (DataPacket*)pr.packet.get();
+    if (!(pkt && pkt->bufSize >= mDspDataSize)) {
+        pkt = DataPacket::create(mDspDataSize);
+        pr.packet.reset(pkt);
+    }
+    else {
+        pkt->dataLen = mDspDataSize;
+    }
+    if (VolProbeEnabled) {
+        auto rptr = (int16_t*)mDspBuffer.get();
+        auto rend = (int16_t*)(mDspBuffer.get() + mDspDataSize);
+        auto wptr = (int16_t*)pkt->data;
+        VolumeProbe<VolProbeEnabled, int16_t, 0> volProbe;
+        while(rptr < rend) {
+            int16_t val = *rptr++;
+            *wptr++ = val;
+            volProbe.leftSample(val);
+            val = *rptr++;
+            *wptr++ = val;
+            volProbe.rightSample(val);
+        }
+        volProbe.getPeakLevels(mAudioLevels);
+    }
+    else {
+        memcpy(pkt->data, mDspBuffer.get(), mDspDataSize);
+    }
+}
 StreamEvent EqualizerNode::pullData(PacketResult& dpr)
 {
     auto event = mPrev->pullData(dpr);
@@ -494,39 +650,17 @@ StreamEvent EqualizerNode::pullData(PacketResult& dpr)
             // kEvtStreamChanged and the data packet
             return dpr.set(new NewStreamEvent(mStreamId, mOutFormat, mSourceBps));
         }
-        if (mCore->type() == IEqualizerCore::kTypeEsp) {
-            if (mInFormat.bitsPerSample() > 16) {
 #ifdef CONVERT_PERF
-                ElapsedTimer t;
+        ElapsedTimer t;
 #endif
-                (this->*mPreConvertFunc)(dpr);
+        (this->*mPreConvertFunc)(dpr.dataPacket());
 #ifdef CONVERT_PERF
-                ESP_LOGI(TAG, "preconvert: %lld us", t.usElapsed());
+        ESP_LOGI(TAG, "preconvert: %lld us", t.usElapsed());
 #endif
-            }
-            else {
-                volumeProcess(dpr.dataPacket());
-            }
-            if (!mBypass) {
-                mProcessFunc(dpr.dataPacket(), mCore.get());
-            }
-            if (mVolLevelMeasurePoint == 1) {
-                volumeGetLevel(dpr.dataPacket());
-            }
+        if (!mBypass) {
+            mCore->process(mDspBuffer.get(), mDspDataSize);
         }
-        else {
-#ifdef CONVERT_PERF
-            ElapsedTimer t;
-#endif
-            (this->*mPreConvertFunc)(dpr);
-#ifdef CONVERT_PERF
-            ESP_LOGI(TAG, "preconvert: %lld us", t.usElapsed());
-#endif
-            if (!mBypass) {
-                mProcessFunc(dpr.dataPacket(), mCore.get());
-            }
-            (this->*mPostConvertFunc)(dpr.dataPacket());
-        }
+        (this->*mPostConvertFunc)(dpr);
         volumeNotifyLevelCallback();
         return kEvtData;
     }

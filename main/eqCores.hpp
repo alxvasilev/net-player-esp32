@@ -8,12 +8,11 @@ class DataPacket;
 struct IEqualizerCore
 {
     enum Type { kTypeUnknown = 0, kTypeEsp = 1, kTypeCustom = 2 };
-    typedef void(*ProcessFunc)(DataPacket& pkt, void* arg);
+    virtual void process(void* data, int dataLen) = 0;
     virtual Type type() const = 0;
     virtual uint8_t numBands() const = 0;
     virtual int8_t* gains() = 0;
     virtual EqBandConfig* bandConfigs() = 0;
-    virtual ProcessFunc getProcessFunc() const = 0;
     virtual void setBandGain(uint8_t band, int8_t dbGain) = 0;
     virtual void updateFilter(uint8_t band, bool resetState) = 0;
     virtual void updateAllFilters() = 0;
@@ -26,12 +25,11 @@ class MyEqualizerCore: public IEqualizerCore
 {
 protected:
     mutable Equalizer<IsStereo> mEqualizer;
-    static void processFloat(DataPacket& pkt, void* arg);
 public:
     MyEqualizerCore(uint8_t numBands, uint32_t sampleRate);
     Type type() const override { return kTypeCustom; }
+    virtual void process(void* data, int dataLen);
     virtual uint8_t numBands() const override { return mEqualizer.numBands(); }
-    virtual ProcessFunc getProcessFunc() const override { return processFloat; }
     virtual void setBandGain(uint8_t band, int8_t dbGain) override {
         mEqualizer.setBandGain(band, dbGain);
     }
@@ -50,9 +48,9 @@ protected:
     int mSampleRate = 0; // cache these because the esp eq wants them passed for each process() call
     int8_t mChanCount = 0;
     int8_t mGains[10];
-    static void process16bitStereo(DataPacket&, void* arg);
 public:
     Type type() const override { return kTypeEsp; }
+    virtual void process(void* data, int dataLen);
     uint8_t numBands() const override { return 10; }
     virtual int8_t* gains() override { return mGains; }
     virtual EqBandConfig* bandConfigs() override { return nullptr; }
@@ -61,7 +59,6 @@ public:
     virtual void updateFilter(uint8_t band, bool resetState) { assert(false); }
     virtual void updateAllFilters() override;
     EqBandConfig bandConfig(uint8_t n) const override;
-    ProcessFunc getProcessFunc() const override { return process16bitStereo; }
     virtual ~EspEqualizerCore();
 };
 
