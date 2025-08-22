@@ -298,7 +298,7 @@ bool SpotifyNode::recv()
         throw std::runtime_error("Receive offset not aligned to 16 bytes - a non-final recv got less "
                                  "than the chunk amount");
     }
-    DataPacket::unique_ptr pkt(DataPacket::create(toRecv));
+    DataPacket::unique_ptr pkt(DataPacket::createWithoutFlags<true>(toRecv));
     auto nRecv = mHttp.recv(pkt->data, pkt->dataLen);
     if (nRecv <= 0) { // premature file end
         ESP_LOGW(TAG, "Connection dropped, will resume...");

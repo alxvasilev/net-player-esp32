@@ -58,8 +58,9 @@ struct StreamFormat
 {
 protected:
     struct Members {
-        uint32_t sampleRate: 19;
+        uint32_t sampleRate: 18;
         uint8_t numChannels: 1;
+        bool sourceIsMono: 1;
         uint8_t bitsPerSample: 2;
         bool isLeftAligned: 1;
         bool isBigEndian: 1;
@@ -118,11 +119,13 @@ public:
     void setBitsPerSample(uint8_t bps) { members.bitsPerSample = encodeBps(bps); }
     uint8_t numChannels() const { return members.numChannels + 1; }
     bool isStereo() const { return members.numChannels != 0; }
+    bool sourceIsMono() const { return members.sourceIsMono; }
     bool isLeftAligned() const { return members.isLeftAligned; }
     bool isBigEndian() const { return members.isBigEndian; }
     void setBigEndian(bool isBe) { members.isBigEndian = isBe; }
     void setIsLeftAligned(bool val) { members.isLeftAligned = val; }
     void setNumChannels(uint8_t ch) { members.numChannels = ch - 1; }
+    void setSourceIsMono(bool val) { members.sourceIsMono = val; }
     int prefillAmount() const;
     int16_t rxChunkSize() const;
 };

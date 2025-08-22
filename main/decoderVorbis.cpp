@@ -104,8 +104,7 @@ StreamEvent DecoderVorbis::decode(AudioNode::PacketResult& pr)
             return event;
         }
     }
-    DataPacket::unique_ptr pkt(DataPacket::create<true>(kTargetOutputSamples * 4));
-    pkt->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
+    DataPacket::unique_ptr pkt(DataPacket::create<true>(kTargetOutputSamples * 4, StreamPacket::kHasSpaceFor32Bit));
     int written = 0;
     while (written < kTargetOutputSamples) {
         int nSamples;

@@ -284,7 +284,7 @@ public:
 template <>
 inline int16_t VorbisDecoder::convertSample<int16_t, 16>(ogg_int32_t x)
 {
-    x >>= 9;
+    x >>= 10;
     if (x > 32767) {
         return 32767;
     }

@@ -145,8 +145,7 @@ bool DecoderFlac::outputSamples(int nSamples, const FLAC__int32* const channels[
             pktAlloc = pktSamples * 8;
             pktLen = pktSamples * 2 * sizeof(T);
         }
-        DataPacket::unique_ptr output(DataPacket::create(pktAlloc));
-        output->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
+        DataPacket::unique_ptr output(DataPacket::create(pktAlloc, StreamPacket::kHasSpaceFor32Bit));
         T* wptr = (T*)output->data;
         int eidx = sidx + pktSamples;
         for (; sidx < eidx; sidx++) {

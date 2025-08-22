@@ -256,7 +256,7 @@ int8_t HttpNode::recv()
 {
     for (int retries = 0; retries < 26; retries++) { // retry net errors
         auto rxSize = mRxChunkSize; // we are unlocked, this may change at any time, so we need a locally cached value
-        DataPacket::unique_ptr dataPacket(DataPacket::create(rxSize));
+        DataPacket::unique_ptr dataPacket(DataPacket::createWithoutFlags(rxSize));
         int rlen = esp_http_client_read(mClient, dataPacket->data, rxSize);
         if (rlen <= 0) {
             if (mWaitingPrefill) {

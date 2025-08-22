@@ -20,7 +20,9 @@ EqualizerNode::EqualizerNode(IAudioPipeline& parent, NvsHandle& nvs)
     }
     mUseEspEq = mNvsHandle.readDefault("eq.useEsp", (uint8_t)1);
     mOut24bit = mNvsHandle.readDefault("eq.out24bit", (uint8_t)1);
+    ESP_LOGI(TAG, "Setting DAC output to %d-bit format", mOut24bit ? 24 : 16);
     mDspBufUseInternalRam = mNvsHandle.readDefault("eq.useIntRam", (uint8_t)1);
+    ESP_LOGI(TAG, "Using %s RAM for DSP buffer", mDspBufUseInternalRam ? "internal" : "SPI");
     eqLoadName();
     equalizerReinit(StreamFormat(44100, 16, 2));
 }
@@ -34,17 +36,18 @@ void EqualizerNode::eqLoadName()
         mEqId.append(name);
     }
     else {
-        updateDefaultEqName(false);
+        mEqId = " :";
+        mEqId.append(kDefaultPresetPrefix); // not valid, but recognizable as default
     }
 }
-void EqualizerNode::updateDefaultEqName(bool check)
+void EqualizerNode::updateDefaultEqName(bool isEsp)
 {
-    if (check && !isDefaultPreset()) {
+    if (!isDefaultPreset()) {
         return;
     }
     mEqId = " :";
     mEqId += kDefaultPresetPrefix;
-    if (mUseEspEq) {
+    if (isEsp) {
         mEqId += '0';
     }
     else {
@@ -95,18 +98,11 @@ void EqualizerNode::createCustomCore(StreamFormat fmt)
         ESP_LOGW(TAG, "Couldn't load config for %d-band '%s', using default", nBands, eqConfigKey());
     }
     fitBandFreqsToSampleRate(config, &nBands, sr);
-    if (fmt.numChannels() >= 2) {
-        mCore.reset(new MyEqualizerCore<true>(nBands, sr));
-    }
-    else {
-        mCore.reset(new MyEqualizerCore<false>(nBands, sr));
-    }
+    mCore.reset(new MyEqualizerCore<true>(nBands, sr)); // always stereo
     memcpy(mCore->bandConfigs(), config, nBands * sizeof(EqBandConfig));
 }
 bool EqualizerNode::fitBandFreqsToSampleRate(EqBandConfig* config, int* nBands, int sampleRate)
 {
-    auto oriNbands = *nBands;
-    auto oriEqId = mEqId;
     int nyquistFreq = sampleRate >> 1;
     EqBandConfig* topBand = config + *nBands - 1;
     if (topBand->freq < nyquistFreq) {
@@ -119,19 +115,13 @@ bool EqualizerNode::fitBandFreqsToSampleRate(EqBandConfig* config, int* nBands, 
        (nbands is the original number, even if bands are removed)
        User presets get renamed to:      <presetName>!<maxBandFreq>
      */
-    if (isDefaultPreset()) {
-        updateDefaultEqName(false);
+    // append !xx suffix with the cap freq
+    auto pos = mEqId.find_last_of('!');
+    if (pos == std::string::npos) {
+        mEqId += '!';
     }
-    else { // append !xx suffix with the cap freq
-        auto pos = mEqId.find_last_of('!');
-        if (pos != std::string::npos) {
-            mEqId.resize(pos + 1);
-        }
-        else {
-            mEqId += '!';
-        }
-        appendAny(mEqId, mEqMaxFreqCappedTo / 1000);
-    }
+    appendAny(mEqId, mEqMaxFreqCappedTo / 1000);
+
     // first, try to load a capped version from NVS
     int maxLen = *nBands * sizeof(EqBandConfig);
     int len = maxLen;
@@ -154,26 +144,8 @@ bool EqualizerNode::fitBandFreqsToSampleRate(EqBandConfig* config, int* nBands, 
         }
         band++; // now points to new top (high-shelf) band
         band->freq = ((nyquistFreq * 90 / 50000)) * 500; // adjust high-shelf band to Nyquist freq, round at 500
-        band->Q = 60; // 0.06: as the band's freq is now close to the Nyquist freq, need to widen it at the low end
+        band->Q = 600; // 0.6: as the band's freq is now close to the Nyquist freq, need to widen it at the low end
         ESP_LOGI(TAG, "Modified config for '%s' to fit Nyquist limit", presetName());
-    }
-    if (*nBands == oriNbands) {
-        return true;
-    }
-    // bands were removed, remove from gains as well, if we are going to use gains saved for original preset
-    auto gains = (int8_t*)alloca(oriNbands);
-    len = oriNbands;
-    have = (mNvsHandle.readBlob(eqGainsKey(), gains, len) == ESP_OK) && (len == *nBands);
-    if (have) {
-        return true;
-    }
-    // we don't have gains for capped config, check for original preset, modify and save them
-    oriEqId[0] = 'e';
-    len = oriNbands;
-    have = (mNvsHandle.readBlob(oriEqId.c_str(), gains, len) == ESP_OK) && (len == oriNbands);
-    if (have) {
-        gains[*nBands-1] = gains[oriNbands-1];
-        mNvsHandle.writeBlob(eqGainsKey(), gains, *nBands);
     }
     return true;
 }
@@ -200,7 +172,7 @@ const EqualizerNode::PreConvertFunc EqualizerNode::sPreConvertFuncs16[] = {
 int EqualizerNode::preConvertFuncIndex() const
 {
     int idx = (mInFormat.bitsPerSample() >> 3) - 1;
-    if (mVolProbeBeforeDsp) {
+    if (mVolLevelMeasurePoint == 0) {
         idx |= 0x04;
     }
     if (idx > 7) {
@@ -209,9 +181,20 @@ int EqualizerNode::preConvertFuncIndex() const
     }
     return idx;
 }
+uint8_t* EqualizerNode::dspBufGetWritable(uint16_t writeSize)
+{
+    if (mDspBufSize < writeSize) {
+        mDspBuffer.reset((uint8_t*)heap_caps_realloc(mDspBuffer.release(), writeSize,
+            mDspBufUseInternalRam ? MALLOC_CAP_INTERNAL : MALLOC_CAP_SPIRAM));
+        mDspBufSize = writeSize;
+        ESP_LOGW(TAG, "Allocated %d bytes DSP buffer in %s RAM", writeSize, mDspBufUseInternalRam ? "internal": "SPI");
+    }
+    mDspDataSize = writeSize;
+    return mDspBuffer.get();
+}
 void EqualizerNode::dspBufRelease()
 {
-    mDspBuffer.release();
+    mDspBuffer.reset();
     mDspBufSize = mDspDataSize = 0;
 }
 void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
@@ -226,40 +209,79 @@ void EqualizerNode::equalizerReinit(StreamFormat fmt, bool forceLoadGains)
         dspBufRelease();
     }
     if (mUseEspEq && mInFormat.sampleRate() <= 48000) {
-        mOutFormat.setBitsPerSample(16);
         if (fmtChanged || !mCore || mCore->type() != IEqualizerCore::kTypeEsp) {
+            updateDefaultEqName(true);
             mCore.reset(new EspEqualizerCore(mOutFormat));
+            mOutFormat.setBitsPerSample(16);
             forceLoadGains = true;
             mPreConvertFunc = sPreConvertFuncs16[preConvertFuncIndex()];
-            mPostConvertFunc = mOut24bit
-                ? &EqualizerNode::postConvert16To24<true>
-                : &EqualizerNode::postConvert16To16<true>;
+            mPostConvertFunc = (mVolLevelMeasurePoint == 1)
+               ? &EqualizerNode::postConvert16To16<true>
+               : &EqualizerNode::postConvert16To16<false>;
         }
     }
     else { // need custom eq
-        mOutFormat.setBitsPerSample(mOut24bit ? 24 : 16);
         if (fmtChanged || !mCore || mCore->type() != IEqualizerCore::kTypeCustom) {
+            updateDefaultEqName(false);
             createCustomCore(mInFormat);
             forceLoadGains = true;
             mPreConvertFunc = sPreConvertFuncsFloat[preConvertFuncIndex()];
-            mPostConvertFunc = mOut24bit
-                ? &EqualizerNode::postConvertFloatTo24<true>
-                : &EqualizerNode::postConvertFloatTo16<true>;
+            if (mOut24bit) {
+                mOutFormat.setBitsPerSample(24);
+                mPostConvertFunc = (mVolLevelMeasurePoint == 1)
+                  ? &EqualizerNode::postConvertFloatTo24<true>
+                  : &EqualizerNode::postConvertFloatTo24<false>;
+            }
+            else {
+                mOutFormat.setBitsPerSample(16);
+                mPostConvertFunc = (mVolLevelMeasurePoint == 1)
+                   ? &EqualizerNode::postConvertFloatTo16<true>
+                   : &EqualizerNode::postConvertFloatTo16<false>;
+            }
         }
     }
     // load gains
     if (forceLoadGains) {
-        auto nBands = mCore->numBands();
-        int len = nBands;
-        if ((mNvsHandle.readBlob(eqGainsKey(), mCore->gains(), len) == ESP_OK) && (len == nBands)) {
-            ESP_LOGI(TAG, "Loaded equalizer gains from NVS for '%s'", presetName());
+        loadGains();
+    }
+}
+bool EqualizerNode::loadGains()
+{
+    auto nBands = mCore->numBands();
+    int len = nBands;
+    if ((mNvsHandle.readBlob(eqGainsKey(), mCore->gains(), len) == ESP_OK) && (len == nBands)) {
+        ESP_LOGI(TAG, "Loaded equalizer gains from NVS for '%s'", presetName());
+    }
+    else if (mEqMaxFreqCappedTo) { // we have a capped eq config, try to load original gains
+        auto oriId = mEqId;
+        auto pos = oriId.find_last_of('!');
+        assert(pos != std::string::npos);
+        oriId[pos] = 0;
+        oriId[0] = 'e';
+        len = nBands + 10;
+        auto gains = (uint8_t*)alloca(len);
+        auto err = mNvsHandle.readBlob(oriId.c_str(), gains, len);
+        if (err == ESP_OK && (len >= nBands)) {
+            if (len != nBands) {
+                gains[nBands-1] = gains[len-1];
+            }
+            memcpy(mCore->gains(), gains, nBands);
+            ESP_LOGI(TAG, "Loaded original gains from '%s' for a freq-capped eq '%s'", oriId.c_str() + 2, presetName());
         }
         else {
-            ESP_LOGI(TAG, "Error loading or no gains for '%s', len=%d, expected=%d", presetName(), len, nBands);
-            memset(mCore->gains(), 0, nBands);
+            ESP_LOGW(TAG, "Failed to load original gains from '%s' for a freq-capped eq '%s': %s", oriId.c_str() + 2, presetName(), esp_err_to_name(err));
+            goto fail;
         }
-        mCore->updateAllFilters();
     }
+    else {
+        ESP_LOGI(TAG, "Error loading or no gains for '%s', len=%d, expected=%d", presetName(), len, nBands);
+        goto fail;
+    }
+    mCore->updateAllFilters();
+    return true;
+fail:
+    memset(mCore->gains(), 0, nBands);
+    return false;
 }
 bool EqualizerNode::setDefaultNumBands(uint8_t n)
 {
@@ -268,12 +290,11 @@ bool EqualizerNode::setDefaultNumBands(uint8_t n)
     }
     LOCK_EQ();
     mDefaultNumBands = n;
+    mNvsHandle.write("eq.nbands", (uint8_t)n);
     if (isDefaultPreset()) {
         deleteCore();
-        updateDefaultEqName(false);
         equalizerReinit();
     }
-    mNvsHandle.write("eq.nbands", (uint8_t)n);
     return true;
 }
 bool EqualizerNode::setBandGain(uint8_t band, int8_t dbGain)
@@ -339,7 +360,7 @@ bool EqualizerNode::setAllPeakingQ(int Q, bool clearState)
 {
     LOCK_EQ();
     if (mCore->type() != IEqualizerCore::kTypeCustom) {
-        ESP_LOGW(TAG, "%s: Negative or zero Q value", __FUNCTION__);
+        ESP_LOGW(TAG, "%s: Can't set Q on this eq type", __FUNCTION__);
         return false;
     }
     if (Q <= 0) {
@@ -386,8 +407,8 @@ void EqualizerNode::useEspEqualizer(bool use)
     }
     mUseEspEq = use;
     mCoreTypeChanged = true;
+    deleteCore();
     mNvsHandle.write("eq.useEsp", (uint8_t)mUseEspEq);
-    updateDefaultEqName();
     equalizerReinit(0, true);
 }
 
@@ -497,9 +518,8 @@ void EqualizerNode::postConvertFloatTo24(PacketResult& pr)
 {
     auto rptr = (const float*)mDspBuffer.get();
     auto rend = (const float*)(mDspBuffer.get() + mDspDataSize);
-    if (!(pr.packet && (pr.packet->flags & StreamPacket::kFlagHasSpaceFor32Bit))) {
-        pr.packet.reset(DataPacket::create(mDspDataSize));
-        pr.packet->flags |= DataPacket::kFlagHasSpaceFor32Bit;
+    if (!(pr.packet && (pr.packet->flags & StreamPacket::kHasSpaceFor32Bit))) {
+        pr.packet.reset(DataPacket::create(mDspDataSize, DataPacket::kHasSpaceFor32Bit));
     }
     auto& pkt = pr.dataPacket();
     pkt.dataLen = mDspDataSize;
@@ -520,8 +540,8 @@ void EqualizerNode::postConvertFloatTo16(PacketResult& pr)
     auto rend = (float*)(mDspBuffer.get() + mDspDataSize);
     int outSize = mDspDataSize >> 1;
     auto pkt = (DataPacket*)pr.packet.get();
-    if (!(pkt && pkt->bufSize >= outSize)) {
-        pkt = DataPacket::create(outSize);
+    if (!(pkt && (pkt->flags & StreamPacket::kHasSpaceFor16Bit))) {
+        pkt = DataPacket::create(outSize, StreamPacket::kHasSpaceFor16Bit);
         pr.packet.reset(pkt);
     }
     else {
@@ -580,15 +600,14 @@ void EqualizerNode::preConvert8or16to16AndApplyVolume(DataPacket& pkt)
         *wptr++ = (kShift != 0) ? (unaligned >> kShift) : unaligned;
         volProbe.rightSample(val);
     }
-    pkt.flags |= StreamPacket::kFlagLeftAlignedSamples;
     volProbe.getPeakLevels(mAudioLevels);
 }
 template <bool VolProbeEnabled>
 void EqualizerNode::postConvert16To24(PacketResult& pr)
 {
     DataPacket* pkt = (DataPacket*)pr.packet.get();
-    if (!(pkt && (pkt->flags & StreamPacket::kFlagHasSpaceFor32Bit))) {
-        pkt = DataPacket::create(mDspDataSize * 2);
+    if (!(pkt && (pkt->flags & StreamPacket::kHasSpaceFor32Bit))) {
+        pkt = DataPacket::create(mDspDataSize * 2, StreamPacket::kHasSpaceFor32Bit);
         pr.packet.reset(pkt);
     }
     else {
@@ -612,8 +631,8 @@ template <bool VolProbeEnabled>
 void EqualizerNode::postConvert16To16(PacketResult& pr)
 {
     auto pkt = (DataPacket*)pr.packet.get();
-    if (!(pkt && pkt->bufSize >= mDspDataSize)) {
-        pkt = DataPacket::create(mDspDataSize);
+    if (!(pkt && (pkt->flags & StreamPacket::kHasSpaceFor16Bit))) {
+        pkt = DataPacket::create(mDspDataSize, StreamPacket::kHasSpaceFor16Bit);
         pr.packet.reset(pkt);
     }
     else {

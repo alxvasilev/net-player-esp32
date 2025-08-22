@@ -5,7 +5,7 @@
 #include "volume.hpp"
 
 class NvsHandle;
-class EqualizerNode: public AudioNode, public DefaultVolumeImpl
+class EqualizerNode: public AudioNode, public IAudioVolume
 {
 protected:
     enum { kMyEqMinBands = 3, kMyEqMaxBands = 20, kDefaultNumBands = 10 };
@@ -23,7 +23,6 @@ protected:
     bool mDspBufUseInternalRam;
     bool mUseEspEq;
     bool mOut24bit;
-    bool mVolProbeBeforeDsp = false;
     uint8_t mDefaultNumBands;
     bool mBypass = false;
     bool mCoreTypeChanged = false;
@@ -31,7 +30,6 @@ protected:
     StreamId mStreamId = 0;
     uint16_t mEqMaxFreqCappedTo = 0;
     std::string mEqId; // format is [e|f]:<name>[!xx] Prefix 'e' is for gains, 'f' is for config (frequnecies). !xx is for frequency-capped version
-    float mFloatVolumeMul = 1.0;
     PreConvertFunc mPreConvertFunc = nullptr;
     PostConvertFunc mPostConvertFunc = nullptr;
     uint8_t eqNumBands();
@@ -40,8 +38,9 @@ protected:
     const char* eqConfigKey() { mEqId[0] = 'f'; return mEqId.c_str(); }
     void eqLoadName();
     void loadEqConfig(uint8_t nBands);
+    bool loadGains();
     void deleteCore() { mCore.reset(); }
-    void updateDefaultEqName(bool check=true);
+    void updateDefaultEqName(bool isEsp);
     bool fitBandFreqsToSampleRate(EqBandConfig* config, int* nBands, int sampleRate);
     void equalizerReinit(StreamFormat fmt=0, bool forceLoadGains=false);
     void updateBandGain(uint8_t band);
@@ -65,15 +64,7 @@ protected:
     int preConvertFuncIndex() const;
     static const PreConvertFunc sPreConvertFuncsFloat[];
     static const PreConvertFunc sPreConvertFuncs16[];
-    uint8_t* dspBufGetWritable(uint16_t writeSize) {
-        if (mDspBufSize < writeSize) {
-            mDspBuffer.reset((uint8_t*)heap_caps_realloc(mDspBuffer.release(), writeSize,
-                mDspBufUseInternalRam ? MALLOC_CAP_INTERNAL : MALLOC_CAP_SPIRAM));
-            mDspBufSize = writeSize;
-        }
-        mDspDataSize = writeSize;
-        return mDspBuffer.get();
-    }
+    uint8_t* dspBufGetWritable(uint16_t writeSize);
     void dspBufRelease();
 public:
     Mutex mMutex;
@@ -95,11 +86,6 @@ public:
     bool setAllPeakingQ(int Q, bool reset);
     const EqBandConfig bandCfg(uint8_t n) const { return mCore->bandConfig(n); }
     virtual IAudioVolume* volumeInterface() override { return this; }
-    virtual void setVolume(uint8_t vol) override {
-        printf("setVolume->%u\n", vol);
-        DefaultVolumeImpl::setVolume(vol);
-        mFloatVolumeMul = (float)vol / 100;
-    }
 };
 
 #endif // EQUALIZERNODE_HPP

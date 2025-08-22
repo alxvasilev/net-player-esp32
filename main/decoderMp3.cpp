@@ -99,6 +99,7 @@ StreamEvent DecoderMp3::output(const mad_pcm& pcmData)
 {
     int nsamples = pcmData.length;
     if (!outputFormat.sampleRate()) { // we haven't yet initialized output format info
+        outputFormat.clear(); // just in case
         outputFormat.setCodec(Codec::kCodecMp3);
         auto sr = pcmData.samplerate;
         if (sr != 11025 && sr != 22050 && sr != 44100 && sr != 48000) {
@@ -122,7 +123,7 @@ StreamEvent DecoderMp3::output(const mad_pcm& pcmData)
     // 24 bit output
     if (pcmData.channels == 2) {
         int dataLen = nsamples * 8;
-        output.reset(DataPacket::create(dataLen));
+        output.reset(DataPacket::create(dataLen, StreamPacket::kHasSpaceFor32Bit));
         auto left_ch = pcmData.samples[0];
         auto right_ch = pcmData.samples[1];
         int32_t* end = (int32_t*)(output->data + dataLen);
@@ -133,7 +134,7 @@ StreamEvent DecoderMp3::output(const mad_pcm& pcmData)
     }
     else if (pcmData.channels == 1) {
         int dataLen = nsamples * 4;
-        output.reset(DataPacket::create(dataLen));
+        output.reset(DataPacket::create(dataLen, StreamPacket::kHasSpaceFor32Bit));
         auto rptr = pcmData.samples[0];
         auto end = (int32_t*)(output->data + dataLen);
         for (int32_t* wptr = (int32_t*)output->data; wptr < end; wptr++) {

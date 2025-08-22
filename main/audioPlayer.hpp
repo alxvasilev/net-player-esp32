@@ -76,7 +76,7 @@ protected:
     { kEventTerminating = 1, kEventScroll = 2, kEventVolLevel = 4, kEventTerminated = 8 };
     enum {
         kI2sStackSize = 2700, kI2sDmaBufMs = 50, kDmaBufSizeMax = 39000, kI2sCpuCore = ALT_TASK_PIN(0, 1),
-        kLcdTaskStackSize = 2200, kLcdTaskPrio = 20, kLcdTaskCore = 1,
+        kLcdTaskStackSize = 2200, kLcdTaskPrio = 21, kLcdTaskCore = 1,
         kMaxTrackTitleLen = 100
     };
     enum {

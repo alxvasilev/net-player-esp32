@@ -28,14 +28,14 @@ public:
         T& as() const { return *(T*)get(); }
     };
     enum: uint8_t {
-        kFlagHasSpaceFor32Bit = 1 << 0,
-        kFlagLeftAlignedSamples = 1 << 1,
-        kFlagCustomAlloc = 1 << 2
+        kHasSpaceFor16Bit = 1,
+        kHasSpaceFor32Bit = 2 | kHasSpaceFor16Bit,
+        kCustomAlloc = 4
     };
     StreamEvent type;
     uint8_t flags;
     void destroy() { // may use custom allocation
-        if (flags & kFlagCustomAlloc) {
+        if (flags & kCustomAlloc) {
             free(this);
         }
         else {
@@ -46,7 +46,7 @@ public:
     static T* allocWithBufSize(StreamEvent type, size_t aBufSize) {
         auto inst = (T*)heap_caps_malloc(sizeof(T) + aBufSize, MALLOC_CAP_SPIRAM);
         inst->type = type;
-        inst->flags = kFlagCustomAlloc;
+        inst->flags = kCustomAlloc;
         return inst;
     }
 };
@@ -60,11 +60,16 @@ struct TitleChangeEvent: public StreamPacket {
 };
 struct DataPacket: public StreamPacket {
     typedef std::unique_ptr<DataPacket, Deleter> unique_ptr;
-    int16_t bufSize;
     int16_t dataLen;
     alignas(uint32_t) char data[];
     template <bool Empty=false>
-    static DataPacket* create(int aBufSize) {
+    static DataPacket* create(int aBufSize, uint8_t flags) {
+        auto inst = createWithoutFlags<Empty>(aBufSize);
+        inst->flags |= flags;
+        return inst;
+    }
+    template <bool Empty=false>
+    static DataPacket* createWithoutFlags(int aBufSize) {
         auto inst = allocWithBufSize<DataPacket>(kEvtData, aBufSize);
         inst->dataLen = Empty ? 0 : aBufSize;
         return inst;

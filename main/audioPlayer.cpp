@@ -205,7 +205,6 @@ bool AudioPlayer::createPipeline(AudioNode::Type inType, AudioNode::Type outType
     mStreamOut->linkToPrev(pcmSource);
     // VU stuff
     mVolumeInterface = mVuLevelInterface = mEqualizer.get();
-    mVolumeInterface->volEnableProcessing(true);
     // setup VU level probe point
     auto vuAtInput = mNvsHandle.readDefault<uint8_t>("vuAtEqInput", 0);
     mVuLevelInterface->volEnableLevel(audioLevelCb, this, vuAtInput ? 0 : 1);
@@ -1310,6 +1309,7 @@ void AudioPlayer::onStreamEnd(StreamId streamId)
 }
 bool AudioPlayer::streamIsCpuHeavy() const
 {
+    return false;
     return mStreamFormat.sampleRate() > 90000 && mStreamFormat.bitsPerSample() >= 24;
 }
 void AudioPlayer::lcdUpdateAudioFormat()

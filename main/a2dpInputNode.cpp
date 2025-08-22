@@ -302,7 +302,7 @@ void A2dpInputNode::avrcTargetHandleEvent(esp_avrc_tg_cb_event_t event, esp_avrc
             break;
         }
         case ESP_AVRC_TG_CONNECTION_STATE_EVT: {
-            ESP_LOGI(TAG_AVRC, "=====================TG connection to %s state %d", bda2str(param.conn_stat.remote_bda),
+            ESP_LOGW(TAG_AVRC, "TG connection to %s state %d", bda2str(param.conn_stat.remote_bda),
                 param.conn_stat.connected);
             break;
         }
@@ -317,13 +317,34 @@ void A2dpInputNode::avrcTargetHandleEvent(esp_avrc_tg_cb_event_t event, esp_avrc
 }
 void A2dpInputNode::sDataCallback(const uint8_t* data, uint32_t len)
 {
+    enum { kMaxPktSize = 4096 };
     // typically len is 4096
     if (!gSelf || gSelf->state() != AudioNode::kStateRunning) {
         return;
     }
-    auto pkt = DataPacket::create(len);
-    memcpy(pkt->data, data, len);
-    gSelf->onData(pkt);
+    int nPackets = (len + (kMaxPktSize - 1)) / kMaxPktSize;
+    if (nPackets < 2) {
+        auto pkt = DataPacket::create<true>(len * 2, StreamPacket::kHasSpaceFor32Bit);
+        memcpy(pkt->data, data, len);
+        pkt->dataLen = len;
+        gSelf->onData(pkt);
+    }
+    else {
+        enum { kBytesPerSample = 2 * sizeof(int16_t) };
+        int nSamples = len / kBytesPerSample;
+        int maxPktSamples = nSamples / nPackets;
+        auto rptr = (int16_t*)data;
+        int remainSamples = nSamples;
+        while(remainSamples > 0) {
+            auto pktSamples = std::min(remainSamples, maxPktSamples);
+            remainSamples -= pktSamples;
+            auto pktBytes = pktSamples * kBytesPerSample;
+            auto pkt = DataPacket::create<true>(pktBytes * 2, StreamPacket::kHasSpaceFor32Bit);
+            memcpy(pkt->data, rptr, pktBytes);
+            pkt->dataLen = pktBytes;
+            gSelf->onData(pkt);
+        }
+    }
 }
 void A2dpInputNode::onData(DataPacket* pkt)
 {

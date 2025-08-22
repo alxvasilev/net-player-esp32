@@ -69,8 +69,7 @@ StreamEvent DecoderAac::decode(AudioNode::PacketResult& dpr)
         }
         if (!output) {
             // output is always 16 bit, reserve space for 32-bit
-            output.reset(DataPacket::create(mOutputLen ? mOutputLen * 2 : kOutputMaxSize));
-            output->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
+            output.reset(DataPacket::create(mOutputLen ? mOutputLen * 2 : kOutputMaxSize, StreamPacket::kHasSpaceFor32Bit));
         }
         // printf("AACDecode: inLen=%d, offs=%d\n", mInputLen, mNextFramePtr - mInputBuf);
         auto err = AACDecode(mDecoder, &mNextFramePtr, &mInputLen, (int16_t*)output->data);
@@ -90,10 +89,9 @@ StreamEvent DecoderAac::decode(AudioNode::PacketResult& dpr)
             else {
                 output->dataLen = 2048;
                 auto out2len = mOutputLen - 2048;
-                DataPacket::unique_ptr output2(DataPacket::create(out2len * 2));
+                DataPacket::unique_ptr output2(DataPacket::create<true>(out2len * 2, DataPacket::kHasSpaceFor32Bit));
                 memcpy(output2->data, output->data + 2048, out2len);
                 output2->dataLen = out2len;
-                output2->flags |= StreamPacket::kFlagHasSpaceFor32Bit;
                 bool ok = mParent.codecPostOutput(output.release()) && mParent.codecPostOutput(output2.release());
                 return ok ? kNoError : kErrStreamStopped;
             }
