@@ -184,10 +184,11 @@ int EqualizerNode::preConvertFuncIndex() const
 uint8_t* EqualizerNode::dspBufGetWritable(uint16_t writeSize)
 {
     if (mDspBufSize < writeSize) {
-        mDspBuffer.reset((uint8_t*)heap_caps_realloc(mDspBuffer.release(), writeSize,
+        auto allocSize = std::max<int>(writeSize, 4096);
+        mDspBuffer.reset((uint8_t*)heap_caps_realloc(mDspBuffer.release(), allocSize,
             mDspBufUseInternalRam ? MALLOC_CAP_INTERNAL : MALLOC_CAP_SPIRAM));
-        mDspBufSize = writeSize;
-        ESP_LOGW(TAG, "Allocated %d bytes DSP buffer in %s RAM", writeSize, mDspBufUseInternalRam ? "internal": "SPI");
+        mDspBufSize = allocSize;
+        ESP_LOGW(TAG, "Allocated %d bytes DSP buffer in %s RAM", allocSize, mDspBufUseInternalRam ? "internal": "SPI");
     }
     mDspDataSize = writeSize;
     return mDspBuffer.get();

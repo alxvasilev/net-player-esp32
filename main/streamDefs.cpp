@@ -25,20 +25,21 @@ int StreamFormat::prefillAmount() const
         }
         case Codec::kCodecWav:
         case Codec::kCodecPcm: {
-            auto val = (bitsPerSample() * sampleRate() * numChannels() * kHalfSecs) >> 4;
-            return val ? val : (16 * 2 * 2 * 44100 * kHalfSecs) >> 4;
+            auto val = (bytesPerSample() * sampleRate() * numChannels() * kHalfSecs) >> 1;
+            return val ? val : (2 * 44100 * 2 * kHalfSecs) >> 1;
         }
         case Codec::KCodecSbc:
             return 8192; // Bluetooth sink should do minimum buffering
         default:
-            return (256 * 1024 * kHalfSecs) >> 4;
+            return (256 * 1024 * kHalfSecs) >> 4; // 256 kbit/s
     }
 }
 int16_t StreamFormat::rxChunkSize() const
 {
     switch (codec().type) {
         case Codec::kCodecWav:
-            return (sampleRate() > 48000 || bitsPerSample() > 16) ? 8192 : 4096;
+            // need to limit this because it affects packet size and DSP buffer size
+            return sampleRate() ? 1024 * bytesPerSample() * numChannels() : 4096;
         case Codec::kCodecFlac:
             return 4096;
         default:
