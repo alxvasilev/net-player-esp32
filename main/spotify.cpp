@@ -299,7 +299,7 @@ bool SpotifyNode::recv()
                                  "than the chunk amount");
     }
     DataPacket::unique_ptr pkt(DataPacket::createWithoutFlags<true>(toRecv));
-    auto nRecv = mHttp.recv(pkt->data, pkt->dataLen);
+    auto nRecv = mHttp.recv(pkt->data, toRecv);
     if (nRecv <= 0) { // premature file end
         ESP_LOGW(TAG, "Connection dropped, will resume...");
         mHttp.close();
